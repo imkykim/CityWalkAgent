@@ -24,4 +24,4 @@ env/
 
 # The RouteGenerator saves route files. Assuming they are saved to a 'data' directory.
 # Adjust if you save them elsewhere.
-/city_walk_agent/src/data/
+/city_walk_agent/data/
