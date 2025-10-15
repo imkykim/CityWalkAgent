@@ -1,0 +1,30 @@
+# Core dependencies
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+python-dotenv>=1.0.0
+
+# Geospatial libraries
+geopy>=2.3.0
+googlemaps>=4.10.0
+
+# Image processing
+Pillow>=10.0.0
+
+# HTTP clients
+httpx>=0.24.0
+requests>=2.31.0
+
+# AI/ML APIs
+anthropic>=0.69.0
+openai>=1.0.0
+
+# Development dependencies
+jupyter>=1.0.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
