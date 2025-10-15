@@ -1,0 +1,27 @@
+# Environment variables
+# Keep your secret keys and environment-specific settings out of version control.
+.env
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+# If you create a virtual environment in your project folder, it should be ignored.
+.venv/
+venv/
+env/
+
+# IDE and editor directories
+.vscode/
+.idea/
+
+# Experiment results and generated data
+# Your script generates CSV files in 'experiments/results'.
+/city_walk_agent/experiments/results/
+
+# The RouteGenerator saves route files. Assuming they are saved to a 'data' directory.
+# Adjust if you save them elsewhere.
+/city_walk_agent/src/data/
