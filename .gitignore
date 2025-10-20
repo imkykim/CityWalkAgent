@@ -25,3 +25,10 @@ env/
 # The RouteGenerator saves route files. Assuming they are saved to a 'data' directory.
 # Adjust if you save them elsewhere.
 /city_walk_agent/data/
+
+
+#Temporary gitignore
+/VIRL
+/ZenSVI
+/PoC_guide.md
+/city_walk_agent/API_SETUP_GUIDE.md

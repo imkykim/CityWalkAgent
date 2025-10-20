@@ -20,8 +20,17 @@ class Settings(BaseSettings):
     # API Keys
     google_maps_api_key: Optional[str] = Field(default=None, env="GOOGLE_MAPS_API_KEY")
     mapillary_api_key: Optional[str] = Field(default=None, env="MAPILLARY_API_KEY")
-    anthropic_api_key: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
     openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
+
+    # Qwen LLM Configuration
+    qwen_api_url: Optional[str] = Field(default=None, env="QWEN_API_URL")
+    qwen_api_key: Optional[str] = Field(default=None, env="QWEN_API_KEY")
+    qwen_llm_model: str = Field(default="Qwen/Qwen3-bB", env="QWEN_LLM_MODEL")
+
+    # Qwen VLM Configuration
+    qwen_vlm_api_url: Optional[str] = Field(default=None, env="QWEN_VLM_API_URL")
+    qwen_vlm_api_key: Optional[str] = Field(default=None, env="QWEN_VLM_API_KEY")
+    qwen_vlm_model: str = Field(default="Qwen3-VL-30B-A3B-Instruct-FP8", env="QWEN_VLM_MODEL")
 
     # Project Paths
     project_root: Path = Field(default_factory=lambda: Path(__file__).parent.parent.parent)

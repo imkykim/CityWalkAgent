@@ -5,7 +5,7 @@ API Connection Test Suite
 Tests connections to all external APIs required for CityWalkAgent:
 - Google Maps API (Directions, Street View)
 - Mapillary API (Street View images)
-- Anthropic API (Claude for evaluation)
+- Qwen API (LLM and VLM for evaluation)
 - ZenSVI integration
 
 Usage: python tests/test_api_connections.py
@@ -240,79 +240,266 @@ class APIConnectionTester:
                 "mapillary_api", False, f"Mapillary API test failed: {str(e)}"
             )
 
-    def test_anthropic_api(self):
-        """Test Anthropic API connection"""
-        self.print_test_header("Anthropic API (Claude)")
+    def test_qwen_llm_api(self):
+        """Test Qwen LLM API connection with rate limiting"""
+        self.print_test_header("Qwen LLM API")
 
-        api_key = settings.anthropic_api_key
+        api_key = settings.qwen_api_key
+        api_url = settings.qwen_api_url
 
         if not api_key:
-            self.print_skip("anthropic", "No API key provided in settings")
+            self.print_skip("qwen_llm", "No API key provided in settings")
+            return
+
+        if not api_url:
+            self.print_skip("qwen_llm", "No LLM API URL provided in settings")
             return
 
         try:
-            import anthropic
+            import requests
+            import time
 
-            # Test client initialization
-            client = anthropic.Anthropic(api_key=api_key)
+            # Test LLM API with a simple text request
+            # Note: Rate limit is 1 request per second
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            }
 
-            # Test a simple message
+            # Simple text test
+            test_payload = {
+                "model": settings.qwen_llm_model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Respond with exactly: 'API connection test successful'",
+                    }
+                ],
+                "max_tokens": 100,
+            }
+
             try:
-                message = client.messages.create(
-                    model="claude-3-haiku-20240307",  # Use fastest model for testing
-                    max_tokens=100,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": "Respond with exactly: 'API connection test successful'",
-                        }
-                    ],
+                response = requests.post(
+                    f"{api_url}/chat/completions",
+                    headers=headers,
+                    json=test_payload,
+                    timeout=30,
                 )
 
-                response_text = message.content[0].text.strip()
+                if response.status_code == 200:
+                    data = response.json()
+                    response_text = (
+                        data.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "")
+                    )
+                    model_used = data.get("model", "unknown")
 
-                if "API connection test successful" in response_text:
                     self.print_result(
-                        "anthropic_api",
+                        "qwen_llm_api",
                         True,
-                        f"Anthropic API working - Model: {message.model}",
-                        {"model": message.model, "response": response_text},
+                        f"Qwen LLM API working - Model: {model_used}, Response: {response_text[:50]}",
+                        {"model": model_used, "response": response_text},
+                    )
+
+                    # Wait 1 second for rate limiting
+                    time.sleep(1)
+
+                elif response.status_code == 401:
+                    self.print_result(
+                        "qwen_llm_api",
+                        False,
+                        "Qwen LLM API authentication failed - check API key",
+                    )
+                elif response.status_code == 429:
+                    self.print_result(
+                        "qwen_llm_api",
+                        False,
+                        "Qwen LLM API rate limit exceeded (max 1 req/sec)",
                     )
                 else:
                     self.print_result(
-                        "anthropic_api",
-                        True,
-                        f"Anthropic API connected but unexpected response: {response_text}",
-                        {"model": message.model, "response": response_text},
+                        "qwen_llm_api",
+                        False,
+                        f"Qwen LLM API returned status: {response.status_code} - {response.text[:100]}",
                     )
 
+            except requests.exceptions.Timeout:
+                self.print_result(
+                    "qwen_llm_api",
+                    False,
+                    "Qwen LLM API request timed out",
+                )
             except Exception as e:
-                error_str = str(e)
-                if (
-                    "authentication" in error_str.lower()
-                    or "api_key" in error_str.lower()
-                ):
-                    self.print_result(
-                        "anthropic_api",
-                        False,
-                        "Anthropic API authentication failed - check API key",
-                    )
-                elif "rate_limit" in error_str.lower():
-                    self.print_result(
-                        "anthropic_api", False, "Anthropic API rate limit exceeded"
-                    )
-                else:
-                    self.print_result(
-                        "anthropic_api",
-                        False,
-                        f"Anthropic API request failed: {error_str}",
-                    )
+                self.print_result(
+                    "qwen_llm_api",
+                    False,
+                    f"Qwen LLM API request failed: {str(e)}",
+                )
 
         except Exception as e:
             self.print_result(
-                "anthropic_api",
+                "qwen_llm_api",
                 False,
-                f"Failed to initialize Anthropic client: {str(e)}",
+                f"Failed to test Qwen LLM API: {str(e)}",
+            )
+
+    def test_qwen_vlm_api(self):
+        """Test Qwen VLM API connection with rate limiting"""
+        self.print_test_header("Qwen VLM API")
+
+        api_key = settings.qwen_vlm_api_key
+        api_url = settings.qwen_vlm_api_url
+
+        if not api_key:
+            self.print_skip("qwen_vlm", "No API key provided in settings")
+            return
+
+        if not api_url:
+            self.print_skip("qwen_vlm", "No VLM API URL provided in settings")
+            return
+
+        try:
+            import requests
+            import time
+            import base64
+
+            # Test VLM API with a simple text request (no image)
+            # Note: Rate limit is 1 request per second
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            }
+
+            # Simple text-only test first
+            test_payload = {
+                "model": settings.qwen_vlm_model,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Respond with exactly: 'API connection test successful'",
+                    }
+                ],
+                "max_tokens": 100,
+            }
+
+            try:
+                response = requests.post(
+                    f"{api_url}/chat/completions",
+                    headers=headers,
+                    json=test_payload,
+                    timeout=30,
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    response_text = (
+                        data.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "")
+                    )
+
+                    self.print_result(
+                        "qwen_vlm_api",
+                        True,
+                        f"Qwen VLM API working - Response: {response_text[:50]}",
+                        {"model": settings.qwen_vlm_model, "response": response_text},
+                    )
+
+                    # Wait 1 second before next test (rate limiting)
+                    time.sleep(1)
+
+                    # Test VLM with image (using a simple base64 encoded test image)
+                    # This is a minimal 1x1 pixel PNG for testing
+                    test_image_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+                    vlm_payload = {
+                        "model": settings.qwen_vlm_model,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "Describe this image briefly.",
+                                    },
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:image/png;base64,{test_image_b64}"
+                                        },
+                                    },
+                                ],
+                            }
+                        ],
+                        "max_tokens": 100,
+                    }
+
+                    vlm_response = requests.post(
+                        f"{api_url}/chat/completions",
+                        headers=headers,
+                        json=vlm_payload,
+                        timeout=30,
+                    )
+
+                    if vlm_response.status_code == 200:
+                        vlm_data = vlm_response.json()
+                        vlm_text = (
+                            vlm_data.get("choices", [{}])[0]
+                            .get("message", {})
+                            .get("content", "")
+                        )
+
+                        self.print_result(
+                            "qwen_vlm_image",
+                            True,
+                            f"Qwen VLM image processing working - Response: {vlm_text[:50]}",
+                            {"response": vlm_text},
+                        )
+                    else:
+                        self.print_result(
+                            "qwen_vlm_image",
+                            False,
+                            f"Qwen VLM image test failed with status: {vlm_response.status_code}",
+                        )
+
+                elif response.status_code == 401:
+                    self.print_result(
+                        "qwen_vlm_api",
+                        False,
+                        "Qwen VLM API authentication failed - check API key",
+                    )
+                elif response.status_code == 429:
+                    self.print_result(
+                        "qwen_vlm_api",
+                        False,
+                        "Qwen VLM API rate limit exceeded (max 1 req/sec)",
+                    )
+                else:
+                    self.print_result(
+                        "qwen_vlm_api",
+                        False,
+                        f"Qwen VLM API returned status: {response.status_code} - {response.text[:100]}",
+                    )
+
+            except requests.exceptions.Timeout:
+                self.print_result(
+                    "qwen_vlm_api",
+                    False,
+                    "Qwen VLM API request timed out",
+                )
+            except Exception as e:
+                self.print_result(
+                    "qwen_vlm_api",
+                    False,
+                    f"Qwen VLM API request failed: {str(e)}",
+                )
+
+        except Exception as e:
+            self.print_result(
+                "qwen_vlm_api",
+                False,
+                f"Failed to test Qwen VLM API: {str(e)}",
             )
 
     def test_zensvi_integration(self):
@@ -485,9 +672,10 @@ def main():
 
     # Run all tests
     tester.test_google_maps_api()
-    tester.test_mapillary_api()
-    tester.test_anthropic_api()
-    tester.test_zensvi_integration()
+    # tester.test_mapillary_api()
+    tester.test_qwen_llm_api()
+    tester.test_qwen_vlm_api()
+    # tester.test_zensvi_integration()
     tester.test_virl_integration()
 
     # Print summary
