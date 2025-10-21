@@ -1,11 +1,12 @@
 import sys
 import os
+import math
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
-import pandas as pd
 from datetime import datetime
+
+import requests
 
 try:
     from ..utils.data_models import Route, Waypoint
@@ -14,6 +15,7 @@ except ImportError:
     # Handle case when running as script
     import sys
     from pathlib import Path
+
     src_path = Path(__file__).parent.parent
     sys.path.insert(0, str(src_path))
     from utils.data_models import Route, Waypoint
@@ -41,18 +43,21 @@ class ImageCollector:
 
         try:
             # Import ZenSVI components
-            from zensvi.download import MLYDownloader, GSVDownloader
-            self.MLYDownloader = MLYDownloader
-            self.GSVDownloader = GSVDownloader
+            from zensvi.download import KVDownloader
+
+            self.KVDownloader = KVDownloader
         except ImportError as e:
-            raise ImportError(f"Could not import ZenSVI from {self.zensvi_path}. Error: {e}")
+            raise ImportError(
+                f"Could not import ZenSVI from {self.zensvi_path}. Error: {e}"
+            )
 
     def collect_mapillary_images(
         self,
         route: Route,
         output_dir: Optional[str] = None,
         image_size: int = 2048,
-        max_distance: int = 50
+        max_distance: int = 50,
+        buffer: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Collect Mapillary images for all waypoints in a route
@@ -61,7 +66,8 @@ class ImageCollector:
             route: Route object containing waypoints
             output_dir: Directory to save images (default: data/images/route_id)
             image_size: Size of images to download
-            max_distance: Maximum distance from waypoint to consider images (meters)
+            max_distance: Legacy search distance in meters (used if buffer not provided)
+            buffer: Preferred search distance in meters for compatibility with experiments
 
         Returns:
             List of download results with metadata
@@ -75,30 +81,274 @@ class ImageCollector:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize Mapillary downloader
-        downloader = self.MLYDownloader(
-            key=self.api_key,
-            max_workers=self.max_workers
-        )
+        search_distance = buffer if buffer is not None else max_distance
 
         results = []
 
         # Collect images for each waypoint
         for waypoint in route.waypoints:
             try:
-                print(f"Collecting images for waypoint {waypoint.sequence_id} at ({waypoint.lat}, {waypoint.lon})")
+                print(
+                    f"Collecting images for waypoint {waypoint.sequence_id} at ({waypoint.lat}, {waypoint.lon})"
+                )
+
+                # Create waypoint-specific directory
+                waypoint_dir = output_dir / f"waypoint_{waypoint.sequence_id:03d}"
+                waypoint_dir.mkdir(exist_ok=True)
+
+                image_metadata = self._fetch_single_mapillary_image(
+                    lat=waypoint.lat,
+                    lon=waypoint.lon,
+                    image_size=image_size,
+                    max_distance=search_distance,
+                )
+
+                if image_metadata and image_metadata.get("image_url"):
+                    image_path = (
+                        waypoint_dir / f"waypoint_{waypoint.sequence_id:03d}.jpg"
+                    )
+                    self._download_image(
+                        image_metadata["image_url"],
+                        image_path,
+                        timeout=20,
+                    )
+                    waypoint.image_path = str(image_path)
+                else:
+                    image_path = None
+
+                result = {
+                    "waypoint_id": waypoint.sequence_id,
+                    "lat": waypoint.lat,
+                    "lon": waypoint.lon,
+                    "images_downloaded": 1 if image_path else 0,
+                    "image_path": str(image_path) if image_path else None,
+                    "mapillary_image_id": (
+                        image_metadata.get("image_id") if image_metadata else None
+                    ),
+                    "captured_at": (
+                        image_metadata.get("captured_at") if image_metadata else None
+                    ),
+                    "timestamp": datetime.now().isoformat(),
+                }
+                results.append(result)
+
+            except Exception as e:
+                print(
+                    f"Error collecting images for waypoint {waypoint.sequence_id}: {e}"
+                )
+                result = {
+                    "waypoint_id": waypoint.sequence_id,
+                    "lat": waypoint.lat,
+                    "lon": waypoint.lon,
+                    "images_downloaded": 0,
+                    "image_path": None,
+                    "error": str(e),
+                    "timestamp": datetime.now().isoformat(),
+                }
+                results.append(result)
+
+        # Save collection metadata
+        metadata_file = output_dir / "collection_metadata.json"
+        with open(metadata_file, "w") as f:
+            json.dump(
+                {
+                    "route_id": route.route_id,
+                    "collection_timestamp": datetime.now().isoformat(),
+                    "total_waypoints": len(route.waypoints),
+                    "results": results,
+                },
+                f,
+                indent=2,
+            )
+        return results
+
+    def _fetch_single_mapillary_image(
+        self,
+        lat: float,
+        lon: float,
+        image_size: int,
+        max_distance: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch metadata for the closest Mapillary image to a coordinate."""
+
+        allowed_sizes = {256, 1024, 2048}
+        if image_size not in allowed_sizes:
+            raise ValueError(
+                f"Mapillary only supports image_size values {sorted(allowed_sizes)}, got {image_size}."
+            )
+
+        field_name = f"thumb_{image_size}_url"
+        delta_lat, delta_lon = self._meters_to_degree_offsets(lat, max_distance)
+
+        bbox = [
+            lon - delta_lon,
+            lat - delta_lat,
+            lon + delta_lon,
+            lat + delta_lat,
+        ]
+
+        params = {
+            "fields": f"id,{field_name},captured_at",
+            "access_token": self.api_key,
+            "limit": 1,
+            "bbox": ",".join(map(str, bbox)),
+        }
+
+        response = requests.get(
+            "https://graph.mapillary.com/images",
+            params=params,
+            timeout=15,
+        )
+        response.raise_for_status()
+
+        data = response.json().get("data", [])
+        if not data:
+            return None
+
+        image_data = data[0]
+        image_url = image_data.get(field_name)
+        if not image_url:
+            return None
+
+        return {
+            "image_id": image_data.get("id"),
+            "image_url": image_url,
+            "captured_at": image_data.get("captured_at"),
+        }
+
+    @staticmethod
+    def _meters_to_degree_offsets(lat: float, distance_meters: float) -> tuple:
+        """Convert a radial distance in meters to latitude/longitude degree offsets."""
+
+        if distance_meters <= 0:
+            return 0.0005, 0.0005  # default small search box (~55m)
+
+        meters_per_deg_lat = 111_320
+        lat_offset = distance_meters / meters_per_deg_lat
+
+        cos_lat = math.cos(math.radians(lat))
+        cos_lat = max(cos_lat, 1e-6)
+        meters_per_deg_lon = meters_per_deg_lat * cos_lat
+        lon_offset = distance_meters / meters_per_deg_lon
+
+        return lat_offset, lon_offset
+
+    @staticmethod
+    def _download_image(url: str, output_path: Path, timeout: int = 20) -> None:
+        """Download image from URL to destination path."""
+
+        response = requests.get(url, stream=True, timeout=timeout)
+        response.raise_for_status()
+
+        with open(output_path, "wb") as image_file:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    image_file.write(chunk)
+
+    def _download_gsv_image(
+        self,
+        lat: float,
+        lon: float,
+        heading: float,
+        image_size: str,
+        fov: int,
+        radius: int,
+        output_path: Path,
+        timeout: int = 20,
+    ) -> Dict[str, Any]:
+        """Fetch metadata and download a single Google Street View image."""
+
+        metadata_url = "https://maps.googleapis.com/maps/api/streetview/metadata"
+        image_url = "https://maps.googleapis.com/maps/api/streetview"
+
+        metadata_params = {
+            "location": f"{lat},{lon}",
+            "radius": radius,
+            "key": settings.google_maps_api_key,
+            "source": "outdoor",
+        }
+
+        metadata_response = requests.get(metadata_url, params=metadata_params, timeout=timeout)
+        metadata_response.raise_for_status()
+        metadata = metadata_response.json()
+
+        if metadata.get("status") != "OK":
+            return {"success": False, "metadata": metadata, "error": metadata.get("status")}
+
+        image_params = {
+            "size": image_size,
+            "location": f"{lat},{lon}",
+            "fov": fov,
+            "heading": heading,
+            "pitch": 0,
+            "key": settings.google_maps_api_key,
+            "source": "outdoor",
+        }
+
+        image_response = requests.get(image_url, params=image_params, stream=True, timeout=timeout)
+        image_response.raise_for_status()
+
+        content_type = image_response.headers.get("Content-Type", "")
+        if "image" not in content_type.lower():
+            return {
+                "success": False,
+                "metadata": metadata,
+                "error": f"Unexpected content type: {content_type}",
+            }
+
+        with open(output_path, "wb") as image_file:
+            for chunk in image_response.iter_content(chunk_size=8192):
+                if chunk:
+                    image_file.write(chunk)
+
+        return {"success": True, "metadata": metadata}
+
+    def collect_kartaview_images(
+        self,
+        route: Route,
+        output_dir: Optional[str] = None,
+        buffer: int = 50,
+        metadata_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        Collect KartaView images for all waypoints in a route
+        Args:
+            route: Route object containing waypoints
+            output_dir: Directory to save images (default: data/images/route_id)
+            buffer: Search radius from waypoint in meters
+            metadata_only: If True, only download metadata without images
+        Returns:
+            List of download results with metadata
+        """
+        # Set up output directory
+        if not output_dir:
+            output_dir = settings.images_dir / route.route_id
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Initialize KartaView downloader
+        downloader = self.KVDownloader(max_workers=self.max_workers)
+
+        results = []
+
+        # Collect images for each waypoint
+        for waypoint in route.waypoints:
+            try:
+                print(
+                    f"Collecting KartaView images for waypoint {waypoint.sequence_id} at ({waypoint.lat}, {waypoint.lon})"
+                )
 
                 # Create waypoint-specific directory
                 waypoint_dir = output_dir / f"waypoint_{waypoint.sequence_id:03d}"
                 waypoint_dir.mkdir(exist_ok=True)
 
                 # Download images near this waypoint
-                download_result = downloader.download_images_from_bbox(
-                    bbox=[waypoint.lon - 0.001, waypoint.lat - 0.001,
-                          waypoint.lon + 0.001, waypoint.lat + 0.001],
-                    output_dir=str(waypoint_dir),
-                    image_size=image_size,
-                    max_workers=self.max_workers
+                downloader.download_svi(
+                    str(waypoint_dir),
+                    lat=waypoint.lat,
+                    lon=waypoint.lon,
+                    buffer=buffer,
+                    metadata_only=metadata_only,
                 )
 
                 # Update waypoint with image path if images were downloaded
@@ -113,13 +363,15 @@ class ImageCollector:
                     "lon": waypoint.lon,
                     "images_downloaded": len(image_files),
                     "image_path": str(image_files[0]) if image_files else None,
-                    "download_result": download_result,
-                    "timestamp": datetime.now().isoformat()
+                    "metadata_only": metadata_only,
+                    "timestamp": datetime.now().isoformat(),
                 }
                 results.append(result)
 
             except Exception as e:
-                print(f"Error collecting images for waypoint {waypoint.sequence_id}: {e}")
+                print(
+                    f"Error collecting KartaView images for waypoint {waypoint.sequence_id}: {e}"
+                )
                 result = {
                     "waypoint_id": waypoint.sequence_id,
                     "lat": waypoint.lat,
@@ -127,19 +379,24 @@ class ImageCollector:
                     "images_downloaded": 0,
                     "image_path": None,
                     "error": str(e),
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
                 }
                 results.append(result)
 
         # Save collection metadata
         metadata_file = output_dir / "collection_metadata.json"
-        with open(metadata_file, 'w') as f:
-            json.dump({
-                "route_id": route.route_id,
-                "collection_timestamp": datetime.now().isoformat(),
-                "total_waypoints": len(route.waypoints),
-                "results": results
-            }, f, indent=2)
+        with open(metadata_file, "w") as f:
+            json.dump(
+                {
+                    "route_id": route.route_id,
+                    "collection_timestamp": datetime.now().isoformat(),
+                    "total_waypoints": len(route.waypoints),
+                    "metadata_only": metadata_only,
+                    "results": results,
+                },
+                f,
+                indent=2,
+            )
 
         return results
 
@@ -148,7 +405,8 @@ class ImageCollector:
         route: Route,
         output_dir: Optional[str] = None,
         image_size: str = "640x640",
-        fov: int = 90
+        fov: int = 90,
+        buffer: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Collect Google Street View images for all waypoints in a route
@@ -156,8 +414,9 @@ class ImageCollector:
         Args:
             route: Route object containing waypoints
             output_dir: Directory to save images
-            image_size: Size of images (e.g., "640x640")
+            image_size: Image size string accepted by Google Street View Static API
             fov: Field of view in degrees
+            buffer: Optional radius in meters when searching for nearby panoramas
 
         Returns:
             List of download results with metadata
@@ -165,117 +424,56 @@ class ImageCollector:
         if not settings.google_maps_api_key:
             raise ValueError("Google Maps API key is required for Street View images")
 
-        # Set up output directory
         if not output_dir:
             output_dir = settings.images_dir / route.route_id
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize Google Street View downloader
-        downloader = self.GSVDownloader(
-            key=settings.google_maps_api_key
-        )
+        radius = buffer if buffer is not None else 50
 
-        results = []
-
-        # Create DataFrame for batch download
-        waypoints_df = pd.DataFrame([
-            {
-                "id": f"waypoint_{wp.sequence_id:03d}",
-                "lat": wp.lat,
-                "lon": wp.lon,
-                "heading": wp.heading or 0
-            }
-            for wp in route.waypoints
-        ])
-
-        try:
-            # Batch download images
-            download_result = downloader.download_images(
-                input_csv_file=waypoints_df,
-                output_dir=str(output_dir),
-                image_size=image_size,
-                fov=fov,
-                max_workers=self.max_workers
-            )
-
-            # Update waypoints with image paths
-            for waypoint in route.waypoints:
-                image_filename = f"waypoint_{waypoint.sequence_id:03d}.jpg"
-                image_path = output_dir / image_filename
-
-                if image_path.exists():
-                    waypoint.image_path = str(image_path)
-
-                result = {
-                    "waypoint_id": waypoint.sequence_id,
-                    "lat": waypoint.lat,
-                    "lon": waypoint.lon,
-                    "image_path": str(image_path) if image_path.exists() else None,
-                    "download_success": image_path.exists(),
-                    "timestamp": datetime.now().isoformat()
-                }
-                results.append(result)
-
-        except Exception as e:
-            print(f"Error in batch download: {e}")
-            # Fall back to individual downloads
-            results = self._download_gsv_individually(route, output_dir, image_size, fov)
-
-        # Save collection metadata
-        metadata_file = output_dir / "collection_metadata.json"
-        with open(metadata_file, 'w') as f:
-            json.dump({
-                "route_id": route.route_id,
-                "collection_timestamp": datetime.now().isoformat(),
-                "total_waypoints": len(route.waypoints),
-                "platform": "google_street_view",
-                "results": results
-            }, f, indent=2)
-
-        return results
-
-    def _download_gsv_individually(
-        self,
-        route: Route,
-        output_dir: Path,
-        image_size: str,
-        fov: int
-    ) -> List[Dict[str, Any]]:
-        """Fallback method to download GSV images individually"""
-        downloader = self.GSVDownloader(key=settings.google_maps_api_key)
         results = []
 
         for waypoint in route.waypoints:
             try:
+                print(
+                    f"Collecting GSV image for waypoint {waypoint.sequence_id} at ({waypoint.lat}, {waypoint.lon})"
+                )
+
                 image_filename = f"waypoint_{waypoint.sequence_id:03d}.jpg"
                 image_path = output_dir / image_filename
 
-                # Download single image
-                success = downloader.download_single_image(
+                download_info = self._download_gsv_image(
                     lat=waypoint.lat,
                     lon=waypoint.lon,
-                    output_path=str(image_path),
-                    size=image_size,
+                    heading=waypoint.heading or 0,
+                    image_size=image_size,
                     fov=fov,
-                    heading=waypoint.heading or 0
+                    radius=radius,
+                    output_path=image_path,
                 )
 
-                if success:
+                if download_info["success"]:
                     waypoint.image_path = str(image_path)
 
                 result = {
                     "waypoint_id": waypoint.sequence_id,
                     "lat": waypoint.lat,
                     "lon": waypoint.lon,
-                    "image_path": str(image_path) if success else None,
-                    "download_success": success,
-                    "timestamp": datetime.now().isoformat()
+                    "image_path": str(image_path) if download_info["success"] else None,
+                    "download_success": download_info["success"],
+                    "gsv_pano_id": download_info.get("metadata", {}).get("pano_id")
+                    if download_info.get("metadata")
+                    else None,
+                    "metadata": download_info.get("metadata"),
+                    "error": download_info.get("error"),
+                    "timestamp": datetime.now().isoformat(),
                 }
                 results.append(result)
 
             except Exception as e:
-                print(f"Error downloading image for waypoint {waypoint.sequence_id}: {e}")
+                print(
+                    f"Error downloading image for waypoint {waypoint.sequence_id}: {e}"
+                )
                 result = {
                     "waypoint_id": waypoint.sequence_id,
                     "lat": waypoint.lat,
@@ -283,9 +481,23 @@ class ImageCollector:
                     "image_path": None,
                     "download_success": False,
                     "error": str(e),
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
                 }
                 results.append(result)
+
+        metadata_file = output_dir / "collection_metadata.json"
+        with open(metadata_file, "w") as f:
+            json.dump(
+                {
+                    "route_id": route.route_id,
+                    "collection_timestamp": datetime.now().isoformat(),
+                    "total_waypoints": len(route.waypoints),
+                    "platform": "google_street_view",
+                    "results": results,
+                },
+                f,
+                indent=2,
+            )
 
         return results
 
@@ -314,5 +526,5 @@ class ImageCollector:
             "waypoints_with_images": waypoints_with_images,
             "missing_images": missing_images,
             "coverage_percentage": (waypoints_with_images / total_waypoints) * 100,
-            "validation_timestamp": datetime.now().isoformat()
+            "validation_timestamp": datetime.now().isoformat(),
         }
