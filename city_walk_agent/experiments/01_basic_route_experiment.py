@@ -49,7 +49,7 @@ def experiment_route_comparison():
             "name": "short_dense",
             "start": (40.7589, -73.9851),  # Times Square
             "end": (40.7614, -73.9776),  # Central Park
-            "interval": 10,
+            "interval": 20,
             "description": "Short route, dense sampling",
         },
         {
@@ -63,7 +63,7 @@ def experiment_route_comparison():
             "name": "medium_route",
             "start": (40.7580, -73.9855),  # Times Square area
             "end": (40.7505, -73.9934),  # Penn Station area
-            "interval": 25,
+            "interval": 30,
             "description": "Medium route, moderate sampling",
         },
     ]
@@ -171,26 +171,26 @@ def experiment_sampling_impact():
     start_lat, start_lon = 40.7589, -73.9851
     end_lat, end_lon = 40.7505, -73.9934
 
-    intervals = [5, 10, 25, 50, 100]
+    # intervals = [5, 10, 25, 50, 100]
 
-    print("Testing sampling intervals:", intervals)
+    # print("Testing sampling intervals:", intervals)
 
-    for interval in intervals:
-        route = route_gen.create_simple_route(
-            start_lat=start_lat,
-            start_lon=start_lon,
-            end_lat=end_lat,
-            end_lon=end_lon,
-            interval_meters=interval,
-            route_name=f"sampling_test_{interval}m",
-        )
+    # for interval in intervals:
+    #     route = route_gen.create_simple_route(
+    #         start_lat=start_lat,
+    #         start_lon=start_lon,
+    #         end_lat=end_lat,
+    #         end_lon=end_lon,
+    #         interval_meters=interval,
+    #         route_name=f"sampling_test_{interval}m",
+    #     )
 
-        print(f"  {interval}m interval → {len(route.waypoints)} waypoints")
+    #     print(f"  {interval}m interval → {len(route.waypoints)} waypoints")
 
-    print("\n💡 Insight: Sampling interval directly affects analysis granularity")
-    print("   - Dense sampling: More detail, higher cost")
-    print("   - Sparse sampling: Less detail, lower cost")
-    print("   - Optimal interval depends on route length and analysis goals")
+    # print("\n💡 Insight: Sampling interval directly affects analysis granularity")
+    # print("   - Dense sampling: More detail, higher cost")
+    # print("   - Sparse sampling: Less detail, lower cost")
+    # print("   - Optimal interval depends on route length and analysis goals")
 
 
 def main():

@@ -521,16 +521,32 @@ class APIConnectionTester:
 
             # Test ZenSVI imports
             try:
-                from zensvi.download import MLYDownloader, GSVDownloader
+                # Check if zensvi package structure exists
+                zensvi_download_path = zensvi_path / "src" / "zensvi" / "download"
+                if not zensvi_download_path.exists():
+                    self.print_result(
+                        "zensvi_imports",
+                        False,
+                        f"ZenSVI download module not found at {zensvi_download_path}",
+                    )
+                    return
+
+                from zensvi.download import MLYDownloader, GSVDownloader, KVDownloader
 
                 self.print_result(
                     "zensvi_imports", True, "ZenSVI modules imported successfully"
                 )
 
-                # Test downloader initialization (without API keys)
+                # Test Mapillary downloader initialization with real API key
                 try:
-                    # This should work even without API keys
-                    mly_downloader = MLYDownloader(key="test_key", max_workers=1)
+                    # Use real Mapillary API key from settings
+                    mly_api_key = settings.mapillary_api_key or "test_key"
+                    if mly_api_key == "test_key":
+                        print("   ⚠️  No Mapillary API key found, using dummy key")
+
+                    mly_downloader = MLYDownloader(
+                        mly_api_key=mly_api_key, max_workers=1
+                    )
                     self.print_result(
                         "zensvi_mly_init", True, "Mapillary downloader initialized"
                     )
@@ -541,8 +557,14 @@ class APIConnectionTester:
                         f"Mapillary downloader init failed: {str(e)}",
                     )
 
+                # Test Google Street View downloader initialization with real API key
                 try:
-                    gsv_downloader = GSVDownloader(key="test_key")
+                    # Use real Google Maps API key from settings
+                    gsv_api_key = settings.google_maps_api_key or "test_key"
+                    if gsv_api_key == "test_key":
+                        print("   ⚠️  No Google Maps API key found, using dummy key")
+
+                    gsv_downloader = GSVDownloader(gsv_api_key=gsv_api_key)
                     self.print_result(
                         "zensvi_gsv_init",
                         True,
@@ -555,10 +577,44 @@ class APIConnectionTester:
                         f"GSV downloader init failed: {str(e)}",
                     )
 
+                # Test KartaView downloader initialization (no API key required)
+                try:
+                    # KartaView doesn't require an API key
+                    kv_downloader = KVDownloader(max_workers=1)
+                    self.print_result(
+                        "zensvi_kv_init",
+                        True,
+                        "KartaView downloader initialized (no API key required)",
+                    )
+                    print("   💡 KartaView is free and doesn't require an API key")
+                except Exception as e:
+                    self.print_result(
+                        "zensvi_kv_init",
+                        False,
+                        f"KartaView downloader init failed: {str(e)}",
+                    )
+
             except ImportError as e:
-                self.print_result(
-                    "zensvi_imports", False, f"ZenSVI import failed: {str(e)}"
-                )
+                # Provide more helpful error message
+                error_msg = str(e)
+                if "No package metadata" in error_msg or "PackageNotFoundError" in str(
+                    type(e)
+                ):
+                    self.print_result(
+                        "zensvi_imports",
+                        False,
+                        "ZenSVI not installed. Run `pip install -e .` inside the ZenSVI directory.",
+                    )
+                    print(
+                        f"   💡 If install fails, try upgrading pip: `pip install --upgrade pip setuptools wheel`"
+                    )
+                    print(
+                        f"   💡 ZenSVI can be added to sys.path but __init__.py requires package installation"
+                    )
+                else:
+                    self.print_result(
+                        "zensvi_imports", False, f"ZenSVI import failed: {error_msg}"
+                    )
 
         except Exception as e:
             self.print_result(
@@ -672,10 +728,10 @@ def main():
 
     # Run all tests
     tester.test_google_maps_api()
-    # tester.test_mapillary_api()
-    tester.test_qwen_llm_api()
-    tester.test_qwen_vlm_api()
-    # tester.test_zensvi_integration()
+    tester.test_mapillary_api()
+    # tester.test_qwen_llm_api()
+    # tester.test_qwen_vlm_api()
+    tester.test_zensvi_integration()
     tester.test_virl_integration()
 
     # Print summary
