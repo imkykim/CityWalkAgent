@@ -30,24 +30,40 @@ class Settings(BaseSettings):
     # Qwen VLM Configuration
     qwen_vlm_api_url: Optional[str] = Field(default=None, env="QWEN_VLM_API_URL")
     qwen_vlm_api_key: Optional[str] = Field(default=None, env="QWEN_VLM_API_KEY")
-    qwen_vlm_model: str = Field(default="Qwen3-VL-30B-A3B-Instruct-FP8", env="QWEN_VLM_MODEL")
+    qwen_vlm_model: str = Field(
+        default="Qwen3-VL-30B-A3B-Instruct-FP8", env="QWEN_VLM_MODEL"
+    )
 
     # Project Paths
-    project_root: Path = Field(default_factory=lambda: Path(__file__).parent.parent.parent)
-    data_dir: Path = Field(default_factory=lambda: Path(__file__).parent.parent.parent / "data")
-    images_dir: Path = Field(default_factory=lambda: Path(__file__).parent.parent.parent / "data" / "images")
-    results_dir: Path = Field(default_factory=lambda: Path(__file__).parent.parent.parent / "data" / "results")
+    project_root: Path = Field(
+        default_factory=lambda: Path(__file__).parent.parent.parent
+    )
+    data_dir: Path = Field(
+        default_factory=lambda: Path(__file__).parent.parent.parent / "data"
+    )
+    images_dir: Path = Field(
+        default_factory=lambda: Path(__file__).parent.parent.parent / "data" / "images"
+    )
+    results_dir: Path = Field(
+        default_factory=lambda: Path(__file__).parent.parent.parent / "data" / "results"
+    )
 
     # ZenSVI Integration
-    zensvi_root: Path = Field(default_factory=lambda: Path(__file__).parent.parent.parent.parent / "ZenSVI")
+    zensvi_root: Path = Field(
+        default_factory=lambda: Path(__file__).parent.parent.parent.parent / "ZenSVI"
+    )
 
     # VIRL Integration
-    virl_root: Path = Field(default_factory=lambda: Path(__file__).parent.parent.parent.parent / "VIRL")
+    virl_root: Path = Field(
+        default_factory=lambda: Path(__file__).parent.parent.parent.parent / "VIRL"
+    )
 
     # Evaluation Settings
-    default_dimensions: List[str] = Field(default=["safety", "comfort", "interest", "aesthetics"])
+    default_dimensions: List[str] = Field(
+        default=["safety", "comfort", "interest", "aesthetics"]
+    )
     default_model: str = Field(default="claude-3-sonnet")
-    default_sampling_interval: int = Field(default=10)  # meters
+    default_sampling_interval: int = Field(default=20)  # meters
 
     # Analysis Thresholds
     volatility_threshold: float = Field(default=2.0)
