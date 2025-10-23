@@ -614,12 +614,12 @@ def main():
         comparison_df.to_csv(comparison_file, index=False)
         print(f"\n💾 Comparison saved to: {comparison_file}")
 
-    # Experiment 3: Parallel Processing (only if GSV available)
-    parallel_results = None
-    if not gsv_results.get("skipped", False):
-        parallel_results = experiment_parallel_processing(
-            route=test_route, worker_counts=[1, 2, 4, 8]
-        )
+    # # Experiment 3: Parallel Processing (only if GSV available)
+    # parallel_results = None
+    # if not gsv_results.get("skipped", False):
+    #     parallel_results = experiment_parallel_processing(
+    #         route=test_route, worker_counts=[1, 2, 4, 8]
+    #     )
 
     # Save comprehensive log
     log_data = {
@@ -629,7 +629,7 @@ def main():
         "gsv_results": gsv_results,
         "mapillary_results": mapillary_results,
         "validation_results": validation_results,
-        "parallel_processing": parallel_results,
+        # "parallel_processing": parallel_results,
     }
 
     log_file = results_dir / f"image_collection_log_{timestamp}.json"
@@ -660,10 +660,10 @@ def main():
             f"3. Image validation completed for {len(validation_results)} platform(s)"
         )
 
-    if parallel_results and "error" not in parallel_results:
-        findings.append(
-            f"4. Optimal parallelization: {parallel_results.get('optimal_workers', 'N/A')} workers"
-        )
+    # if parallel_results and "error" not in parallel_results:
+    #     findings.append(
+    #         f"4. Optimal parallelization: {parallel_results.get('optimal_workers', 'N/A')} workers"
+    #     )
 
     if not findings:
         findings.append("No successful experiments - check API keys and configuration")
@@ -678,7 +678,7 @@ def main():
         "gsv_results": gsv_results,
         "mapillary_results": mapillary_results,
         "validation_results": validation_results,
-        "parallel_results": parallel_results,
+        # "parallel_results": parallel_results,
         "comparison_df": comparison_df,
     }
 
