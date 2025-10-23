@@ -81,8 +81,6 @@ class ImageCollector:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        search_distance = buffer if buffer is not None else max_distance
-
         results = []
 
         # Collect images for each waypoint
@@ -96,37 +94,81 @@ class ImageCollector:
                 waypoint_dir = output_dir / f"waypoint_{waypoint.sequence_id:03d}"
                 waypoint_dir.mkdir(exist_ok=True)
 
-                image_metadata = self._fetch_single_mapillary_image(
+                candidates = self._fetch_mapillary_candidates(
                     lat=waypoint.lat,
                     lon=waypoint.lon,
                     image_size=image_size,
-                    max_distance=search_distance,
+                    max_distance=buffer if buffer is not None else max_distance,
                 )
 
-                if image_metadata and image_metadata.get("image_url"):
-                    image_path = (
-                        waypoint_dir / f"waypoint_{waypoint.sequence_id:03d}.jpg"
+                image_metadata = None
+                image_path = waypoint_dir / f"waypoint_{waypoint.sequence_id:03d}.jpg"
+                downloaded = False
+
+                if not candidates:
+                    search_limit = buffer if buffer is not None else max_distance
+                    print(
+                        f"  ⚠️ No Mapillary candidates found within ~{search_limit}m for waypoint {waypoint.sequence_id}"
                     )
-                    self._download_image(
-                        image_metadata["image_url"],
-                        image_path,
-                        timeout=20,
+
+                for candidate in candidates:
+                    try:
+                        if image_path.exists():
+                            image_path.unlink()
+                        self._download_image(
+                            candidate["image_url"],
+                            image_path,
+                            timeout=20,
+                        )
+                        waypoint.image_path = str(image_path)
+                        image_metadata = candidate
+                        downloaded = True
+                        distance = candidate.get("distance_m")
+                        radius_used = candidate.get("radius")
+                        distance_str = (
+                            f"~{distance:.1f}m" if distance is not None else "unknown distance"
+                        )
+                        radius_str = f"{radius_used}m" if radius_used is not None else "unknown radius"
+                        print(
+                            f"  ✓ Mapillary image {candidate.get('image_id')} selected at {distance_str} (search radius {radius_str})"
+                        )
+                        break
+                    except Exception as download_error:
+                        print(
+                            f"Warning: failed to download Mapillary image {candidate.get('image_id')}: {download_error}"
+                        )
+                        if image_path.exists():
+                            image_path.unlink(missing_ok=True)
+
+                if not downloaded:
+                    image_path = None
+                    waypoint.image_path = None
+                    print(
+                        f"  ❌ Mapillary download failed for waypoint {waypoint.sequence_id} after exhausting candidates"
                     )
-                    waypoint.image_path = str(image_path)
-                else:
+                elif not image_path.exists():
+                    downloaded = False
+                    image_metadata = None
+                    waypoint.image_path = None
                     image_path = None
 
                 result = {
                     "waypoint_id": waypoint.sequence_id,
                     "lat": waypoint.lat,
                     "lon": waypoint.lon,
-                    "images_downloaded": 1 if image_path else 0,
+                    "images_downloaded": 1 if downloaded else 0,
                     "image_path": str(image_path) if image_path else None,
                     "mapillary_image_id": (
                         image_metadata.get("image_id") if image_metadata else None
                     ),
                     "captured_at": (
                         image_metadata.get("captured_at") if image_metadata else None
+                    ),
+                    "distance_m": (
+                        image_metadata.get("distance_m") if image_metadata else None
+                    ),
+                    "search_radius_m": (
+                        image_metadata.get("radius") if image_metadata else None
                     ),
                     "timestamp": datetime.now().isoformat(),
                 }
@@ -162,14 +204,14 @@ class ImageCollector:
             )
         return results
 
-    def _fetch_single_mapillary_image(
+    def _fetch_mapillary_candidates(
         self,
         lat: float,
         lon: float,
         image_size: int,
         max_distance: int,
-    ) -> Optional[Dict[str, Any]]:
-        """Fetch metadata for the closest Mapillary image to a coordinate."""
+    ) -> List[Dict[str, Any]]:
+        """Return candidate Mapillary images near a coordinate, expanding the search radius if needed."""
 
         allowed_sizes = {256, 1024, 2048}
         if image_size not in allowed_sizes:
@@ -177,44 +219,176 @@ class ImageCollector:
                 f"Mapillary only supports image_size values {sorted(allowed_sizes)}, got {image_size}."
             )
 
+        base_distance = max(max_distance, 10)
         field_name = f"thumb_{image_size}_url"
-        delta_lat, delta_lon = self._meters_to_degree_offsets(lat, max_distance)
 
-        bbox = [
-            lon - delta_lon,
-            lat - delta_lat,
-            lon + delta_lon,
-            lat + delta_lat,
-        ]
+        search_radii: List[int] = []
+        for candidate_radius in (
+            base_distance,
+            int(base_distance * 1.5),
+            base_distance * 2,
+            300,
+            400,
+            500,
+        ):
+            radius_value = max(10, int(candidate_radius))
+            if radius_value not in search_radii:
+                search_radii.append(radius_value)
 
-        params = {
-            "fields": f"id,{field_name},captured_at",
-            "access_token": self.api_key,
-            "limit": 1,
-            "bbox": ",".join(map(str, bbox)),
-        }
+        candidates: List[Dict[str, Any]] = []
+        seen_ids = set()
 
-        response = requests.get(
-            "https://graph.mapillary.com/images",
-            params=params,
-            timeout=15,
+        for radius_m in search_radii:
+            delta_lat, delta_lon = self._meters_to_degree_offsets(lat, radius_m)
+            bbox = [
+                lon - delta_lon,
+                lat - delta_lat,
+                lon + delta_lon,
+                lat + delta_lat,
+            ]
+
+            params = {
+                "fields": f"id,{field_name},captured_at,computed_geometry",
+                "access_token": self.api_key,
+                "limit": 10,
+                "bbox": ",".join(map(str, bbox)),
+            }
+
+            try:
+                response = requests.get(
+                    "https://graph.mapillary.com/images",
+                    params=params,
+                    timeout=15,
+                )
+                response.raise_for_status()
+            except requests.RequestException as api_error:
+                print(
+                    f"Warning: Mapillary request failed for radius {radius_m}m at ({lat}, {lon}): {api_error}"
+                )
+                continue
+
+            data = response.json().get("data", [])
+            for image_data in data:
+                image_id = image_data.get("id")
+                image_url = image_data.get(field_name)
+                if not image_url or not image_id:
+                    continue
+                if image_id in seen_ids:
+                    continue
+
+                coordinates = None
+                try:
+                    coordinates = image_data.get("computed_geometry", {}).get("coordinates")
+                except AttributeError:
+                    coordinates = None
+
+                distance = None
+                if coordinates and len(coordinates) >= 2:
+                    distance = self._haversine_distance(
+                        lat,
+                        lon,
+                        coordinates[1],
+                        coordinates[0],
+                    )
+
+                seen_ids.add(image_id)
+                candidates.append(
+                    {
+                        "image_id": image_id,
+                        "image_url": image_url,
+                        "captured_at": image_data.get("captured_at"),
+                        "radius": radius_m,
+                        "distance_m": distance,
+                    }
+                )
+
+            if candidates:
+                break
+
+        if not candidates:
+            fallback_radii = [base_distance, 200, 400, 800]
+            for radius_m in fallback_radii:
+                params = {
+                    "fields": f"id,{field_name},captured_at,computed_geometry",
+                    "access_token": self.api_key,
+                    "limit": 5,
+                    "closeto": f"{lon},{lat}",
+                }
+
+                try:
+                    response = requests.get(
+                        "https://graph.mapillary.com/images",
+                        params=params,
+                        timeout=15,
+                    )
+                    response.raise_for_status()
+                except requests.RequestException as api_error:
+                    print(
+                        f"Warning: Mapillary closeto request failed near ({lat}, {lon}): {api_error}"
+                    )
+                    continue
+
+                data = response.json().get("data", [])
+                for image_data in data:
+                    image_id = image_data.get("id")
+                    image_url = image_data.get(field_name)
+                    if not image_id or not image_url or image_id in seen_ids:
+                        continue
+                    coordinates = None
+                    try:
+                        coordinates = image_data.get("computed_geometry", {}).get("coordinates")
+                    except AttributeError:
+                        coordinates = None
+                    distance = None
+                    if coordinates and len(coordinates) >= 2:
+                        distance = self._haversine_distance(
+                            lat,
+                            lon,
+                            coordinates[1],
+                            coordinates[0],
+                        )
+                    seen_ids.add(image_id)
+                    candidates.append(
+                        {
+                            "image_id": image_id,
+                            "image_url": image_url,
+                            "captured_at": image_data.get("captured_at"),
+                            "radius": radius_m,
+                            "distance_m": distance,
+                        }
+                    )
+
+                if candidates:
+                    break
+
+        candidates.sort(
+            key=lambda c: (
+                float("inf") if c.get("distance_m") is None else c["distance_m"],
+                c.get("radius", float("inf")),
+            )
         )
-        response.raise_for_status()
 
-        data = response.json().get("data", [])
-        if not data:
-            return None
+        return candidates
 
-        image_data = data[0]
-        image_url = image_data.get(field_name)
-        if not image_url:
-            return None
+    @staticmethod
+    def _haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        """Compute distance in meters between two lat/lon points."""
 
-        return {
-            "image_id": image_data.get("id"),
-            "image_url": image_url,
-            "captured_at": image_data.get("captured_at"),
-        }
+        radius_earth = 6_371_000  # meters
+        lat1_rad = math.radians(lat1)
+        lon1_rad = math.radians(lon1)
+        lat2_rad = math.radians(lat2)
+        lon2_rad = math.radians(lon2)
+
+        delta_lat = lat2_rad - lat1_rad
+        delta_lon = lon2_rad - lon1_rad
+
+        a = (
+            math.sin(delta_lat / 2) ** 2
+            + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+        )
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        return radius_earth * c
 
     @staticmethod
     def _meters_to_degree_offsets(lat: float, distance_meters: float) -> tuple:
@@ -256,52 +430,94 @@ class ImageCollector:
         output_path: Path,
         timeout: int = 20,
     ) -> Dict[str, Any]:
-        """Fetch metadata and download a single Google Street View image."""
+        """Fetch metadata and download a single Google Street View image, retrying with larger radii."""
 
         metadata_url = "https://maps.googleapis.com/maps/api/streetview/metadata"
         image_url = "https://maps.googleapis.com/maps/api/streetview"
 
-        metadata_params = {
-            "location": f"{lat},{lon}",
-            "radius": radius,
-            "key": settings.google_maps_api_key,
-            "source": "outdoor",
-        }
+        base_radius = max(radius, 10)
+        search_radii = []
+        for multiplier in (1, 1.5, 2):
+            candidate_radius = max(10, int(base_radius * multiplier))
+            if candidate_radius not in search_radii:
+                search_radii.append(candidate_radius)
 
-        metadata_response = requests.get(metadata_url, params=metadata_params, timeout=timeout)
-        metadata_response.raise_for_status()
-        metadata = metadata_response.json()
+        last_metadata: Optional[Dict[str, Any]] = None
+        last_error: Optional[str] = None
 
-        if metadata.get("status") != "OK":
-            return {"success": False, "metadata": metadata, "error": metadata.get("status")}
-
-        image_params = {
-            "size": image_size,
-            "location": f"{lat},{lon}",
-            "fov": fov,
-            "heading": heading,
-            "pitch": 0,
-            "key": settings.google_maps_api_key,
-            "source": "outdoor",
-        }
-
-        image_response = requests.get(image_url, params=image_params, stream=True, timeout=timeout)
-        image_response.raise_for_status()
-
-        content_type = image_response.headers.get("Content-Type", "")
-        if "image" not in content_type.lower():
-            return {
-                "success": False,
-                "metadata": metadata,
-                "error": f"Unexpected content type: {content_type}",
+        for current_radius in search_radii:
+            metadata_params = {
+                "location": f"{lat},{lon}",
+                "radius": current_radius,
+                "key": settings.google_maps_api_key,
+                "source": "outdoor",
             }
 
-        with open(output_path, "wb") as image_file:
-            for chunk in image_response.iter_content(chunk_size=8192):
-                if chunk:
-                    image_file.write(chunk)
+            try:
+                metadata_response = requests.get(
+                    metadata_url, params=metadata_params, timeout=timeout
+                )
+                metadata_response.raise_for_status()
+                metadata = metadata_response.json()
+                last_metadata = metadata
+            except requests.RequestException as request_error:
+                last_error = f"metadata_request_failed:{request_error}"
+                continue
 
-        return {"success": True, "metadata": metadata}
+            if metadata.get("status") != "OK":
+                last_error = metadata.get("status", "UNKNOWN_STATUS")
+                continue
+
+            pano_id = metadata.get("pano_id")
+
+            image_params = {
+                "size": image_size,
+                "location": f"{lat},{lon}",
+                "fov": fov,
+                "heading": heading,
+                "pitch": 0,
+                "key": settings.google_maps_api_key,
+                "source": "outdoor",
+            }
+
+            if pano_id:
+                image_params["pano"] = pano_id
+
+            try:
+                image_response = requests.get(
+                    image_url, params=image_params, stream=True, timeout=timeout
+                )
+                image_response.raise_for_status()
+            except requests.RequestException as image_error:
+                last_error = f"image_request_failed:{image_error}"
+                continue
+
+            content_type = image_response.headers.get("Content-Type", "")
+            if "image" not in content_type.lower():
+                last_error = f"unexpected_content_type:{content_type}"
+                continue
+
+            if output_path.exists():
+                try:
+                    output_path.unlink()
+                except OSError:
+                    pass
+
+            with open(output_path, "wb") as image_file:
+                for chunk in image_response.iter_content(chunk_size=8192):
+                    if chunk:
+                        image_file.write(chunk)
+
+            metadata["search_radius_m"] = current_radius
+            return {"success": True, "metadata": metadata}
+
+        if output_path.exists() and output_path.stat().st_size == 0:
+            try:
+                output_path.unlink()
+            except OSError:
+                pass
+
+        return {"success": False, "metadata": last_metadata, "error": last_error}
 
     def collect_kartaview_images(
         self,
@@ -407,6 +623,7 @@ class ImageCollector:
         image_size: str = "640x640",
         fov: int = 90,
         buffer: Optional[int] = None,
+        clean_output: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Collect Google Street View images for all waypoints in a route
@@ -417,6 +634,7 @@ class ImageCollector:
             image_size: Image size string accepted by Google Street View Static API
             fov: Field of view in degrees
             buffer: Optional radius in meters when searching for nearby panoramas
+            clean_output: If True, delete existing JPEGs in the output directory before downloading
 
         Returns:
             List of download results with metadata
@@ -428,6 +646,15 @@ class ImageCollector:
             output_dir = settings.images_dir / route.route_id
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        if clean_output:
+            for existing_file in output_dir.glob("*.jpg"):
+                try:
+                    existing_file.unlink()
+                except Exception as cleanup_error:
+                    print(
+                        f"Warning: failed to remove existing GSV image {existing_file}: {cleanup_error}"
+                    )
 
         radius = buffer if buffer is not None else 50
 
@@ -461,9 +688,11 @@ class ImageCollector:
                     "lon": waypoint.lon,
                     "image_path": str(image_path) if download_info["success"] else None,
                     "download_success": download_info["success"],
-                    "gsv_pano_id": download_info.get("metadata", {}).get("pano_id")
-                    if download_info.get("metadata")
-                    else None,
+                    "gsv_pano_id": (
+                        download_info.get("metadata", {}).get("pano_id")
+                        if download_info.get("metadata")
+                        else None
+                    ),
                     "metadata": download_info.get("metadata"),
                     "error": download_info.get("error"),
                     "timestamp": datetime.now().isoformat(),
