@@ -1,0 +1,50 @@
+{
+  "framework_id": "ewing_handy_5d",
+  "framework_name": "Ewing & Handy Urban Design Qualities",
+  "framework_name_cn": "Ewing & Handy 城市设计品质",
+  "description": "实证研究支持的5个城市设计维度",
+  "theory_base": "Measuring Urban Design Qualities (2010) - 经典步行性评估框架",
+  "num_dimensions": 5,
+  "dimensions": [
+    {
+      "id": "imageability",
+      "name_en": "Imageability",
+      "name_cn": "可意象性",
+      "theory_base": "Lynch Image of the City - 环境给人留下深刻印象的能力",
+      "description": "评估环境的可识别性、可记忆性和独特性",
+      "vlm_prompt": "请评估这张街景图像的**可意象性**（Imageability）。\n\n评估要点：\n- 独特性：这个场所是否有独特的、令人印象深刻的特征？\n- 可记忆性：这个环境是否容易被记住和回忆？\n- 地标元素：是否有显著的地标建筑、雕塑、景观等元素？\n- 视觉标识：环境是否有清晰的视觉标识和特征？\n\n请以1-10分评分（1分=平淡无奇，10分=极具特色），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+    },
+    {
+      "id": "enclosure",
+      "name_en": "Enclosure",
+      "name_cn": "围合度",
+      "theory_base": "街道空间的竖向围合感和边界清晰度",
+      "description": "评估街道空间的围合程度和边界定义",
+      "vlm_prompt": "请评估这张街景图像的**围合度**（Enclosure）。\n\n评估要点：\n- 竖向围合：建筑、树木等是否形成清晰的竖向边界？\n- 空间定义：街道空间是否有明确的\"房间感\"？\n- 宽高比：街道宽度与两侧建筑高度的比例是否适宜？\n- 边界连续性：沿街界面是否连续，无大空隙？\n\n请以1-10分评分（1分=开敞无界，10分=高度围合），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+    },
+    {
+      "id": "human_scale",
+      "name_en": "Human Scale",
+      "name_cn": "人性化尺度",
+      "theory_base": "环境尺度与人体尺度的匹配程度",
+      "description": "评估环境尺度的宜人性和亲人感",
+      "vlm_prompt": "请评估这张街景图像的**人性化尺度**（Human Scale）。\n\n评估要点：\n- 尺度宜人：建筑、街道尺度是否与人体尺度相匹配，不过于巨大？\n- 细部丰富：是否有适合步行速度观察的细节（店铺橱窗、装饰等）？\n- 步行友好：设施和设计是否考虑行人需求（如低层商铺、树荫等）？\n- 亲密感：环境是否让人感到舒适、安全、有归属感？\n\n请以1-10分评分（1分=非人尺度，10分=高度宜人），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+    },
+    {
+      "id": "transparency",
+      "name_en": "Transparency",
+      "name_cn": "通透性",
+      "theory_base": "建筑立面与街道之间的视觉渗透性",
+      "description": "评估街道与建筑内部的视觉连接程度",
+      "vlm_prompt": "请评估这张街景图像的**通透性**（Transparency）。\n\n评估要点：\n- 视觉渗透：能否通过窗户、开口看到建筑内部活动？\n- 底层活跃度：底层是否有商铺、餐厅等开放界面？\n- 互动可能：街道与室内是否有视觉和功能上的交流？\n- 活力感知：能否感受到人的活动和生活气息？\n\n请以1-10分评分（1分=封闭隔绝，10分=高度通透），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+    },
+    {
+      "id": "complexity",
+      "name_en": "Complexity",
+      "name_cn": "复杂性",
+      "theory_base": "环境中视觉元素的多样性和丰富度",
+      "description": "评估街道环境的视觉复杂度和多样性",
+      "vlm_prompt": "请评估这张街景图像的**复杂性**（Complexity）。\n\n评估要点：\n- 元素多样性：建筑类型、商业业态、景观元素是否多样？\n- 视觉丰富度：色彩、材质、形式、细节是否丰富？\n- 信息密度：单位视野内是否有足够的视觉信息？\n- 避免单调：环境是否有足够的变化，不会感到乏味？\n\n请以1-10分评分（1分=极度单调，10分=高度复杂），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+    }
+  ]
+}
