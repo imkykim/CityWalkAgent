@@ -2,6 +2,11 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime
 
+try:
+    from ..config.settings import settings
+except ImportError:
+    from config.settings import settings
+
 
 class WalkabilityScore(BaseModel):
     """Individual walkability dimension score"""
@@ -74,7 +79,7 @@ class ExperimentConfig(BaseModel):
     """Configuration for an experiment run"""
     experiment_id: str
     prompt_version: str
-    dimensions: List[str] = Field(default=["safety", "comfort", "interest", "aesthetics"])
+    dimensions: List[str] = Field(default_factory=lambda: settings.default_dimensions)
     model_name: str = Field(default="claude-3-sonnet")
     sampling_interval: int = Field(default=10, description="Meters between waypoints")
     volatility_threshold: float = Field(default=2.0, description="Threshold for detecting volatility")

@@ -12,6 +12,7 @@ except ImportError:
     # Handle case when running as script
     import sys
     from pathlib import Path
+
     src_path = Path(__file__).parent.parent
     sys.path.insert(0, str(src_path))
     from utils.data_models import Route, Waypoint
@@ -31,7 +32,9 @@ class RouteGenerator:
             try:
                 self.gmaps = googlemaps.Client(key=self.api_key)
             except ValueError:
-                print(f"Warning: Invalid Google Maps API key provided. Google Maps functionality will be disabled.")
+                print(
+                    f"Warning: Invalid Google Maps API key provided. Google Maps functionality will be disabled."
+                )
 
     def create_simple_route(
         self,
@@ -40,7 +43,7 @@ class RouteGenerator:
         end_lat: float,
         end_lon: float,
         interval_meters: int = 10,
-        route_name: Optional[str] = None
+        route_name: Optional[str] = None,
     ) -> Route:
         """
         Create a simple straight-line route between two points
@@ -72,10 +75,7 @@ class RouteGenerator:
         waypoints = []
         for i, (lat, lon) in enumerate(zip(lats, lons)):
             waypoint = Waypoint(
-                lat=lat,
-                lon=lon,
-                sequence_id=i,
-                timestamp=datetime.now()
+                lat=lat, lon=lon, sequence_id=i, timestamp=datetime.now()
             )
             waypoints.append(waypoint)
 
@@ -91,7 +91,7 @@ class RouteGenerator:
             end_lon=end_lon,
             waypoints=waypoints,
             route_name=route_name,
-            interval_meters=interval_meters
+            interval_meters=interval_meters,
         )
 
         return route
@@ -102,7 +102,7 @@ class RouteGenerator:
         destination: str,
         interval_meters: int = 10,
         mode: str = "walking",
-        route_name: Optional[str] = None
+        route_name: Optional[str] = None,
     ) -> Route:
         """
         Create a route using Google Maps Directions API
@@ -122,9 +122,7 @@ class RouteGenerator:
 
         # Get directions from Google Maps
         directions = self.gmaps.directions(
-            origin=origin,
-            destination=destination,
-            mode=mode
+            origin=origin, destination=destination, mode=mode
         )
 
         if not directions:
@@ -132,22 +130,22 @@ class RouteGenerator:
 
         # Extract the main route
         route_data = directions[0]
-        legs = route_data['legs']
+        legs = route_data["legs"]
 
         # Decode the polyline to get detailed path coordinates
         polyline_points = []
         for leg in legs:
-            for step in leg['steps']:
+            for step in leg["steps"]:
                 # Decode the polyline for this step
-                decoded = googlemaps.convert.decode_polyline(step['polyline']['points'])
+                decoded = googlemaps.convert.decode_polyline(step["polyline"]["points"])
                 polyline_points.extend(decoded)
 
         # Sample waypoints along the path at specified intervals
         waypoints = self._sample_waypoints_along_path(polyline_points, interval_meters)
 
         # Get start and end coordinates
-        start_location = legs[0]['start_location']
-        end_location = legs[-1]['end_location']
+        start_location = legs[0]["start_location"]
+        end_location = legs[-1]["end_location"]
 
         route_id = f"gmaps_route_{int(datetime.now().timestamp())}"
         if route_name:
@@ -155,22 +153,20 @@ class RouteGenerator:
 
         route = Route(
             route_id=route_id,
-            start_lat=start_location['lat'],
-            start_lon=start_location['lng'],
-            end_lat=end_location['lat'],
-            end_lon=end_location['lng'],
+            start_lat=start_location["lat"],
+            start_lon=start_location["lng"],
+            end_lat=end_location["lat"],
+            end_lon=end_location["lng"],
             waypoints=waypoints,
             route_name=route_name,
             description=f"Google Maps route from {origin} to {destination}",
-            interval_meters=interval_meters
+            interval_meters=interval_meters,
         )
 
         return route
 
     def _sample_waypoints_along_path(
-        self,
-        path_points: List[dict],
-        interval_meters: int
+        self, path_points: List[dict], interval_meters: int
     ) -> List[Waypoint]:
         """
         Sample waypoints along a path at regular intervals
@@ -191,12 +187,14 @@ class RouteGenerator:
 
         # Always include the first point
         first_point = path_points[0]
-        waypoints.append(Waypoint(
-            lat=first_point['lat'],
-            lon=first_point['lng'],
-            sequence_id=sequence_id,
-            timestamp=datetime.now()
-        ))
+        waypoints.append(
+            Waypoint(
+                lat=first_point["lat"],
+                lon=first_point["lng"],
+                sequence_id=sequence_id,
+                timestamp=datetime.now(),
+            )
+        )
         sequence_id += 1
 
         # Sample points along the path
@@ -206,33 +204,39 @@ class RouteGenerator:
 
             # Calculate distance between consecutive points
             segment_distance = geodesic(
-                (prev_point['lat'], prev_point['lng']),
-                (curr_point['lat'], curr_point['lng'])
+                (prev_point["lat"], prev_point["lng"]),
+                (curr_point["lat"], curr_point["lng"]),
             ).meters
 
             current_distance += segment_distance
 
             # Add waypoint if we've traveled the required interval
             if current_distance >= interval_meters:
-                waypoints.append(Waypoint(
-                    lat=curr_point['lat'],
-                    lon=curr_point['lng'],
-                    sequence_id=sequence_id,
-                    timestamp=datetime.now()
-                ))
+                waypoints.append(
+                    Waypoint(
+                        lat=curr_point["lat"],
+                        lon=curr_point["lng"],
+                        sequence_id=sequence_id,
+                        timestamp=datetime.now(),
+                    )
+                )
                 sequence_id += 1
                 current_distance = 0  # Reset distance counter
 
         # Always include the last point if it wasn't already added
         last_point = path_points[-1]
-        if (waypoints[-1].lat != last_point['lat'] or
-            waypoints[-1].lon != last_point['lng']):
-            waypoints.append(Waypoint(
-                lat=last_point['lat'],
-                lon=last_point['lng'],
-                sequence_id=sequence_id,
-                timestamp=datetime.now()
-            ))
+        if (
+            waypoints[-1].lat != last_point["lat"]
+            or waypoints[-1].lon != last_point["lng"]
+        ):
+            waypoints.append(
+                Waypoint(
+                    lat=last_point["lat"],
+                    lon=last_point["lng"],
+                    sequence_id=sequence_id,
+                    timestamp=datetime.now(),
+                )
+            )
 
         return waypoints
 
@@ -254,7 +258,7 @@ class RouteGenerator:
         filepath.parent.mkdir(parents=True, exist_ok=True)
 
         # Save route as JSON
-        with open(filepath, 'w') as f:
+        with open(filepath, "w") as f:
             f.write(route.model_dump_json(indent=2))
 
         return str(filepath)
@@ -270,7 +274,7 @@ class RouteGenerator:
         Returns:
             Route object
         """
-        with open(filepath, 'r') as f:
+        with open(filepath, "r") as f:
             route_data = f.read()
 
         return Route.model_validate_json(route_data)

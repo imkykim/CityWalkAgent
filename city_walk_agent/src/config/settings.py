@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Any
 from pydantic import Field
 from dotenv import load_dotenv
 
@@ -14,22 +14,32 @@ except ImportError:
     from pydantic import BaseSettings
 
 
+def _framework_dimensions(framework_id: str) -> List[str]:
+    """
+    Load dimension IDs from the requested framework definition.
+
+    Falls back to the legacy four-dimension set if frameworks cannot be read.
+    """
+    from .frameworks import get_framework_manager
+
+    try:
+        framework = get_framework_manager().load_framework(framework_id)
+        dimensions = [dim["id"] for dim in framework.get("dimensions", [])]
+        return dimensions or ["safety", "comfort", "interest", "aesthetics"]
+    except Exception:
+        # Provide legacy fallback to keep initialization resilient
+        return ["safety", "comfort", "interest", "aesthetics"]
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
 
-    # API Keys
-    google_maps_api_key: Optional[str] = Field(default=None, env="GOOGLE_MAPS_API_KEY")
-    mapillary_api_key: Optional[str] = Field(default=None, env="MAPILLARY_API_KEY")
-    openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
-
-    # Qwen LLM Configuration
-    qwen_api_url: Optional[str] = Field(default=None, env="QWEN_API_URL")
-    qwen_api_key: Optional[str] = Field(default=None, env="QWEN_API_KEY")
-    qwen_llm_model: str = Field(default="Qwen/Qwen3-bB", env="QWEN_LLM_MODEL")
+    # Required API Keys
+    google_maps_api_key: str = Field(env="GOOGLE_MAPS_API_KEY")
+    qwen_vlm_api_key: str = Field(env="QWEN_VLM_API_KEY")
 
     # Qwen VLM Configuration
-    qwen_vlm_api_url: Optional[str] = Field(default=None, env="QWEN_VLM_API_URL")
-    qwen_vlm_api_key: Optional[str] = Field(default=None, env="QWEN_VLM_API_KEY")
+    qwen_vlm_api_url: str = Field(env="QWEN_VLM_API_URL")
     qwen_vlm_model: str = Field(
         default="Qwen3-VL-30B-A3B-Instruct-FP8", env="QWEN_VLM_MODEL"
     )
@@ -59,9 +69,12 @@ class Settings(BaseSettings):
     )
 
     # Evaluation Settings
-    default_dimensions: List[str] = Field(
-        default=["safety", "comfort", "interest", "aesthetics"]
+    default_framework_id: str = Field(
+        default="sagai_2025",
+        env="DEFAULT_FRAMEWORK_ID",
+        description="Framework identifier to use for default prompts and experiments",
     )
+    default_dimensions: List[str] = Field(default_factory=list)
     default_model: str = Field(default="claude-3-sonnet")
     default_sampling_interval: int = Field(default=20)  # meters
 
@@ -81,6 +94,13 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         extra = "ignore"  # Ignore extra environment variables
+
+    def model_post_init(self, __context: Any) -> None:
+        """
+        Populate default dimensions from the configured framework unless provided.
+        """
+        if not self.default_dimensions:
+            self.default_dimensions = _framework_dimensions(self.default_framework_id)
 
 
 # Global settings instance

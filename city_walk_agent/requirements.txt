@@ -15,16 +15,32 @@ Pillow>=10.0.0
 # HTTP clients
 httpx>=0.24.0
 requests>=2.31.0
+aiohttp>=3.9.0
 
 # AI/ML APIs
-anthropic>=0.69.0
+anthropic>=0.40.0
 openai>=1.0.0
+
+# Retry logic and utilities
+tenacity>=8.0.0
+
+# Structured logging
+structlog>=24.0.0
+
+# Progress bars
+tqdm>=4.65.0
+
+# Visualization
+plotly>=5.0.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
 
 # Development dependencies
 jupyter>=1.0.0
-matplotlib>=3.7.0
-seaborn>=0.12.0
 
 # Testing
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
+
+# Data export
+openpyxl>=3.1.0
