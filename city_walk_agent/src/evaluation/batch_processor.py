@@ -5,16 +5,18 @@ Handles parallel and batched evaluation of multiple images
 """
 
 import asyncio
-from typing import List, Dict, Any, Optional, Callable
-from pathlib import Path
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
 try:
     from tqdm import tqdm
     HAS_TQDM = True
 except ImportError:
     HAS_TQDM = False
+
+from src.utils.logging import get_logger
 
 
 @dataclass
@@ -54,7 +56,7 @@ class BatchProcessor:
         self,
         max_concurrent: int = 5,
         show_progress: bool = True
-    ):
+    ) -> None:
         """
         Initialize batch processor
 
@@ -64,6 +66,7 @@ class BatchProcessor:
         """
         self.max_concurrent = max_concurrent
         self.show_progress = show_progress and HAS_TQDM
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
 
     async def process_batch_async(
         self,
@@ -90,6 +93,7 @@ class BatchProcessor:
         # Prepare task coroutines
         async def process_task(task: EvaluationTask) -> Dict[str, Any]:
             async with semaphore:
+                error_message: Optional[str] = None
                 try:
                     # Call VLM
                     response = await vlm_call_func(task.prompt, task.image_path)
@@ -112,8 +116,14 @@ class BatchProcessor:
                                 "usage": response.get("usage", {})
                             }
 
-                except Exception as e:
-                    print(f"Task failed ({task.image_id}/{task.dimension_id}): {e}")
+                except Exception as error:
+                    self.logger.error(
+                        "Batch task failed",
+                        image_id=task.image_id,
+                        dimension_id=task.dimension_id,
+                        error=str(error)
+                    )
+                    error_message = str(error)
 
                 # Fallback result on failure
                 return {
@@ -123,7 +133,7 @@ class BatchProcessor:
                     "score": 5.0,
                     "reasoning": "Evaluation failed",
                     "success": False,
-                    "error": str(e) if 'e' in locals() else "Unknown error"
+                    "error": error_message or "Unknown error"
                 }
 
         # Execute all tasks

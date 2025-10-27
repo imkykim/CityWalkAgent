@@ -4,9 +4,11 @@ API cost tracking utilities
 Track and report costs for Qwen VLM API calls
 """
 
+from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional
-from dataclasses import dataclass, field
 from datetime import datetime
+
+from src.utils.logging import get_logger
 
 
 @dataclass
@@ -51,6 +53,7 @@ class CostTracker:
     def __init__(self):
         """Initialize cost tracker"""
         self.calls: List[APICall] = []
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
 
     def record_call(
         self,
@@ -193,23 +196,7 @@ class CostTracker:
     def print_summary(self) -> None:
         """Print cost summary to console"""
         summary = self.get_summary()
-
-        print("\n" + "="*70)
-        print("API Cost Summary")
-        print("="*70)
-        print(f"Total API calls:      {summary.total_calls}")
-        print(f"Successful:           {summary.successful_calls}")
-        print(f"Failed:               {summary.failed_calls}")
-        print(f"\nTotal input tokens:   {summary.total_input_tokens:,}")
-        print(f"Total output tokens:  {summary.total_output_tokens:,}")
-        print(f"\nTotal cost:           ${summary.total_cost:.4f}")
-
-        if summary.cost_by_model:
-            print(f"\nCost by model:")
-            for model, cost in summary.cost_by_model.items():
-                print(f"  {model:30s} ${cost:.4f}")
-
-        print("="*70)
+        self.logger.info("API cost summary", **asdict(summary))
 
 
 # Global cost tracker instance

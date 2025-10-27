@@ -4,13 +4,16 @@ VLM API client for Qwen VLM
 Handles communication with Qwen Vision Language Model API
 """
 
-import time
-import base64
 import asyncio
-import requests
-from typing import Dict, List, Optional, Any
-from pathlib import Path
+import base64
+import time
 from dataclasses import dataclass
+from typing import Any, Dict, Optional
+
+import requests
+
+from src.config import DEFAULT_RETRY_ATTEMPTS, DEFAULT_VLM_TIMEOUT
+from src.utils.logging import get_logger
 
 
 @dataclass
@@ -22,7 +25,7 @@ class VLMConfig:
     max_tokens: int = 300
     temperature: float = 0.7
     rate_limit_delay: float = 1.0  # seconds between requests
-    max_retries: int = 3
+    max_retries: int = DEFAULT_RETRY_ATTEMPTS
     retry_delay: float = 2.0
 
 
@@ -56,7 +59,7 @@ class VLMClient:
     - Error handling
     """
 
-    def __init__(self, config: VLMConfig):
+    def __init__(self, config: VLMConfig) -> None:
         """
         Initialize VLM client
 
@@ -65,6 +68,7 @@ class VLMClient:
         """
         self.config = config
         self.stats = VLMStats()
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
 
     def encode_image(self, image_path: str) -> str:
         """
@@ -116,14 +120,24 @@ class VLMClient:
 
                 return response
 
-            except Exception as e:
+            except Exception as error:
+                self.logger.warning(
+                    "VLM call attempt failed",
+                    attempt=attempt + 1,
+                    max_retries=self.config.max_retries,
+                    error=str(error)
+                )
+
                 if attempt == self.config.max_retries - 1:
                     self.stats.total_calls += 1
                     self.stats.failed_calls += 1
-                    print(f"VLM call failed after {self.config.max_retries} attempts: {e}")
+                    self.logger.error(
+                        "VLM call exhausted retries",
+                        max_retries=self.config.max_retries,
+                        error=str(error)
+                    )
                     return None
 
-                # Exponential backoff
                 await asyncio.sleep(self.config.retry_delay * (2 ** attempt))
 
         return None
@@ -185,7 +199,7 @@ class VLMClient:
                 f"{self.config.api_url}/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=30
+                timeout=DEFAULT_VLM_TIMEOUT
             )
         )
 

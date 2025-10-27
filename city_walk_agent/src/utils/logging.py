@@ -112,8 +112,8 @@ class StructuredFormatter(logging.Formatter):
             return record.getMessage()
 
 
-# Global logger instance
-_logger: Optional[StructuredLogger] = None
+# Named logger cache
+_loggers: Dict[str, StructuredLogger] = {}
 
 
 def get_logger(name: str = "city_walk_agent") -> StructuredLogger:
@@ -126,9 +126,7 @@ def get_logger(name: str = "city_walk_agent") -> StructuredLogger:
     Returns:
         StructuredLogger instance
     """
-    global _logger
+    if name not in _loggers:
+        _loggers[name] = StructuredLogger(name)
 
-    if _logger is None:
-        _logger = StructuredLogger(name)
-
-    return _logger
+    return _loggers[name]

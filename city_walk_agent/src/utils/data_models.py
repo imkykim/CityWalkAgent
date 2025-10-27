@@ -1,11 +1,9 @@
-from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-try:
-    from ..config.settings import settings
-except ImportError:
-    from config.settings import settings
+from pydantic import BaseModel, Field
+
+from src.config import settings
 
 
 class WalkabilityScore(BaseModel):

@@ -1,12 +1,12 @@
-"""
-Framework management utilities
+"""Framework management utilities for CityWalkAgent."""
 
-Load and manage evaluation frameworks from JSON configurations
-"""
+from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
+
+from src.utils.logging import get_logger
 
 
 class FrameworkManager:
@@ -20,7 +20,7 @@ class FrameworkManager:
     - Framework metadata access
     """
 
-    def __init__(self, frameworks_dir: Optional[Path] = None):
+    def __init__(self, frameworks_dir: Optional[Path] = None) -> None:
         """
         Initialize framework manager
 
@@ -28,13 +28,23 @@ class FrameworkManager:
             frameworks_dir: Directory containing framework JSON files
                            (defaults to src/config/framework_configs/)
         """
-        if frameworks_dir is None:
-            # Default to project's frameworks directory
-            self.frameworks_dir = Path(__file__).parent / "framework_configs"
-        else:
-            self.frameworks_dir = Path(frameworks_dir)
+        self.frameworks_dir = self._resolve_frameworks_dir(frameworks_dir)
+        self._logger = get_logger(f"{__name__}.{self.__class__.__name__}")
 
         self._frameworks_cache: Dict[str, Dict[str, Any]] = {}
+
+    @staticmethod
+    def _resolve_frameworks_dir(frameworks_dir: Optional[Path]) -> Path:
+        """Determine the frameworks directory, falling back to defaults."""
+        if frameworks_dir:
+            return Path(frameworks_dir)
+
+        try:
+            from src.config.settings import settings  # Deferred import to avoid cycles
+
+            return settings.frameworks_dir
+        except Exception:
+            return Path(__file__).parent / "framework_configs"
 
     def load_framework(self, framework_id: str) -> Dict[str, Any]:
         """
@@ -58,8 +68,20 @@ class FrameworkManager:
         framework_path = self.frameworks_dir / f"{framework_id}.json"
 
         if not framework_path.exists():
+            available = self.list_available_framework_ids()
+            available_display = ", ".join(available) if available else "<none>"
+
+            self._logger.error(
+                "Framework not found",
+                framework_id=framework_id,
+                search_path=str(self.frameworks_dir),
+                available_frameworks=available
+            )
+
             raise FileNotFoundError(
-                f"Framework '{framework_id}' not found at {framework_path}"
+                f"Framework '{framework_id}' not found. "
+                f"Searched in: {self.frameworks_dir}. "
+                f"Available frameworks: {available_display}"
             )
 
         try:
@@ -73,8 +95,10 @@ class FrameworkManager:
             self._frameworks_cache[framework_id] = framework
             return framework
 
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in framework file {framework_path}: {e}")
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                f"Invalid JSON in framework file {framework_path}: {error}"
+            ) from error
 
     def load_all_frameworks(self) -> List[Dict[str, Any]]:
         """
@@ -84,7 +108,10 @@ class FrameworkManager:
             List of framework configuration dicts
         """
         if not self.frameworks_dir.exists():
-            print(f"Warning: Frameworks directory not found: {self.frameworks_dir}")
+            self._logger.warning(
+                "Framework directory missing",
+                directory=str(self.frameworks_dir)
+            )
             return []
 
         frameworks = []
@@ -95,13 +122,17 @@ class FrameworkManager:
                 framework_id = file_path.stem
                 framework = self.load_framework(framework_id)
                 frameworks.append(framework)
-            except Exception as e:
-                print(f"Warning: Failed to load {file_path.name}: {e}")
+            except Exception as error:
+                self._logger.warning(
+                    "Failed to load framework file",
+                    file=str(file_path),
+                    error=str(error)
+                )
                 continue
 
         return frameworks
 
-    def list_available_frameworks(self) -> List[Dict[str, str]]:
+    def list_available_frameworks(self) -> List[Dict[str, Any]]:
         """
         List available frameworks with metadata
 
@@ -176,6 +207,13 @@ class FrameworkManager:
             dim["id"]: dim.get(name_key, dim["id"])
             for dim in framework.get("dimensions", [])
         }
+
+    def list_available_framework_ids(self) -> List[str]:
+        """List available framework identifiers."""
+        if not self.frameworks_dir.exists():
+            return []
+
+        return sorted(path.stem for path in self.frameworks_dir.glob("*.json"))
 
     def _validate_framework(self, framework: Dict[str, Any]) -> None:
         """
@@ -259,7 +297,7 @@ def load_framework(framework_id: str) -> Dict[str, Any]:
     return manager.load_framework(framework_id)
 
 
-def list_frameworks() -> List[Dict[str, str]]:
+def list_frameworks() -> List[Dict[str, Any]]:
     """
     Convenience function to list frameworks
 

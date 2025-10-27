@@ -1,17 +1,21 @@
-"""
-Main evaluator orchestrating VLM-based walkability assessment
+"""VLM evaluation orchestrator for CityWalkAgent."""
 
-This is the high-level interface for evaluating routes using VLM frameworks
-"""
+from __future__ import annotations
 
-from typing import List, Dict, Any, Optional
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from .vlm_client import VLMClient, VLMConfig
+from src.config import DEFAULT_MAX_CONCURRENT
+from src.utils.logging import get_logger
+
+from .batch_processor import BatchProcessor, EvaluationTask
 from .prompt_builder import PromptBuilder
 from .response_parser import ResponseParser
-from .batch_processor import BatchProcessor, EvaluationTask
+from .vlm_client import VLMClient, VLMConfig
+
+if TYPE_CHECKING:
+    from src.utils.data_models import Route
 
 
 class Evaluator:
@@ -40,9 +44,9 @@ class Evaluator:
         self,
         vlm_config: VLMConfig,
         framework: Dict[str, Any],
-        max_concurrent: int = 5,
+        max_concurrent: int = DEFAULT_MAX_CONCURRENT,
         show_progress: bool = True
-    ):
+    ) -> None:
         """
         Initialize evaluator
 
@@ -54,6 +58,7 @@ class Evaluator:
         """
         self.framework = framework
         self.framework_id = framework["framework_id"]
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
 
         # Initialize components
         self.vlm_client = VLMClient(vlm_config)
@@ -63,6 +68,12 @@ class Evaluator:
 
         # Build prompts for all dimensions
         self.prompts = self.prompt_builder.build_all_prompts(language="cn")
+        self.logger.info(
+            "Evaluator initialized",
+            framework_id=self.framework_id,
+            dimensions=len(self.prompts),
+            max_concurrent=max_concurrent
+        )
 
     def evaluate_image(
         self,
@@ -87,7 +98,11 @@ class Evaluator:
 
         for dimension_id in dimensions:
             if dimension_id not in self.prompts:
-                print(f"Warning: Dimension '{dimension_id}' not found in framework")
+                self.logger.warning(
+                    "Dimension not in framework",
+                    framework_id=self.framework_id,
+                    dimension_id=dimension_id
+                )
                 continue
 
             prompt = self.prompts[dimension_id]
@@ -143,6 +158,13 @@ class Evaluator:
             if dim_id in self.prompts
         }
 
+        if not filtered_prompts:
+            self.logger.warning(
+                "No prompts available for requested dimensions",
+                requested_dimensions=dimensions
+            )
+            return []
+
         # Create evaluation tasks
         tasks = BatchProcessor.create_tasks_for_images(
             image_paths,
@@ -150,22 +172,27 @@ class Evaluator:
             filtered_prompts
         )
 
-        print(f"\n🎯 Evaluating {len(image_paths)} images with {self.framework_id}")
-        print(f"   Dimensions: {len(filtered_prompts)}")
-        print(f"   Total evaluations: {len(tasks)}")
+        self.logger.info(
+            "Evaluating image batch",
+            images=len(image_paths),
+            dimensions=len(filtered_prompts),
+            total_tasks=len(tasks)
+        )
 
-        # Process batch
         batch_result = self.batch_processor.process_batch(
             tasks,
             self.vlm_client.call_vlm_async,
             self.response_parser
         )
 
-        print(f"\n✅ Batch complete:")
-        print(f"   Successful: {batch_result.successful}/{batch_result.total_tasks}")
-        print(f"   Failed: {batch_result.failed}")
-        print(f"   Total time: {batch_result.total_time:.1f}s")
-        print(f"   Avg per task: {batch_result.avg_time_per_task:.2f}s")
+        self.logger.info(
+            "Batch complete",
+            successful=batch_result.successful,
+            failed=batch_result.failed,
+            total_tasks=batch_result.total_tasks,
+            total_time=batch_result.total_time,
+            average_task_time=batch_result.avg_time_per_task
+        )
 
         # Enrich results with dimension metadata
         enriched_results = []
@@ -185,7 +212,7 @@ class Evaluator:
 
     def evaluate_route(
         self,
-        route: Any,  # Route object from data_models
+        route: "Route",
         dimensions: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
@@ -205,87 +232,26 @@ class Evaluator:
                 image_paths.append(waypoint.image_path)
 
         if not image_paths:
-            print(f"Warning: No images found for route {route.route_id}")
+            self.logger.warning(
+                "No images available for route",
+                route_id=route.route_id,
+                total_waypoints=len(route.waypoints)
+            )
             return []
 
-        print(f"\n📍 Evaluating route: {route.route_id}")
-        print(f"   Waypoints with images: {len(image_paths)}/{len(route.waypoints)}")
+        self.logger.info(
+            "Evaluating route images",
+            route_id=route.route_id,
+            images=len(image_paths),
+            waypoints=len(route.waypoints)
+        )
 
         return self.evaluate_images(image_paths, dimensions)
 
     def get_statistics(self) -> Dict[str, Any]:
-        """
-        Get evaluation statistics
-
-        Returns:
-            Dict with VLM client stats and framework info
-        """
+        """Return evaluation and framework statistics."""
         return {
             "framework": self.prompt_builder.get_framework_info(),
             "vlm_stats": self.vlm_client.get_stats(),
             "dimensions_available": len(self.prompts)
         }
-
-    @staticmethod
-    def create_from_framework_file(
-        framework_path: str,
-        vlm_config: VLMConfig,
-        max_concurrent: int = 5
-    ) -> "Evaluator":
-        """
-        Create evaluator from framework JSON file
-
-        Args:
-            framework_path: Path to framework JSON file
-            vlm_config: VLM client configuration
-            max_concurrent: Maximum concurrent API calls
-
-        Returns:
-            Initialized Evaluator instance
-        """
-        import json
-
-        with open(framework_path, 'r', encoding='utf-8') as f:
-            framework = json.load(f)
-
-        return Evaluator(vlm_config, framework, max_concurrent)
-
-    @staticmethod
-    def create_from_framework_id(
-        framework_id: str,
-        vlm_config: VLMConfig,
-        frameworks_dir: Optional[Path] = None,
-        max_concurrent: int = 5
-    ) -> "Evaluator":
-        """
-        Create evaluator by framework ID
-
-        Args:
-            framework_id: Framework identifier (e.g., "sagai_2025")
-            vlm_config: VLM client configuration
-            frameworks_dir: Directory containing framework JSON files
-            max_concurrent: Maximum concurrent API calls
-
-        Returns:
-            Initialized Evaluator instance
-
-        Raises:
-            FileNotFoundError: If framework file not found
-        """
-        import json
-
-        if frameworks_dir is None:
-            # Default to project's frameworks directory
-            frameworks_dir = Path(__file__).parent.parent.parent / "experiments" / "configs" / "frameworks"
-
-        framework_path = frameworks_dir / f"{framework_id}.json"
-
-        if not framework_path.exists():
-            raise FileNotFoundError(
-                f"Framework '{framework_id}' not found at {framework_path}"
-            )
-
-        with open(framework_path, 'r', encoding='utf-8') as f:
-            framework = json.load(f)
-
-        return Evaluator(vlm_config, framework, max_concurrent)

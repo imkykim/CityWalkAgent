@@ -1,39 +1,37 @@
-import googlemaps
-import pandas as pd
-import numpy as np
-from typing import List, Tuple, Optional
-from geopy.distance import geodesic
+"""Route generation utilities for CityWalkAgent."""
+
+from __future__ import annotations
+
 from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Tuple
 
-try:
-    from ..utils.data_models import Route, Waypoint
-    from ..config.settings import settings
-except ImportError:
-    # Handle case when running as script
-    import sys
-    from pathlib import Path
+import googlemaps
+import numpy as np
+from geopy.distance import geodesic
 
-    src_path = Path(__file__).parent.parent
-    sys.path.insert(0, str(src_path))
-    from utils.data_models import Route, Waypoint
-    from config.settings import settings
+from src.config import DEFAULT_SAMPLING_INTERVAL, settings
+from src.utils.data_models import Route, Waypoint
+from src.utils.logging import get_logger
 
 
 class RouteGenerator:
-    """Generate routes and waypoints using Google Maps API"""
+    """Generate routes and waypoints using Google Maps API."""
 
-    def __init__(self, api_key: Optional[str] = None):
-        """Initialize with Google Maps API key"""
+    def __init__(self, api_key: Optional[str] = None) -> None:
+        """Initialize generator with optional Google Maps API key."""
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
         self.api_key = api_key or settings.google_maps_api_key
-        self.gmaps = None
+        self.gmaps: Optional[googlemaps.Client] = None
 
-        # Only initialize Google Maps client if we have a valid key
         if self.api_key and self.api_key != "test_key":
             try:
                 self.gmaps = googlemaps.Client(key=self.api_key)
-            except ValueError:
-                print(
-                    f"Warning: Invalid Google Maps API key provided. Google Maps functionality will be disabled."
+                self.logger.info("Google Maps client initialized")
+            except ValueError as error:
+                self.logger.warning(
+                    "Invalid Google Maps API key",
+                    error=str(error)
                 )
 
     def create_simple_route(
@@ -42,7 +40,7 @@ class RouteGenerator:
         start_lon: float,
         end_lat: float,
         end_lon: float,
-        interval_meters: int = 10,
+        interval_meters: int = DEFAULT_SAMPLING_INTERVAL,
         route_name: Optional[str] = None,
     ) -> Route:
         """
@@ -100,7 +98,7 @@ class RouteGenerator:
         self,
         origin: str,
         destination: str,
-        interval_meters: int = 10,
+        interval_meters: int = DEFAULT_SAMPLING_INTERVAL,
         mode: str = "walking",
         route_name: Optional[str] = None,
     ) -> Route:
@@ -118,6 +116,7 @@ class RouteGenerator:
             Route object with waypoints along the actual path
         """
         if not self.gmaps:
+            self.logger.error("Google Maps client not available")
             raise ValueError("Google Maps API key is required for this functionality")
 
         # Get directions from Google Maps
@@ -126,6 +125,11 @@ class RouteGenerator:
         )
 
         if not directions:
+            self.logger.warning(
+                "No Google Maps route found",
+                origin=origin,
+                destination=destination
+            )
             raise ValueError(f"No route found from {origin} to {destination}")
 
         # Extract the main route
@@ -166,7 +170,9 @@ class RouteGenerator:
         return route
 
     def _sample_waypoints_along_path(
-        self, path_points: List[dict], interval_meters: int
+        self,
+        path_points: Sequence[Dict[str, float]],
+        interval_meters: int
     ) -> List[Waypoint]:
         """
         Sample waypoints along a path at regular intervals
@@ -240,31 +246,16 @@ class RouteGenerator:
 
         return waypoints
 
-    def save_route(self, route: Route, filepath: Optional[str] = None) -> str:
-        """
-        Save route to JSON file
-
-        Args:
-            route: Route object to save
-            filepath: Optional custom filepath
-
-        Returns:
-            Path where route was saved
-        """
-        if not filepath:
-            filepath = settings.data_dir / "routes" / f"{route.route_id}.json"
-
-        # Ensure directory exists
-        filepath.parent.mkdir(parents=True, exist_ok=True)
-
-        # Save route as JSON
-        with open(filepath, "w") as f:
-            f.write(route.model_dump_json(indent=2))
-
-        return str(filepath)
+    def save_route(self, route: Route, filepath: Optional[Path] = None) -> Path:
+        """Persist a route definition to disk."""
+        target_path = Path(filepath) if filepath else settings.data_dir / "routes" / f"{route.route_id}.json"
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(route.model_dump_json(indent=2), encoding="utf-8")
+        self.logger.info("Route saved", route_id=route.route_id, path=str(target_path))
+        return target_path
 
     @staticmethod
-    def load_route(filepath: str) -> Route:
+    def load_route(filepath: Path | str) -> Route:
         """
         Load route from JSON file
 
@@ -274,7 +265,6 @@ class RouteGenerator:
         Returns:
             Route object
         """
-        with open(filepath, "r") as f:
-            route_data = f.read()
-
+        path = Path(filepath)
+        route_data = path.read_text(encoding="utf-8")
         return Route.model_validate_json(route_data)

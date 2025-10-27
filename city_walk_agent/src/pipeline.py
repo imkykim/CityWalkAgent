@@ -1,55 +1,28 @@
-"""
-Main pipeline orchestrator for CityWalkAgent
+"""Main pipeline orchestrator for CityWalkAgent."""
 
-This is the high-level interface that coordinates all components:
-- Route generation
-- Image collection
-- VLM evaluation (Qwen VLM)
-- Sequential analysis
-- Comparison and reporting
-
-Usage:
-    ```python
-    from src.pipeline import WalkingAgentPipeline
-
-    # Initialize pipeline
-    pipeline = WalkingAgentPipeline(
-        framework_id="sagai_2025"
-    )
-
-    # Run full analysis
-    result = pipeline.analyze_route(
-        start=(40.7589, -73.9851),
-        end=(40.7614, -73.9776),
-        interval_meters=10
-    )
-    ```
-"""
+from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from dataclasses import asdict, dataclass
 from datetime import datetime
-from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-# Handle both package and direct imports
-try:
-    from .config import settings, load_framework
-    from .data_collection.route_generator import RouteGenerator
-    from .data_collection.image_collector import ImageCollector
-    from .evaluation import Evaluator
-    from .evaluation.vlm_client import VLMConfig
-    from .analysis import SequentialAnalyzer, MethodComparator
-    from .utils import get_logger, get_cost_tracker
-except ImportError:
-    # Direct import when run as script
-    from config import settings, load_framework
-    from data_collection.route_generator import RouteGenerator
-    from data_collection.image_collector import ImageCollector
-    from evaluation import Evaluator
-    from evaluation.vlm_client import VLMConfig
-    from analysis import SequentialAnalyzer, MethodComparator
-    from utils import get_logger, get_cost_tracker
+from src.analysis import MethodComparator, SequentialAnalyzer
+from src.config import (
+    DEFAULT_FRAMEWORK_ID,
+    DEFAULT_MAX_CONCURRENT,
+    DEFAULT_SAMPLING_INTERVAL,
+    load_framework,
+    settings,
+)
+from src.data_collection.image_collector import ImageCollector
+from src.data_collection.route_generator import RouteGenerator
+from src.evaluation import Evaluator
+from src.evaluation.vlm_client import VLMConfig
+from src.utils.cost_tracker import get_cost_tracker
+from src.utils.exporters import export_evaluations_csv
+from src.utils.logging import get_logger
 
 
 @dataclass
@@ -82,51 +55,70 @@ class WalkingAgentPipeline:
 
     def __init__(
         self,
-        framework_id: str,
-        max_concurrent: int = 5,
-        output_dir: Optional[Path] = None,
-        enable_cost_tracking: bool = True
-    ):
+        framework_id: str = DEFAULT_FRAMEWORK_ID,
+        max_concurrent: int = DEFAULT_MAX_CONCURRENT,
+        output_dir: Optional[Path] = None
+    ) -> None:
         """
-        Initialize pipeline
+        Initialize pipeline orchestrator.
 
         Args:
-            framework_id: Framework to use for evaluation (e.g., "sagai_2025")
-            max_concurrent: Maximum concurrent API calls
-            output_dir: Output directory for results
-            enable_cost_tracking: Track API costs
+            framework_id: Evaluation framework identifier to use.
+            max_concurrent: Maximum number of concurrent VLM requests.
+            output_dir: Optional override for results directory.
         """
         self.framework_id = framework_id
-        self.logger = get_logger()
+        self.max_concurrent = max_concurrent
+        self.output_dir = output_dir or settings.results_dir / "pipeline_runs"
 
-        # Load framework
-        self.logger.info(f"Loading framework: {framework_id}")
-        self.framework = load_framework(framework_id)
+        self.logger = get_logger(__name__)
+        self.logger.info(
+            "Initializing pipeline",
+            framework_id=self.framework_id,
+            output_dir=str(self.output_dir),
+            max_concurrent=self.max_concurrent
+        )
 
-        # Initialize VLM config
-        self.vlm_config = VLMConfig(
+        self.framework = load_framework(self.framework_id)
+        self._vlm_config = VLMConfig(
             api_key=settings.qwen_vlm_api_key,
             model=settings.qwen_vlm_model,
             api_url=settings.qwen_vlm_api_url
         )
 
-        # Initialize components
-        self.route_generator = RouteGenerator()
-        self.max_concurrent = max_concurrent
-        self.output_dir = output_dir or settings.results_dir / "pipeline"
-        self.enable_cost_tracking = enable_cost_tracking
+        self._route_generator: Optional[RouteGenerator] = None
+        self._evaluator: Optional[Evaluator] = None
+        self.cost_tracker = get_cost_tracker()
 
-        if enable_cost_tracking:
-            self.cost_tracker = get_cost_tracker()
+    @property
+    def vlm_config(self) -> VLMConfig:
+        """Return configured VLM client settings."""
+        return self._vlm_config
 
-        self.logger.info("Pipeline initialized", framework=framework_id)
+    @property
+    def route_generator(self) -> RouteGenerator:
+        """Lazily instantiate the route generator."""
+        if self._route_generator is None:
+            self._route_generator = RouteGenerator()
+        return self._route_generator
+
+    @property
+    def evaluator(self) -> Evaluator:
+        """Lazily instantiate the evaluator."""
+        if self._evaluator is None:
+            self._evaluator = Evaluator(
+                vlm_config=self.vlm_config,
+                framework=self.framework,
+                max_concurrent=self.max_concurrent
+            )
+        return self._evaluator
 
 
     def analyze_route(
         self,
         start: Tuple[float, float],
         end: Tuple[float, float],
-        interval_meters: int = 10,
+        interval_meters: int = DEFAULT_SAMPLING_INTERVAL,
         route_name: Optional[str] = None,
         collect_images: bool = True
     ) -> PipelineResult:
@@ -153,7 +145,7 @@ class WalkingAgentPipeline:
         )
 
         # Step 1: Generate route
-        self.logger.info("Step 1: Generating route...")
+        self.logger.info("Generating route")
         route = self.route_generator.create_simple_route(
             start[0], start[1], end[0], end[1],
             interval_meters=interval_meters,
@@ -165,36 +157,31 @@ class WalkingAgentPipeline:
         route_file.parent.mkdir(parents=True, exist_ok=True)
         self.route_generator.save_route(route, route_file)
 
-        self.logger.info(
-            "Route generated",
-            route_id=route.route_id,
-            waypoints=len(route.waypoints)
-        )
+        self.logger.info("Route generated", route_id=route.route_id, waypoints=len(route.waypoints))
 
         # Step 2: Collect images (if requested)
         if collect_images:
-            self.logger.info("Step 2: Collecting images...")
+            self.logger.info("Collecting images")
             try:
                 image_collector = ImageCollector(
                     api_key=settings.google_maps_api_key
                 )
                 image_collector.collect_google_street_view_images(route)
-                self.logger.info("Images collected", count=len([w for w in route.waypoints if w.image_path]))
-            except Exception as e:
-                self.logger.error("Image collection failed", error=str(e))
+                image_count = len([w for w in route.waypoints if w.image_path])
+                self.logger.info("Images collected", count=image_count)
+            except Exception as error:
+                self.logger.error(
+                    "Image collection failed",
+                    route_id=route.route_id,
+                    error=str(error)
+                )
                 raise
         else:
-            self.logger.info("Step 2: Skipping image collection (using existing)")
+            self.logger.info("Skipping image collection", reason="existing images")
 
         # Step 3: VLM evaluation
-        self.logger.info("Step 3: Running VLM evaluation...")
-        evaluator = Evaluator(
-            vlm_config=self.vlm_config,
-            framework=self.framework,
-            max_concurrent=self.max_concurrent
-        )
-
-        evaluation_results = evaluator.evaluate_route(route)
+        self.logger.info("Running VLM evaluation")
+        evaluation_results = self.evaluator.evaluate_route(route)
 
         self.logger.info(
             "Evaluation complete",
@@ -234,14 +221,13 @@ class WalkingAgentPipeline:
 
         # Gather statistics
         stats = {
-            "vlm_stats": evaluator.get_statistics(),
+            "vlm_stats": self.evaluator.get_statistics(),
             "route_waypoints": len(route.waypoints),
             "total_evaluations": len(evaluation_results),
             "execution_time": timestamp
         }
 
-        if self.enable_cost_tracking:
-            stats["cost"] = self.cost_tracker.get_summary()
+        stats["cost"] = self.cost_tracker.get_summary()
 
         result = PipelineResult(
             route_id=route.route_id,
@@ -259,7 +245,7 @@ class WalkingAgentPipeline:
             timestamp=timestamp
         )
 
-        self.logger.info("Pipeline complete!", route_id=route.route_id)
+        self.logger.info("Pipeline complete", route_id=route.route_id)
 
         return result
 
@@ -318,14 +304,7 @@ class WalkingAgentPipeline:
 
         # 1. Evaluation results CSV
         csv_file = output_dir / "evaluations.csv"
-        with open(csv_file, 'w', encoding='utf-8') as f:
-            f.write("image_id,dimension_id,dimension_name,score,reasoning\n")
-            for r in evaluations:
-                reasoning = r.get('reasoning', '').replace('"', '""').replace('\n', ' ')
-                f.write(
-                    f"{r['image_id']},{r['dimension_id']},{r.get('dimension_name', '')},"
-                    f"{r['score']},\"{reasoning}\"\n"
-                )
+        export_evaluations_csv(evaluations, csv_file)
         files["evaluations_csv"] = csv_file
 
         # 2. Sequential analysis JSON
@@ -412,8 +391,8 @@ Key Differences:
 def quick_analyze(
     start: Tuple[float, float],
     end: Tuple[float, float],
-    framework_id: str = "sagai_2025",
-    interval_meters: int = 10
+    framework_id: str = DEFAULT_FRAMEWORK_ID,
+    interval_meters: int = DEFAULT_SAMPLING_INTERVAL
 ) -> PipelineResult:
     """
     Quick route analysis with minimal configuration

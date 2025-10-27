@@ -1,55 +1,45 @@
-import sys
-import os
-import math
-from pathlib import Path
-from typing import List, Optional, Dict, Any
 import json
+import math
+import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-try:
-    from ..utils.data_models import Route, Waypoint
-    from ..config.settings import settings
-except ImportError:
-    # Handle case when running as script
-    import sys
-    from pathlib import Path
-
-    src_path = Path(__file__).parent.parent
-    sys.path.insert(0, str(src_path))
-    from utils.data_models import Route, Waypoint
-    from config.settings import settings
+from src.config import settings
+from src.utils.data_models import Route, Waypoint
+from src.utils.logging import get_logger
 
 
 class ImageCollector:
-    """Collect street view images using ZenSVI library"""
+    """Collect street view images using ZenSVI library."""
 
-    def __init__(self, api_key: Optional[str] = None, max_workers: int = 4):
-        """
-        Initialize ImageCollector
-
-        Args:
-            api_key: API key for street view service (Mapillary, Google, etc.)
-            max_workers: Number of parallel download workers
-        """
+    def __init__(self, api_key: Optional[str] = None, max_workers: int = 4) -> None:
+        """Initialize the collector with API credentials and worker limits."""
+        self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
         self.api_key = api_key or settings.mapillary_api_key
         self.max_workers = max_workers
         self.zensvi_path = settings.zensvi_root
 
-        # Add ZenSVI to Python path if not already there
-        if str(self.zensvi_path / "src") not in sys.path:
-            sys.path.insert(0, str(self.zensvi_path / "src"))
+        zensvi_src = self.zensvi_path / "src"
+        if str(zensvi_src) not in sys.path:
+            sys.path.insert(0, str(zensvi_src))
+            self.logger.debug("ZenSVI path appended", path=str(zensvi_src))
 
         try:
-            # Import ZenSVI components
             from zensvi.download import KVDownloader
 
             self.KVDownloader = KVDownloader
-        except ImportError as e:
-            raise ImportError(
-                f"Could not import ZenSVI from {self.zensvi_path}. Error: {e}"
+        except ImportError as error:
+            self.logger.error(
+                "Failed to import ZenSVI",
+                zensvi_path=str(self.zensvi_path),
+                error=str(error)
             )
+            raise ImportError(
+                f"Could not import ZenSVI from {self.zensvi_path}. Error: {error}"
+            ) from error
 
     def collect_mapillary_images(
         self,
@@ -86,8 +76,12 @@ class ImageCollector:
         # Collect images for each waypoint
         for waypoint in route.waypoints:
             try:
-                print(
-                    f"Collecting images for waypoint {waypoint.sequence_id} at ({waypoint.lat}, {waypoint.lon})"
+                self.logger.info(
+                    "Collecting Mapillary images",
+                    route_id=route.route_id,
+                    waypoint_id=waypoint.sequence_id,
+                    latitude=waypoint.lat,
+                    longitude=waypoint.lon
                 )
 
                 # Create waypoint-specific directory
@@ -107,8 +101,11 @@ class ImageCollector:
 
                 if not candidates:
                     search_limit = buffer if buffer is not None else max_distance
-                    print(
-                        f"  ⚠️ No Mapillary candidates found within ~{search_limit}m for waypoint {waypoint.sequence_id}"
+                    self.logger.warning(
+                        "No Mapillary candidates found",
+                        route_id=route.route_id,
+                        waypoint_id=waypoint.sequence_id,
+                        search_radius_m=search_limit
                     )
 
                 for candidate in candidates:
@@ -129,13 +126,22 @@ class ImageCollector:
                             f"~{distance:.1f}m" if distance is not None else "unknown distance"
                         )
                         radius_str = f"{radius_used}m" if radius_used is not None else "unknown radius"
-                        print(
-                            f"  ✓ Mapillary image {candidate.get('image_id')} selected at {distance_str} (search radius {radius_str})"
+                        self.logger.info(
+                            "Mapillary image selected",
+                            route_id=route.route_id,
+                            waypoint_id=waypoint.sequence_id,
+                            image_id=candidate.get("image_id"),
+                            distance=distance_str,
+                            search_radius=radius_str
                         )
                         break
                     except Exception as download_error:
-                        print(
-                            f"Warning: failed to download Mapillary image {candidate.get('image_id')}: {download_error}"
+                        self.logger.warning(
+                            "Failed to download Mapillary image",
+                            route_id=route.route_id,
+                            waypoint_id=waypoint.sequence_id,
+                            image_id=candidate.get("image_id"),
+                            error=str(download_error)
                         )
                         if image_path.exists():
                             image_path.unlink(missing_ok=True)
@@ -143,8 +149,10 @@ class ImageCollector:
                 if not downloaded:
                     image_path = None
                     waypoint.image_path = None
-                    print(
-                        f"  ❌ Mapillary download failed for waypoint {waypoint.sequence_id} after exhausting candidates"
+                    self.logger.error(
+                        "Mapillary download failed",
+                        route_id=route.route_id,
+                        waypoint_id=waypoint.sequence_id
                     )
                 elif not image_path.exists():
                     downloaded = False
@@ -175,8 +183,11 @@ class ImageCollector:
                 results.append(result)
 
             except Exception as e:
-                print(
-                    f"Error collecting images for waypoint {waypoint.sequence_id}: {e}"
+                self.logger.error(
+                    "Error collecting Mapillary images",
+                    route_id=route.route_id,
+                    waypoint_id=waypoint.sequence_id,
+                    error=str(e)
                 )
                 result = {
                     "waypoint_id": waypoint.sequence_id,
@@ -262,8 +273,12 @@ class ImageCollector:
                 )
                 response.raise_for_status()
             except requests.RequestException as api_error:
-                print(
-                    f"Warning: Mapillary request failed for radius {radius_m}m at ({lat}, {lon}): {api_error}"
+                self.logger.warning(
+                    "Mapillary API request failed",
+                    latitude=lat,
+                    longitude=lon,
+                    radius_m=radius_m,
+                    error=str(api_error)
                 )
                 continue
 
@@ -323,8 +338,12 @@ class ImageCollector:
                     )
                     response.raise_for_status()
                 except requests.RequestException as api_error:
-                    print(
-                        f"Warning: Mapillary closeto request failed near ({lat}, {lon}): {api_error}"
+                    self.logger.warning(
+                        "Mapillary closeto request failed",
+                        latitude=lat,
+                        longitude=lon,
+                        radius_m=radius_m,
+                        error=str(api_error)
                     )
                     continue
 
@@ -391,7 +410,7 @@ class ImageCollector:
         return radius_earth * c
 
     @staticmethod
-    def _meters_to_degree_offsets(lat: float, distance_meters: float) -> tuple:
+    def _meters_to_degree_offsets(lat: float, distance_meters: float) -> Tuple[float, float]:
         """Convert a radial distance in meters to latitude/longitude degree offsets."""
 
         if distance_meters <= 0:
@@ -550,8 +569,12 @@ class ImageCollector:
         # Collect images for each waypoint
         for waypoint in route.waypoints:
             try:
-                print(
-                    f"Collecting KartaView images for waypoint {waypoint.sequence_id} at ({waypoint.lat}, {waypoint.lon})"
+                self.logger.info(
+                    "Collecting KartaView images",
+                    route_id=route.route_id,
+                    waypoint_id=waypoint.sequence_id,
+                    latitude=waypoint.lat,
+                    longitude=waypoint.lon
                 )
 
                 # Create waypoint-specific directory
@@ -585,8 +608,11 @@ class ImageCollector:
                 results.append(result)
 
             except Exception as e:
-                print(
-                    f"Error collecting KartaView images for waypoint {waypoint.sequence_id}: {e}"
+                self.logger.error(
+                    "Error collecting KartaView images",
+                    route_id=route.route_id,
+                    waypoint_id=waypoint.sequence_id,
+                    error=str(e)
                 )
                 result = {
                     "waypoint_id": waypoint.sequence_id,
@@ -652,8 +678,10 @@ class ImageCollector:
                 try:
                     existing_file.unlink()
                 except Exception as cleanup_error:
-                    print(
-                        f"Warning: failed to remove existing GSV image {existing_file}: {cleanup_error}"
+                    self.logger.warning(
+                        "Failed to remove existing GSV image",
+                        file=str(existing_file),
+                        error=str(cleanup_error)
                     )
 
         radius = buffer if buffer is not None else 50
@@ -662,8 +690,12 @@ class ImageCollector:
 
         for waypoint in route.waypoints:
             try:
-                print(
-                    f"Collecting GSV image for waypoint {waypoint.sequence_id} at ({waypoint.lat}, {waypoint.lon})"
+                self.logger.info(
+                    "Collecting Google Street View image",
+                    route_id=route.route_id,
+                    waypoint_id=waypoint.sequence_id,
+                    latitude=waypoint.lat,
+                    longitude=waypoint.lon
                 )
 
                 image_filename = f"waypoint_{waypoint.sequence_id:03d}.jpg"
@@ -700,8 +732,11 @@ class ImageCollector:
                 results.append(result)
 
             except Exception as e:
-                print(
-                    f"Error downloading image for waypoint {waypoint.sequence_id}: {e}"
+                self.logger.error(
+                    "Error downloading Google Street View image",
+                    route_id=route.route_id,
+                    waypoint_id=waypoint.sequence_id,
+                    error=str(e)
                 )
                 result = {
                     "waypoint_id": waypoint.sequence_id,

@@ -1,33 +1,32 @@
-import os
+"""Application settings management for CityWalkAgent."""
+
 from pathlib import Path
-from typing import List, Any
-from pydantic import Field
+from typing import Any, List
+
 from dotenv import load_dotenv
+from pydantic import Field
+
+from .constants import DEFAULT_FRAMEWORK_ID, DEFAULT_SAMPLING_INTERVAL
 
 # Load environment variables from .env file
 load_dotenv()
 
 try:
     from pydantic_settings import BaseSettings
-except ImportError:
-    # Fallback for older pydantic versions
+except ImportError:  # pragma: no cover - compatibility shim
     from pydantic import BaseSettings
 
 
-def _framework_dimensions(framework_id: str) -> List[str]:
-    """
-    Load dimension IDs from the requested framework definition.
-
-    Falls back to the legacy four-dimension set if frameworks cannot be read.
-    """
-    from .frameworks import get_framework_manager
+def _framework_dimensions(framework_id: str, frameworks_dir: Path) -> List[str]:
+    """Resolve framework dimension identifiers with graceful fallback."""
+    from src.config.frameworks import FrameworkManager
 
     try:
-        framework = get_framework_manager().load_framework(framework_id)
-        dimensions = [dim["id"] for dim in framework.get("dimensions", [])]
+        manager = FrameworkManager(frameworks_dir=frameworks_dir)
+        framework = manager.load_framework(framework_id)
+        dimensions = [dimension["id"] for dimension in framework.get("dimensions", [])]
         return dimensions or ["safety", "comfort", "interest", "aesthetics"]
     except Exception:
-        # Provide legacy fallback to keep initialization resilient
         return ["safety", "comfort", "interest", "aesthetics"]
 
 
@@ -70,13 +69,13 @@ class Settings(BaseSettings):
 
     # Evaluation Settings
     default_framework_id: str = Field(
-        default="sagai_2025",
+        default=DEFAULT_FRAMEWORK_ID,
         env="DEFAULT_FRAMEWORK_ID",
         description="Framework identifier to use for default prompts and experiments",
     )
     default_dimensions: List[str] = Field(default_factory=list)
     default_model: str = Field(default="claude-3-sonnet")
-    default_sampling_interval: int = Field(default=20)  # meters
+    default_sampling_interval: int = Field(default=DEFAULT_SAMPLING_INTERVAL)
 
     # Analysis Thresholds
     volatility_threshold: float = Field(default=2.0)
@@ -96,17 +95,24 @@ class Settings(BaseSettings):
         extra = "ignore"  # Ignore extra environment variables
 
     def model_post_init(self, __context: Any) -> None:
-        """
-        Populate default dimensions from the configured framework unless provided.
-        """
+        self.ensure_directories()
+
         if not self.default_dimensions:
-            self.default_dimensions = _framework_dimensions(self.default_framework_id)
+            self.default_dimensions = _framework_dimensions(
+                self.default_framework_id,
+                self.frameworks_dir
+            )
+
+    @property
+    def frameworks_dir(self) -> Path:
+        """Directory containing framework configuration files."""
+        return self.project_root / "src" / "config" / "framework_configs"
+
+    def ensure_directories(self) -> None:
+        """Ensure core data directories exist on disk."""
+        for directory in (self.data_dir, self.images_dir, self.results_dir):
+            directory.mkdir(parents=True, exist_ok=True)
 
 
 # Global settings instance
 settings = Settings()
-
-# Ensure directories exist
-settings.data_dir.mkdir(exist_ok=True)
-settings.images_dir.mkdir(exist_ok=True)
-settings.results_dir.mkdir(exist_ok=True)
