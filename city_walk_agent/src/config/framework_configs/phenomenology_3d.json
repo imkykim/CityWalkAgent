@@ -1,0 +1,34 @@
+{
+  "framework_id": "phenomenology_3d",
+  "framework_name": "Phenomenological Experience",
+  "framework_name_cn": "现象学体验框架",
+  "description": "基于现象学的身体化空间体验评估",
+  "theory_base": "Merleau-Ponty, Pallasmaa, Zumthor - 身体现象学和氛围理论",
+  "num_dimensions": 3,
+  "dimensions": [
+    {
+      "id": "material_atmosphere",
+      "name_en": "Material Atmosphere",
+      "name_cn": "物质氛围",
+      "theory_base": "Zumthor Atmospheres - 材料、光线、声音构成的氛围",
+      "description": "评估环境的物质性和氛围品质",
+      "vlm_prompt": "请评估这张街景图像的**物质氛围**（Material Atmosphere）。\n\n评估要点：\n- 材料质感：能否感受到材料的质地（石材、木材、金属、玻璃）和重量感？\n- 光影品质：光线如何塑造空间，是否有丰富的光影变化？\n- 氛围营造：整体环境营造了什么样的情绪和感受（温暖/冷峻、开放/私密）？\n- 感官暗示：画面是否暗示触觉、温度、声音等多感官体验？\n\n请以1-10分评分（1分=氛围贫乏，10分=氛围丰富），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+    },
+    {
+      "id": "spatial_emotion",
+      "name_en": "Spatial Emotion",
+      "name_cn": "空间情感",
+      "theory_base": "Pallasmaa Eyes of the Skin - 空间的情感共鸣和身体记忆",
+      "description": "评估空间激发的情感反应和情绪体验",
+      "vlm_prompt": "请评估这张街景图像的**空间情感**（Spatial Emotion）。\n\n评估要点：\n- 情绪唤起：这个空间激发什么样的情感（愉悦、平静、兴奋、压抑）？\n- 归属感：空间是否让人感到欢迎、舒适、有归属感？\n- 记忆触发：环境是否唤起某种身体记忆或情感联想？\n- 情感强度：空间的情感力量是否强烈、是否令人难忘？\n\n请以1-10分评分（1分=情感贫乏，10分=情感共鸣强），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+    },
+    {
+      "id": "sensory_experience",
+      "name_en": "Sensory Experience",
+      "name_cn": "感官体验",
+      "theory_base": "Merleau-Ponty Phenomenology of Perception - 身体化的多感官体验",
+      "description": "评估环境提供的多感官体验丰富度",
+      "vlm_prompt": "请评估这张街景图像的**感官体验**（Sensory Experience）。\n\n评估要点：\n- 多感官性：除了视觉，是否能想象听觉（街道声音）、嗅觉（植物、食物）、触觉（风、材料）？\n- 体验丰富度：环境是否提供丰富的感官刺激和体验层次？\n- 身体感知：作为行走的身体，能否感受到空间的温度、风、阳光、阴影？\n- 沉浸感：环境是否能让人全身心投入，获得完整的体验？\n\n请以1-10分评分（1分=感官单一，10分=感官丰富），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+    }
+  ]
+}
