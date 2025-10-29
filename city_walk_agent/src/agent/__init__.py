@@ -13,7 +13,7 @@ from src.agent.capabilities import (
     ObservationCapability,
     ThinkingCapability,
 )
-from src.agent.personalities import (
+from src.agent.config import (
     AgentPersonality,
     create_neutral_personality,
     get_preset,

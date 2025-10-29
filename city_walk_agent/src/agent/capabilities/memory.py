@@ -284,3 +284,57 @@ class AgentMemory:
                 error=str(e)
             )
             raise
+
+    # ========================================================================
+    # Future Interface Stubs (Not Yet Implemented)
+    # ========================================================================
+
+    def find_similar_routes(self, route_features: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Find routes similar to current one based on features.
+
+        TODO: Implement similarity search using route features like:
+        - Distance range
+        - Geographic proximity
+        - Dimension score patterns
+        - Environmental characteristics
+
+        Args:
+            route_features: Dictionary of route characteristics to match.
+
+        Returns:
+            List of similar route experiences. Currently returns empty list.
+        """
+        self.logger.debug("find_similar_routes not yet implemented")
+        return []
+
+    def analyze_preferences(self) -> Dict[str, float]:
+        """Learn personality adjustments from historical experiences.
+
+        TODO: Implement preference learning by analyzing:
+        - Routes that were accepted vs rejected
+        - Feedback patterns across dimensions
+        - Evolution of preferences over time
+        - Correlation between decisions and outcomes
+
+        Returns:
+            Dictionary of learned preference adjustments per dimension.
+            Currently returns empty dict.
+        """
+        self.logger.debug("analyze_preferences not yet implemented")
+        return {}
+
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        """Calculate decision accuracy and performance metrics.
+
+        TODO: Implement performance analysis including:
+        - Decision accuracy (if feedback provided)
+        - Confidence calibration
+        - Consistency across similar routes
+        - Improvement trends over time
+
+        Returns:
+            Dictionary of performance metrics and statistics.
+            Currently returns empty dict.
+        """
+        self.logger.debug("get_performance_metrics not yet implemented")
+        return {}

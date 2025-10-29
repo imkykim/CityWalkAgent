@@ -10,7 +10,7 @@ Design principle: REASON, don't perceive or act.
 import statistics
 from typing import Any, Dict, List, Optional
 
-from src.agent.constants import (
+from src.agent.config.constants import (
     CONFIDENCE_BARRIER_WEIGHT,
     CONFIDENCE_SCORE_WEIGHT,
     CONFIDENCE_VOLATILITY_WEIGHT,

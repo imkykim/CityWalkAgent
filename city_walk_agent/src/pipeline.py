@@ -113,6 +113,57 @@ class WalkingAgentPipeline:
             )
         return self._evaluator
 
+    def load_cached_route(self, route_id: str) -> Optional[Dict[str, Any]]:
+        """Load cached route evaluation data if it exists.
+
+        Args:
+            route_id: Route identifier to look up in cache.
+
+        Returns:
+            Cached evaluation data dict if found, None otherwise.
+            The dict contains route info, evaluation results, and analysis.
+        """
+        # Look for cached results in output directory
+        # Check all subdirectories that start with the route_id
+        cache_dirs = list(self.output_dir.glob(f"{route_id}_*"))
+
+        if not cache_dirs:
+            self.logger.debug("Cache miss - no cached route found", route_id=route_id)
+            return None
+
+        # Use the most recent cache directory (sorted by timestamp in name)
+        cache_dir = sorted(cache_dirs)[-1]
+        cache_file = cache_dir / "full_results.json"
+
+        if not cache_file.exists():
+            self.logger.debug(
+                "Cache miss - directory exists but no results file",
+                route_id=route_id,
+                cache_dir=str(cache_dir)
+            )
+            return None
+
+        try:
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cached_data = json.load(f)
+
+            self.logger.info(
+                "Cache hit - loaded cached route data",
+                route_id=route_id,
+                cache_file=str(cache_file)
+            )
+
+            return cached_data
+
+        except (json.JSONDecodeError, IOError) as error:
+            self.logger.warning(
+                "Cache read failed",
+                route_id=route_id,
+                cache_file=str(cache_file),
+                error=str(error)
+            )
+            return None
+
 
     def analyze_route(
         self,

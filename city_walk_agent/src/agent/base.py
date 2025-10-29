@@ -24,6 +24,8 @@ class AgentState:
         preferences: Learned dimension weights keyed by dimension id.
         memory_count: Number of stored experiences.
         last_update: Timestamp of the last state mutation.
+        waypoint_index: Current waypoint position (0-indexed).
+        total_waypoints: Total number of waypoints in current route.
     """
 
     current_location: Optional[Tuple[float, float]] = None
@@ -32,6 +34,8 @@ class AgentState:
     preferences: Dict[str, float] = field(default_factory=dict)
     memory_count: int = 0
     last_update: datetime = field(default_factory=datetime.now)
+    waypoint_index: int = 0
+    total_waypoints: int = 0
 
     def update_preferences(self, feedback: Dict[str, float]) -> None:
         """Blend new feedback into preferences via exponential smoothing.
@@ -122,15 +126,17 @@ class BaseAgent(ABC):
 
     @abstractmethod
     def perceive(self, route_data: Any) -> Dict[str, Any]:
-        """
-        경로 데이터를 구조화된 인지 정보로 변환.
-        (세그먼트, 차원 점수, 장애물, 거리 등 추출)
+        """Transform route data into structured perception information.
+
+        Extract structured observations from raw route data including
+        segments, dimension scores, barriers, and distances.
 
         Args:
-            route_data: 원시 경로 정보 (좌표, 이미지, 메타데이터)
+            route_data: Raw route information (coordinates, images, metadata).
 
         Returns:
-            Dict[str, Any]: segments, dimension_scores, barriers, total_distance 등
+            Dict[str, Any]: Structured perception containing segments,
+                dimension_scores, barriers, total_distance, etc.
         """
         raise NotImplementedError
 
@@ -228,6 +234,17 @@ class BaseAgent(ABC):
         if route_id not in self.state.evaluated_routes:
             self.state.evaluated_routes.append(route_id)
 
+        # Update waypoint tracking from route data
+        waypoints = route_data.get("waypoints", [])
+        self.state.total_waypoints = len(waypoints)
+        self.state.waypoint_index = 0  # Reset to start
+
+        self.logger.debug(
+            "Route waypoints loaded",
+            route_id=route_id,
+            total_waypoints=self.state.total_waypoints
+        )
+
         # Step 3: Perceive
         self.logger.debug("Perceiving route data", route_id=route_id)
         perception = self.perceive(route_data)
@@ -263,7 +280,13 @@ class BaseAgent(ABC):
                 "destination": self.state.destination,
                 "evaluated_routes": self.state.evaluated_routes,
                 "preferences": self.state.preferences,
-                "memory_count": self.state.memory_count
+                "memory_count": self.state.memory_count,
+                "waypoint_index": self.state.waypoint_index,
+                "total_waypoints": self.state.total_waypoints,
+                "progress_percent": (
+                    (self.state.waypoint_index / self.state.total_waypoints * 100)
+                    if self.state.total_waypoints > 0 else 0.0
+                )
             },
             "metadata": {
                 "agent_id": self.metadata.agent_id,

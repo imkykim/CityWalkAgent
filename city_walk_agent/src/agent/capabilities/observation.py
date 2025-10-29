@@ -11,7 +11,7 @@ import statistics
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from src.agent.constants import MAX_CONCURRENT_VLM_CALLS, OBSERVATION_TIMEOUT_SECONDS
+from src.agent.config.constants import MAX_CONCURRENT_VLM_CALLS
 from src.config import load_framework, settings
 from src.evaluation.evaluator import Evaluator
 from src.evaluation.vlm_client import VLMConfig

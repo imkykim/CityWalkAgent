@@ -9,12 +9,12 @@ from typing import Any, Dict, Optional, Tuple
 
 from src.agent.base import AgentMetadata, AgentState, BaseAgent
 from src.agent.capabilities import (
+    AnalysisCapability,
     AgentMemory,
     ObservationCapability,
     ThinkingCapability,
 )
-from src.agent.personalities import AgentPersonality, get_preset
-from src.analysis import SequentialAnalyzer
+from src.agent.config import AgentPersonality, get_preset
 from src.pipeline import WalkingAgentPipeline
 from src.utils.logging import get_logger
 
@@ -22,11 +22,12 @@ from src.utils.logging import get_logger
 class WalkingAgent(BaseAgent):
     """Walking route analysis agent with personality-driven decision making.
 
-    This agent orchestrates the full pipeline:
+    This agent orchestrates the full cognitive pipeline:
     1. Observe: Use VLM to evaluate route images
-    2. Think: Apply personality weights and make decisions
-    3. Act: Generate formatted recommendations
-    4. Remember: Store experiences for learning
+    2. Analyze: Sequential pattern analysis and barrier detection
+    3. Think: Apply personality weights and make decisions
+    4. Act: Generate formatted recommendations
+    5. Remember: Store experiences for learning
 
     Example:
         ```python
@@ -85,6 +86,7 @@ class WalkingAgent(BaseAgent):
 
         # Lazy-loaded capabilities
         self._observer: Optional[ObservationCapability] = None
+        self._analyzer: Optional[AnalysisCapability] = None
         self._thinker: Optional[ThinkingCapability] = None
         self._pipeline: Optional[WalkingAgentPipeline] = None
 
@@ -146,6 +148,14 @@ class WalkingAgent(BaseAgent):
         return self._observer
 
     @property
+    def analyzer(self) -> AnalysisCapability:
+        """Lazy-load analysis capability."""
+        if self._analyzer is None:
+            self._analyzer = AnalysisCapability()
+            self.logger.debug("AnalysisCapability initialized")
+        return self._analyzer
+
+    @property
     def thinker(self) -> ThinkingCapability:
         """Lazy-load thinking capability."""
         if self._thinker is None:
@@ -164,6 +174,9 @@ class WalkingAgent(BaseAgent):
     def perceive(self, route_data: Dict[str, Any]) -> Dict[str, Any]:
         """Observe route using VLM evaluation.
 
+        This implements post-hoc position tracking: as we process the route,
+        we update state to reflect which waypoint we've analyzed.
+
         Args:
             route_data: Route information with image_paths, route_id, etc.
 
@@ -171,6 +184,29 @@ class WalkingAgent(BaseAgent):
             Observation dict with dimension scores and statistics.
         """
         self.logger.debug("Perceiving route", route_id=route_data.get("route_id"))
+
+        # Track position as we observe waypoints (post-hoc tracking)
+        waypoints = route_data.get("waypoints", [])
+        if waypoints:
+            # Update position tracking as we process waypoints
+            for idx, waypoint in enumerate(waypoints):
+                # Update state to reflect current observation position
+                self.state.current_location = (waypoint.lat, waypoint.lon)
+                self.state.waypoint_index = idx
+
+                self.logger.debug(
+                    "Processing waypoint",
+                    waypoint_index=idx,
+                    total=len(waypoints),
+                    location=(waypoint.lat, waypoint.lon)
+                )
+
+            # Final position is the last waypoint
+            self.logger.debug(
+                "Position tracking complete",
+                final_waypoint=self.state.waypoint_index,
+                total_waypoints=len(waypoints)
+            )
 
         # Use ObservationCapability to evaluate route
         observation = self.observer.observe_route(route_data)
@@ -195,13 +231,14 @@ class WalkingAgent(BaseAgent):
         route_id = perception.get("route_info", {}).get("route_id", "unknown")
         self.logger.debug("Reasoning about route", route_id=route_id)
 
-        # Get sequential analysis from route evaluations
-        raw_evaluations = perception.get("raw_evaluations", [])
+        # Get route info for analysis
+        route_info = perception.get("route_info", {})
 
-        # Create a simple sequential analysis
-        # In a full implementation, this would use SequentialAnalyzer
-        # For now, calculate basic stats
-        sequential_analysis = self._analyze_sequence(raw_evaluations, perception)
+        # Use AnalysisCapability for sequential pattern analysis
+        sequential_analysis = self.analyzer.analyze_patterns(
+            observation=perception,
+            route_info=route_info,
+        )
 
         # Use ThinkingCapability to make decision
         decision = self.thinker.think(
@@ -270,6 +307,9 @@ class WalkingAgent(BaseAgent):
     ) -> Dict[str, Any]:
         """Get route data using the pipeline.
 
+        Implements cache checking: if route has been evaluated before,
+        load cached results instead of regenerating.
+
         Args:
             start: Starting coordinate (lat, lon).
             end: Destination coordinate (lat, lon).
@@ -278,23 +318,30 @@ class WalkingAgent(BaseAgent):
         Returns:
             Route data dict with route_id, image_paths, waypoints, etc.
         """
-        # Generate or load route
-        route_id = kwargs.get("route_id")
         interval = kwargs.get("interval", 50)
 
+        # Generate route_id from coordinates if not provided
+        route_id = kwargs.get("route_id")
         if route_id is None:
-            # Generate new route
-            self.logger.debug("Generating new route", start=start, end=end)
-            route = self.pipeline.route_generator.generate_route(
-                start=start,
-                end=end,
-                interval=interval,
-            )
-            route_id = route.route_id
-        else:
-            # Load existing route
-            self.logger.debug("Loading existing route", route_id=route_id)
-            route = self.pipeline.route_generator.load_route(route_id)
+            # Generate deterministic route_id from coordinates
+            route_id = f"route_{start[0]:.6f}_{start[1]:.6f}_{end[0]:.6f}_{end[1]:.6f}_{interval}"
+
+        # Check cache first
+        cached_data = self.pipeline.load_cached_route(route_id)
+        if cached_data is not None:
+            self.logger.info("Using cached route data", route_id=route_id)
+            # Mark as from cache
+            cached_data["from_cache"] = True
+            return cached_data
+
+        # Cache miss - generate new route
+        self.logger.debug("Cache miss - generating new route", start=start, end=end)
+        route = self.pipeline.route_generator.generate_route(
+            start=start,
+            end=end,
+            interval=interval,
+        )
+        route_id = route.route_id
 
         # Collect images if needed
         image_dir = self.pipeline.route_generator.get_route_dir(route_id)
@@ -316,6 +363,7 @@ class WalkingAgent(BaseAgent):
             "waypoints": route.waypoints,
             "distance": route.total_distance,
             "interval": interval,
+            "from_cache": False,  # Fresh data, not cached
         }
 
         self.logger.debug(
@@ -326,53 +374,3 @@ class WalkingAgent(BaseAgent):
 
         return route_data
 
-    def _analyze_sequence(
-        self,
-        evaluations: list,
-        observation: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Create sequential analysis from evaluations.
-
-        Args:
-            evaluations: Raw evaluation results.
-            observation: Observation dict with stats.
-
-        Returns:
-            Sequential analysis dict with volatility, barriers, pattern.
-        """
-        dimension_stats = observation.get("dimension_stats", {})
-
-        # Calculate overall volatility (average of dimension std devs)
-        volatilities = [
-            stats.get("std", 0.0)
-            for stats in dimension_stats.values()
-        ]
-        overall_volatility = sum(volatilities) / len(volatilities) if volatilities else 0.0
-
-        # Simple barrier detection: check for large drops
-        hidden_barriers = []
-        for dim_id, stats in dimension_stats.items():
-            if stats.get("min", 10) < 5.0:  # Very low score
-                hidden_barriers.append({
-                    "dimension": dim_id,
-                    "severity": "high",
-                    "min_score": stats.get("min", 0.0),
-                })
-
-        # Classify pattern based on volatility
-        if overall_volatility < 1.0:
-            pattern_type = "stable"
-        elif overall_volatility < 2.0:
-            pattern_type = "moderate"
-        else:
-            pattern_type = "volatile"
-
-        return {
-            "volatility": overall_volatility,
-            "hidden_barriers": hidden_barriers,
-            "pattern_type": pattern_type,
-            "dimension_volatilities": {
-                dim: stats.get("std", 0.0)
-                for dim, stats in dimension_stats.items()
-            },
-        }
