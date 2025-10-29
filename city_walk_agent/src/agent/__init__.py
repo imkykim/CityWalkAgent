@@ -1,18 +1,42 @@
 """
-Agent architecture module (placeholder)
+Agent architecture for CityWalkAgent
 
-This module is reserved for future implementation of autonomous
-walking agent capabilities.
+Provides base classes and concrete implementations for intelligent
+route analysis agents.
 
-Status: Not yet implemented
+Status: Implemented (v0.1.0)
 """
 
-# Placeholder base classes will be imported here when implemented
-# from .base import BaseAgent, AgentState
-# from .memory import AgentMemory
-# from .decision import DecisionMaker
+from src.agent.base import AgentMetadata, AgentState, BaseAgent
+from src.agent.capabilities import (
+    AgentMemory,
+    ObservationCapability,
+    ThinkingCapability,
+)
+from src.agent.personalities import (
+    AgentPersonality,
+    create_neutral_personality,
+    get_preset,
+    list_presets,
+)
+from src.agent.walking_agent import WalkingAgent
 
-__all__ = []
+__all__ = [
+    # Base classes
+    "AgentMetadata",
+    "AgentState",
+    "BaseAgent",
+    # Walking agent
+    "WalkingAgent",
+    # Personality system
+    "AgentPersonality",
+    "create_neutral_personality",
+    "get_preset",
+    "list_presets",
+    # Capabilities
+    "AgentMemory",
+    "ObservationCapability",
+    "ThinkingCapability",
+]
 
-# Version
-__version__ = "0.0.0-placeholder"
+__version__ = "0.1.0"

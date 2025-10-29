@@ -114,6 +114,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable API cost tracking (useful when dependencies are unavailable).",
     )
 
+    # Agent mode arguments
+    parser.add_argument(
+        "--agent",
+        action="store_true",
+        help="Enable agent mode (uses personality-driven analysis).",
+    )
+    parser.add_argument(
+        "--personality",
+        type=str,
+        default="balanced",
+        help="Personality preset to use in agent mode (safety, scenic, balanced, etc.).",
+    )
+    parser.add_argument(
+        "--use-semantic",
+        action="store_true",
+        default=True,
+        help="Use semantic mapping for personality (adapts to any framework).",
+    )
+    parser.add_argument(
+        "--no-use-semantic",
+        dest="use_semantic",
+        action="store_false",
+        help="Use framework-specific personality configuration instead of semantic mapping.",
+    )
+    parser.add_argument(
+        "--list-personalities",
+        action="store_true",
+        help="List available personality presets and exit.",
+    )
+
     return parser
 
 
@@ -144,6 +174,74 @@ def _run_pipeline(args: argparse.Namespace) -> PipelineResult:
     )
 
 
+def _list_personalities() -> None:
+    """Print available personality presets and their configurations."""
+    from agent import list_presets, get_preset
+    from config import settings
+
+    print("\n=== Available Agent Personalities ===\n")
+
+    presets = list_presets()
+    framework_id = settings.default_framework_id
+
+    for preset_name in presets:
+        try:
+            # Get personality with semantic mapping
+            personality = get_preset(preset_name, framework_id, use_semantic=True)
+
+            print(f"• {preset_name.upper()}")
+            print(f"  Name: {personality.name}")
+            print(f"  Description: {personality.description}")
+            print(f"  Explanation Style: {personality.explanation_style}")
+            print(f"  Dimension Weights:")
+            for dim, weight in sorted(personality.dimension_weights.items()):
+                print(f"    - {dim}: {weight:.2f}")
+            print()
+
+        except Exception as e:
+            print(f"• {preset_name.upper()}: Error loading ({e})")
+            print()
+
+    print(f"Use with: python main.py --agent --personality <name> --start LAT,LON --end LAT,LON")
+    print(f"Example:  python main.py --agent --personality safety --start 40.7,-73.9 --end 40.8,-73.8\n")
+
+
+def _run_agent(args: argparse.Namespace) -> dict:
+    """Run agent-based route analysis."""
+    from agent import WalkingAgent
+
+    print(f"\n=== Agent Mode: {args.personality.title()} ===\n")
+
+    # Create agent from preset
+    agent = WalkingAgent.from_preset(
+        preset_name=args.personality,
+        framework_id=args.framework,
+        use_semantic=args.use_semantic,
+    )
+
+    print(f"Agent: {agent.metadata.name}")
+    print(f"Description: {agent.metadata.description}")
+    print(f"Framework: {args.framework}")
+    print(f"Configuration: {'Semantic mapping' if args.use_semantic else 'Framework-specific'}")
+    print()
+
+    # Validate coordinates
+    if args.start is None or args.end is None:
+        raise ValueError("Both --start and --end must be provided in agent mode.")
+
+    # Run agent
+    print(f"Analyzing route from {args.start} to {args.end}...")
+    print(f"Interval: {args.interval} meters\n")
+
+    result = agent.run(
+        start=args.start,
+        end=args.end,
+        interval=args.interval,
+    )
+
+    return result
+
+
 def _print_summary(result: PipelineResult) -> None:
     """Render a short, human-readable summary of the pipeline outputs."""
     print("\n=== CityWalkAgent Pipeline Complete ===")
@@ -158,18 +256,80 @@ def _print_summary(result: PipelineResult) -> None:
     print("\nDone!")
 
 
+def _print_agent_summary(result: dict) -> None:
+    """Render a human-readable summary of agent analysis results."""
+    print("\n=== Agent Analysis Complete ===")
+
+    # Route info
+    perception = result.get("perception", {})
+    route_info = perception.get("route_info", {})
+    print(f"Route ID:          {route_info.get('route_id', 'N/A')}")
+    print(f"Images Evaluated:  {route_info.get('num_images', 0)}")
+
+    # Decision info
+    decision = result.get("decision", {})
+    action = result.get("result", {})
+
+    print(f"\nRecommendation:    {decision.get('recommendation', 'N/A').upper()}")
+    print(f"Confidence:        {decision.get('confidence', 0):.1%}")
+    print(f"Weighted Score:    {decision.get('weighted_score', 0):.2f}/10")
+
+    # Sequential analysis
+    seq_analysis = decision.get("sequential_analysis", {})
+    if seq_analysis:
+        print(f"Route Pattern:     {seq_analysis.get('pattern_type', 'N/A')}")
+        print(f"Volatility:        {seq_analysis.get('volatility', 0):.2f}")
+        print(f"Hidden Barriers:   {len(seq_analysis.get('hidden_barriers', []))}")
+
+    # Explanation
+    print(f"\n{action.get('message', 'No explanation available')}")
+
+    # Highlights
+    highlights = decision.get("highlights", [])
+    if highlights:
+        print(f"\n✨ Highlights:")
+        for highlight in highlights[:3]:
+            print(f"   • {highlight}")
+
+    # Concerns
+    concerns = decision.get("concerns", [])
+    if concerns:
+        print(f"\n⚠️  Concerns:")
+        for concern in concerns[:3]:
+            print(f"   • {concern}")
+
+    # Agent state
+    state = result.get("state", {})
+    print(f"\nAgent Memory:      {state.get('memory_count', 0)} experiences")
+
+    print("\nDone!")
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     """Main CLI entrypoint."""
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    # Handle --list-personalities
+    if args.list_personalities:
+        _list_personalities()
+        return 0
+
+    # Run in agent or pipeline mode
     try:
-        result = _run_pipeline(args)
+        if args.agent:
+            result = _run_agent(args)
+            _print_agent_summary(result)
+        else:
+            result = _run_pipeline(args)
+            _print_summary(result)
     except Exception as exc:
-        print(f"\nPipeline failed: {exc}", file=sys.stderr)
+        mode = "Agent" if args.agent else "Pipeline"
+        print(f"\n{mode} failed: {exc}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
         return 1
 
-    _print_summary(result)
     return 0
 
 

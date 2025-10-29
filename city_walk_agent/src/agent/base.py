@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from src.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    from src.agent.memory import AgentMemory
+    from src.agent.capabilities import AgentMemory
 
 
 @dataclass
@@ -115,7 +115,7 @@ class BaseAgent(ABC):
             AgentMemory instance for this agent
         """
         if self._memory_system is None:
-            from src.agent.memory import AgentMemory
+            from src.agent.capabilities import AgentMemory
             self._memory_system = AgentMemory(self.metadata.agent_id)
             self.logger.debug("Memory system initialized")
         return self._memory_system
