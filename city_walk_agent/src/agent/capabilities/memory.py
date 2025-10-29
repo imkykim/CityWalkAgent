@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel
 
 from src.config import settings
 from src.utils.logging import get_logger
@@ -92,7 +95,11 @@ class AgentMemory:
         try:
             # Append to JSONL file
             with open(self.memory_file, "a", encoding="utf-8") as f:
-                json.dump(experience_with_metadata, f, ensure_ascii=False)
+                json.dump(
+                    self._to_json_compatible(experience_with_metadata),
+                    f,
+                    ensure_ascii=False
+                )
                 f.write("\n")
 
             # Update index
@@ -225,6 +232,48 @@ class AgentMemory:
         )
 
         return statistics
+
+    def _to_json_compatible(self, value: Any) -> Any:
+        """Recursively convert values into JSON-serialisable structures."""
+        if isinstance(value, BaseModel):
+            if hasattr(value, "model_dump"):
+                raw_data = value.model_dump()
+            elif hasattr(value, "dict"):
+                raw_data = value.dict()
+            else:
+                raw_data = value.__dict__
+            return {
+                key: self._to_json_compatible(val)
+                for key, val in raw_data.items()
+            }
+
+        if is_dataclass(value):
+            return {
+                key: self._to_json_compatible(val)
+                for key, val in asdict(value).items()
+            }
+
+        if isinstance(value, dict):
+            return {
+                key: self._to_json_compatible(val)
+                for key, val in value.items()
+            }
+
+        if isinstance(value, (list, tuple, set)):
+            return [self._to_json_compatible(item) for item in value]
+
+        if isinstance(value, datetime):
+            return value.isoformat()
+
+        if isinstance(value, Path):
+            return str(value)
+
+        if hasattr(value, "value"):
+            enum_value = getattr(value, "value")
+            if not isinstance(enum_value, (dict, list, tuple, set)):
+                return enum_value
+
+        return value
 
     def _load_index(self) -> Dict[str, Any]:
         """Load index from disk or bootstrap a new one.

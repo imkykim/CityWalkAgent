@@ -336,10 +336,12 @@ class WalkingAgent(BaseAgent):
 
         # Cache miss - generate new route
         self.logger.debug("Cache miss - generating new route", start=start, end=end)
-        route = self.pipeline.route_generator.generate_route(
-            start=start,
-            end=end,
-            interval=interval,
+        route = self.pipeline.route_generator.create_simple_route(
+            start_lat=start[0],
+            start_lon=start[1],
+            end_lat=end[0],
+            end_lon=end[1],
+            interval_meters=interval,
         )
         route_id = route.route_id
 

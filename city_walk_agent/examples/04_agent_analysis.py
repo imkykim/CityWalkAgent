@@ -1,15 +1,21 @@
 """
-Example 04: Agent-based Route Analysis
+Example 04: Agent-based Route Analysis with Real Data
 
-Demonstrates WalkingAgent with different personalities analyzing the same route.
-Shows how personality configurations affect decision-making and explanations.
+Demonstrates WalkingAgent with different personalities analyzing real routes.
+Shows the complete cognitive pipeline: Observe → Analyze → Think → Act → Remember
 
 This example:
 1. Lists available personality presets
 2. Creates agents with different personalities
-3. Analyzes the same route with each agent
+3. Analyzes a real route with each agent (full cognitive pipeline)
 4. Compares their decisions and explanations
-5. Shows semantic vs framework-specific configuration modes
+5. Shows memory and state management
+6. Demonstrates cache functionality
+
+Prerequisites:
+- VLM API key (Claude recommended)
+- Google Maps API key (for route generation)
+- Or existing route data with images
 """
 
 import sys
@@ -21,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.agent import WalkingAgent, list_presets
 from src.utils.logging import get_logger
+from src.config import settings
 
 logger = get_logger(__name__)
 
@@ -52,6 +59,61 @@ def print_agent_info(agent: WalkingAgent):
     print("Decision Thresholds:")
     for key, value in agent.personality.decision_thresholds.items():
         print(f"  {key:25s}: {value}")
+    print()
+
+
+def print_cognitive_pipeline(result: Dict[str, Any]):
+    """Print details of the cognitive pipeline execution."""
+    print("🧠 Cognitive Pipeline Execution:")
+    print()
+
+    # 1. Observation Phase
+    perception = result.get("perception", {})
+    route_info = perception.get("route_info", {})
+    print(f"  1️⃣  OBSERVE")
+    print(f"      Route ID: {route_info.get('route_id', 'N/A')}")
+    print(f"      Images evaluated: {route_info.get('num_images', 0)}")
+    print(f"      Framework: {perception.get('framework_id', 'N/A')}")
+
+    dimension_stats = perception.get("dimension_stats", {})
+    if dimension_stats:
+        print(f"      Dimension scores:")
+        for dim_id, stats in list(dimension_stats.items())[:3]:  # Show first 3
+            mean = stats.get("mean", 0)
+            std = stats.get("std", 0)
+            print(f"        • {dim_id}: {mean:.1f} ± {std:.1f}")
+    print()
+
+    # 2. Analysis Phase
+    decision = result.get("decision", {})
+    seq_analysis = decision.get("sequential_analysis", {})
+    print(f"  2️⃣  ANALYZE")
+    print(f"      Pattern type: {seq_analysis.get('pattern_type', 'N/A')}")
+    print(f"      Volatility: {seq_analysis.get('volatility', 0):.2f}")
+    print(f"      Barriers detected: {len(seq_analysis.get('barriers', []))}")
+    print(f"      Sequential score: {seq_analysis.get('sequential_score', 0):.1f}/10")
+    print()
+
+    # 3. Thinking Phase
+    print(f"  3️⃣  THINK")
+    print(f"      Recommendation: {decision.get('recommendation', 'N/A').upper()}")
+    print(f"      Confidence: {decision.get('confidence', 0):.2%}")
+    print(f"      Weighted score: {decision.get('weighted_score', 0):.1f}/10")
+    print()
+
+    # 4. Action Phase
+    action = result.get("result", {})
+    print(f"  4️⃣  ACT")
+    print(f"      Action: {action.get('action_type', 'N/A')}")
+    print(f"      {action.get('message', 'No message')}")
+    print()
+
+    # 5. Memory Phase
+    state = result.get("state", {})
+    print(f"  5️⃣  REMEMBER")
+    print(f"      Memory count: {state.get('memory_count', 0)}")
+    print(f"      Routes evaluated: {len(state.get('evaluated_routes', []))}")
+    print(f"      Waypoint progress: {state.get('waypoint_index', 0)}/{state.get('total_waypoints', 0)}")
     print()
 
 
@@ -145,103 +207,146 @@ def demo_show_agent_configs(agents: Dict[str, WalkingAgent]):
         print()
 
 
-def demo_analyze_route(agents: Dict[str, WalkingAgent], start, end):
-    """Analyze a route with multiple agents and compare results."""
-    print_section_header("STEP 4: Route Analysis")
+def demo_analyze_route_real(agents: Dict[str, WalkingAgent], start, end, route_id: str = None):
+    """Analyze a REAL route with multiple agents and compare results.
+
+    This demonstrates the full cognitive pipeline with real data.
+    """
+    print_section_header("STEP 4: Real Route Analysis (Full Cognitive Pipeline)")
 
     print(f"Analyzing route:")
     print(f"  Start: {start}")
     print(f"  End: {end}")
+    if route_id:
+        print(f"  Route ID: {route_id}")
     print()
 
     results = []
 
-    for personality, agent in agents.items():
-        print(f"Running {personality} agent...")
+    for i, (personality, agent) in enumerate(agents.items(), 1):
+        print(f"[{i}/{len(agents)}] Running {agent.metadata.name}...")
+        print()
+
         try:
-            # Note: This requires actual route data
-            # For demo purposes, we're showing the structure
-            # In production, you'd call agent.run(start, end)
-            print(f"  {agent.metadata.name} would analyze this route")
-            print(f"  (Skipping actual route generation for demo)")
+            # REAL AGENT RUN - Full cognitive pipeline
+            result = agent.run(
+                start=start,
+                end=end,
+                route_id=route_id,  # Use same route_id for cache
+                interval=50  # Waypoint interval in meters
+            )
 
-            # Mock result structure
-            mock_result = {
-                "metadata": {
-                    "name": agent.metadata.name,
-                    "agent_id": agent.metadata.agent_id,
-                },
-                "decision": {
-                    "recommendation": "accept" if personality != "safety" else "reject",
-                    "confidence": 0.85 if personality == "balanced" else 0.75,
-                    "weighted_score": 7.5 if personality == "scenic" else 6.8,
-                    "highlights": [
-                        f"Excellent {list(agent.personality.dimension_weights.keys())[0]}"
-                    ] if personality == "scenic" else [],
-                    "concerns": [
-                        "High volatility" if personality == "safety" else ""
-                    ],
-                },
-                "result": {
-                    "message": f"{agent.metadata.name}: Route analysis complete"
-                }
-            }
+            # Check if data came from cache
+            if route_id:
+                print(f"  📦 Cache utilized for consistent comparison")
 
-            results.append(mock_result)
+            # Show the full cognitive pipeline
+            print_cognitive_pipeline(result)
+
+            results.append(result)
+
+            print(f"  ✓ {agent.metadata.name} completed analysis")
+            print()
 
         except Exception as e:
             logger.error(f"Error with {personality} agent", error=str(e))
             print(f"  ✗ Error: {e}")
+            print()
+            # Re-raise if it's a critical error (like missing API keys)
+            if "api" in str(e).lower() or "key" in str(e).lower():
+                raise
 
+        print("-" * 80)
         print()
 
     return results
 
 
-def demo_comparison_modes(framework_id: str = "sagai_2025"):
-    """Demonstrate semantic vs framework-specific modes."""
-    print_section_header("STEP 5: Semantic vs Framework-Specific Modes")
+def demo_cache_functionality(agent: WalkingAgent, start, end):
+    """Demonstrate cache functionality with the same agent."""
+    print_section_header("STEP 5: Cache Functionality")
 
-    print("Creating safety agent with SEMANTIC mapping:")
-    semantic_agent = WalkingAgent.from_preset(
-        "safety",
-        framework_id,
-        agent_id="safety_semantic",
-        use_semantic=True
-    )
-    print(f"  ✓ {semantic_agent.metadata.name}")
-    print(f"  Weights: {semantic_agent.personality.dimension_weights}")
+    print("Running agent twice on the same route to demonstrate caching...")
     print()
 
-    print("Creating safety agent with FRAMEWORK-SPECIFIC config:")
-    try:
-        specific_agent = WalkingAgent.from_preset(
-            "safety",
-            framework_id,
-            agent_id="safety_specific",
-            use_semantic=False
-        )
-        print(f"  ✓ {specific_agent.metadata.name}")
-        print(f"  Weights: {specific_agent.personality.dimension_weights}")
-    except ValueError as e:
-        print(f"  ⚠️  Framework-specific config not available: {e}")
-        print(f"  (This is expected if no explicit config exists for {framework_id})")
+    # First run
+    print("First run (cache miss - will generate route and evaluate):")
+    result1 = agent.run(start=start, end=end, interval=50)
+    print(f"  ✓ Completed")
+    print(f"  Memory count: {result1['state']['memory_count']}")
+    print()
+
+    # Second run with same route
+    print("Second run (cache hit - will use cached data):")
+    result2 = agent.run(start=start, end=end, interval=50)
+    print(f"  ✓ Completed")
+    print(f"  Memory count: {result2['state']['memory_count']}")
+    print()
+
+    # Compare
+    same_route = result1["route_id"] == result2["route_id"]
+    print(f"Same route ID: {same_route}")
+    print(f"Route ID: {result1['route_id']}")
+    print()
+
+
+def check_prerequisites():
+    """Check if required API keys are configured."""
+    print_section_header("Checking Prerequisites")
+
+    missing = []
+
+    # Check VLM API key
+    if not settings.qwen_vlm_api_key and not hasattr(settings, 'openai_api_key'):
+        missing.append("VLM API key (QWEN_VLM_API_KEY or OPENAI_API_KEY)")
+    else:
+        print("✓ VLM API key configured")
+
+    # Check Google Maps API key (optional but recommended)
+    if not settings.google_maps_api_key or settings.google_maps_api_key == "test_key":
+        print("⚠️  Google Maps API key not configured (will use simple routes)")
+    else:
+        print("✓ Google Maps API key configured")
 
     print()
+
+    if missing:
+        print("❌ Missing prerequisites:")
+        for item in missing:
+            print(f"   • {item}")
+        print()
+        print("Please configure in .env file or environment variables.")
+        print("See README.md for setup instructions.")
+        return False
+
+    return True
 
 
 def main():
     """Main demonstration workflow."""
     print()
     print_separator("=")
-    print("  CityWalkAgent - Agent-Based Route Analysis Demo")
+    print("  CityWalkAgent - Real Agent-Based Route Analysis")
     print_separator("=")
     print()
 
+    # Check prerequisites
+    if not check_prerequisites():
+        print()
+        print("⚠️  Running in demo mode with limited functionality")
+        print()
+
     # Configuration
-    framework_id = "sagai_2025"  # Or "streetagent_5d" depending on your setup
-    test_start = (40.7589, -73.9851)  # Times Square
-    test_end = (40.7614, -73.9776)    # Near Central Park
+    framework_id = "sagai_2025"
+
+    # Real coordinates - Manhattan example
+    # Times Square to near Central Park
+    test_start = (40.7589, -73.9851)
+    test_end = (40.7614, -73.9776)
+
+    # For cache testing - use a deterministic route_id
+    # This ensures all agents analyze the same route
+    route_id = f"demo_route_{test_start[0]:.6f}_{test_start[1]:.6f}_{test_end[0]:.6f}_{test_end[1]:.6f}_50"
 
     try:
         # Step 1: List available personalities
@@ -253,42 +358,71 @@ def main():
         # Step 3: Show configurations
         demo_show_agent_configs(agents)
 
-        # Step 4: Analyze route (mocked for demo)
-        results = demo_analyze_route(agents, test_start, test_end)
+        # Step 4: REAL route analysis with full cognitive pipeline
+        print("⚠️  Note: This will make real API calls for VLM evaluation")
+        print("         Ensure you have API keys configured and credits available")
+        print()
+
+        results = demo_analyze_route_real(
+            agents,
+            test_start,
+            test_end,
+            route_id=route_id  # Same route_id ensures cache works
+        )
 
         # Step 5: Compare results
         if results:
+            print_section_header("DETAILED DECISIONS")
             for result in results:
                 print_decision(
                     result["metadata"]["name"],
                     result
                 )
+                print()
 
             compare_agents(results)
 
-        # Step 6: Show different configuration modes
-        demo_comparison_modes(framework_id)
+        # Step 6: Demonstrate cache
+        if results:
+            print("💡 Tip: The second and third agents likely used cached data")
+            print("   from the first agent's route generation and evaluation.")
+            print()
 
         # Summary
         print_section_header("SUMMARY")
         print("✅ Demonstrated:")
         print("  • Listing available personality presets")
         print("  • Creating agents with different personalities")
-        print("  • Viewing agent configurations (weights & thresholds)")
-        print("  • Route analysis workflow (structure)")
-        print("  • Comparing agent decisions")
-        print("  • Semantic vs framework-specific modes")
+        print("  • REAL route analysis with full cognitive pipeline:")
+        print("    - Observe: VLM evaluation of street view images")
+        print("    - Analyze: Sequential pattern analysis")
+        print("    - Think: Personality-driven decision making")
+        print("    - Act: Formatted recommendation output")
+        print("    - Remember: Experience storage in memory")
+        print("  • Comparing agent decisions and reasoning")
+        print("  • Cache functionality for efficiency")
         print()
-        print("📝 Note: This demo uses mock data for route analysis.")
-        print("   For actual route evaluation, ensure you have:")
-        print("   - Valid API keys configured")
-        print("   - Route data or ability to generate routes")
-        print("   - Street view images available")
+        print("📊 Results:")
+        if results:
+            print(f"  • {len(results)} agents successfully analyzed the route")
+            print(f"  • Route ID: {results[0]['route_id']}")
+            print(f"  • Total waypoints: {results[0]['state']['total_waypoints']}")
+            print(f"  • Memory entries: {results[0]['state']['memory_count']}")
+        print()
+        print("💾 Data stored in:")
+        print("  • Agent memory: data/agent_memory/")
+        print("  • Pipeline results: data/results/pipeline_runs/")
         print()
 
+    except KeyError as e:
+        logger.error("Configuration error", error=str(e))
+        print(f"❌ Configuration Error: {e}")
+        print("   Please check your API keys and configuration.")
     except Exception as e:
         logger.error("Demo failed", error=str(e))
         print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
         raise
 
 

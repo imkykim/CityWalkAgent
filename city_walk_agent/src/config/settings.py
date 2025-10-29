@@ -1,7 +1,8 @@
 """Application settings management for CityWalkAgent."""
 
+import json
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Optional
 
 from dotenv import load_dotenv
 from pydantic import Field
@@ -19,15 +20,25 @@ except ImportError:  # pragma: no cover - compatibility shim
 
 def _framework_dimensions(framework_id: str, frameworks_dir: Path) -> List[str]:
     """Resolve framework dimension identifiers with graceful fallback."""
-    from src.config.frameworks import FrameworkManager
+    fallback = ["safety", "comfort", "interest", "aesthetics"]
+    framework_path = frameworks_dir / f"{framework_id}.json"
+
+    if not framework_path.exists():
+        return fallback
 
     try:
-        manager = FrameworkManager(frameworks_dir=frameworks_dir)
-        framework = manager.load_framework(framework_id)
-        dimensions = [dimension["id"] for dimension in framework.get("dimensions", [])]
-        return dimensions or ["safety", "comfort", "interest", "aesthetics"]
-    except Exception:
-        return ["safety", "comfort", "interest", "aesthetics"]
+        with framework_path.open("r", encoding="utf-8") as framework_file:
+            framework = json.load(framework_file)
+    except (OSError, json.JSONDecodeError):
+        return fallback
+
+    dimensions = [
+        dimension.get("id")
+        for dimension in framework.get("dimensions", [])
+        if isinstance(dimension, dict) and dimension.get("id")
+    ]
+
+    return dimensions or fallback
 
 
 class Settings(BaseSettings):
@@ -36,6 +47,7 @@ class Settings(BaseSettings):
     # Required API Keys
     google_maps_api_key: str = Field(env="GOOGLE_MAPS_API_KEY")
     qwen_vlm_api_key: str = Field(env="QWEN_VLM_API_KEY")
+    mapillary_api_key: Optional[str] = Field(default=None, env="MAPILLARY_API_KEY")
 
     # Qwen VLM Configuration
     qwen_vlm_api_url: str = Field(env="QWEN_VLM_API_URL")

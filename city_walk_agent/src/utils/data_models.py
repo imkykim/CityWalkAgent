@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from geopy.distance import geodesic
 from pydantic import BaseModel, Field
 
 from src.config import settings
@@ -46,6 +47,20 @@ class Route(BaseModel):
     description: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.now)
     interval_meters: int = Field(default=10, description="Sampling interval in meters")
+
+    @property
+    def total_distance(self) -> float:
+        """Total route distance in meters."""
+        if len(self.waypoints) < 2:
+            return 0.0
+
+        total = 0.0
+        for prev, curr in zip(self.waypoints, self.waypoints[1:]):
+            total += geodesic(
+                (prev.lat, prev.lon),
+                (curr.lat, curr.lon)
+            ).meters
+        return total
 
 
 class SequentialAnalysis(BaseModel):

@@ -114,14 +114,14 @@ class WalkingAgentPipeline:
         return self._evaluator
 
     def load_cached_route(self, route_id: str) -> Optional[Dict[str, Any]]:
-        """Load cached route evaluation data if it exists.
+        """Load cached route data if it exists.
 
         Args:
             route_id: Route identifier to look up in cache.
 
         Returns:
-            Cached evaluation data dict if found, None otherwise.
-            The dict contains route info, evaluation results, and analysis.
+            Route data dict if found, None otherwise.
+            The dict contains route_id, route object, image_paths, waypoints, etc.
         """
         # Look for cached results in output directory
         # Check all subdirectories that start with the route_id
@@ -133,11 +133,11 @@ class WalkingAgentPipeline:
 
         # Use the most recent cache directory (sorted by timestamp in name)
         cache_dir = sorted(cache_dirs)[-1]
-        cache_file = cache_dir / "full_results.json"
+        cache_file = cache_dir / "route_data.json"
 
         if not cache_file.exists():
             self.logger.debug(
-                "Cache miss - directory exists but no results file",
+                "Cache miss - directory exists but no route_data.json",
                 route_id=route_id,
                 cache_dir=str(cache_dir)
             )
@@ -147,13 +147,35 @@ class WalkingAgentPipeline:
             with open(cache_file, 'r', encoding='utf-8') as f:
                 cached_data = json.load(f)
 
+            # Reconstruct route object from saved route file
+            try:
+                route = self.route_generator.load_route(route_id)
+            except Exception as e:
+                self.logger.warning(
+                    "Failed to load route object from cache",
+                    route_id=route_id,
+                    error=str(e)
+                )
+                return None
+
+            # Build route_data dict matching _get_route_data() format
+            route_data = {
+                "route_id": cached_data["route_id"],
+                "route": route,
+                "image_paths": cached_data["image_paths"],
+                "waypoints": route.waypoints,
+                "distance": cached_data["distance"],
+                "interval": cached_data["interval"],
+            }
+
             self.logger.info(
                 "Cache hit - loaded cached route data",
                 route_id=route_id,
-                cache_file=str(cache_file)
+                cache_file=str(cache_file),
+                num_images=len(route_data["image_paths"])
             )
 
-            return cached_data
+            return route_data
 
         except (json.JSONDecodeError, IOError) as error:
             self.logger.warning(
@@ -352,6 +374,22 @@ class WalkingAgentPipeline:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         files = {}
+
+        # 0. Route data cache (for agent cache loading)
+        route_data_file = output_dir / "route_data.json"
+        route_data_cache = {
+            "route_id": route.route_id,
+            "start": (route.start_lat, route.start_lon),
+            "end": (route.end_lat, route.end_lon),
+            "interval": route.interval_meters,
+            "distance": route.total_distance,
+            "num_waypoints": len(route.waypoints),
+            "image_paths": [w.image_path for w in route.waypoints if w.image_path],
+            "timestamp": timestamp,
+        }
+        with open(route_data_file, 'w', encoding='utf-8') as f:
+            json.dump(route_data_cache, f, indent=2, ensure_ascii=False)
+        files["route_data_json"] = route_data_file
 
         # 1. Evaluation results CSV
         csv_file = output_dir / "evaluations.csv"

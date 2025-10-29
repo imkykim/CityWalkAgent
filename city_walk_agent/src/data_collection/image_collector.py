@@ -41,6 +41,119 @@ class ImageCollector:
                 f"Could not import ZenSVI from {self.zensvi_path}. Error: {error}"
             ) from error
 
+    def collect_route_images(
+        self,
+        route: Route,
+        prefer_mapillary: bool = True,
+        output_dir: Optional[Path] = None
+    ) -> List[Path]:
+        """
+        Collect images for a route using available providers.
+
+        Args:
+            route: Route to collect images for.
+            prefer_mapillary: Whether to try Mapillary before Google Street View.
+            output_dir: Optional override for the image output directory.
+
+        Returns:
+            List of image paths.
+        """
+        image_dir = Path(output_dir) if output_dir else settings.images_dir / route.route_id
+        image_dir.mkdir(parents=True, exist_ok=True)
+
+        provider_order = ["mapillary", "gsv"] if prefer_mapillary else ["gsv", "mapillary"]
+        attempt_notes: List[str] = []
+
+        for provider in provider_order:
+            if provider == "mapillary":
+                if not settings.mapillary_api_key:
+                    attempt_notes.append("mapillary: missing API key")
+                    self.logger.debug(
+                        "Skipping Mapillary collection",
+                        route_id=route.route_id,
+                        reason="missing API key"
+                    )
+                    continue
+
+                try:
+                    results = self.collect_mapillary_images(route, output_dir=image_dir)
+                except Exception as error:
+                    attempt_notes.append(f"mapillary: {error}")
+                    self.logger.warning(
+                        "Mapillary collection failed",
+                        route_id=route.route_id,
+                        error=str(error)
+                    )
+                    continue
+
+                image_paths = [
+                    Path(result["image_path"])
+                    for result in results
+                    if result.get("image_path")
+                ]
+
+                if image_paths:
+                    self.logger.info(
+                        "Mapillary images collected",
+                        route_id=route.route_id,
+                        count=len(image_paths)
+                    )
+                    return sorted(image_paths)
+
+                attempt_notes.append("mapillary: no images returned")
+                continue
+
+            if provider == "gsv":
+                if not settings.google_maps_api_key:
+                    attempt_notes.append("gsv: missing API key")
+                    self.logger.debug(
+                        "Skipping Google Street View collection",
+                        route_id=route.route_id,
+                        reason="missing API key"
+                    )
+                    continue
+
+                try:
+                    results = self.collect_google_street_view_images(
+                        route,
+                        output_dir=image_dir,
+                        clean_output=True
+                    )
+                except Exception as error:
+                    attempt_notes.append(f"gsv: {error}")
+                    self.logger.warning(
+                        "Google Street View collection failed",
+                        route_id=route.route_id,
+                        error=str(error)
+                    )
+                    continue
+
+                image_paths = [
+                    Path(result["image_path"])
+                    for result in results
+                    if result.get("image_path")
+                ]
+
+                if image_paths:
+                    self.logger.info(
+                        "Google Street View images collected",
+                        route_id=route.route_id,
+                        count=len(image_paths)
+                    )
+                    return sorted(image_paths)
+
+                attempt_notes.append("gsv: no images returned")
+
+        if attempt_notes:
+            failed_summary = "; ".join(attempt_notes)
+            raise RuntimeError(
+                f"Image collection failed for route {route.route_id}: {failed_summary}"
+            )
+
+        raise RuntimeError(
+            f"Image collection failed for route {route.route_id}: no providers available"
+        )
+
     def collect_mapillary_images(
         self,
         route: Route,

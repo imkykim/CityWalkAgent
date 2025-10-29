@@ -34,6 +34,29 @@ class RouteGenerator:
                     error=str(error)
                 )
 
+    def get_routes_dir(self) -> Path:
+        """Return the directory where route definitions are stored."""
+        routes_dir = settings.data_dir / "routes"
+        routes_dir.mkdir(parents=True, exist_ok=True)
+        return routes_dir
+
+    def get_route_file(self, route_id: str) -> Path:
+        """Return path to the JSON file for a route."""
+        return self.get_routes_dir() / f"{route_id}.json"
+
+    def get_route_dir(self, route_id: str, create: bool = True) -> Path:
+        """
+        Return the directory for assets associated with a route.
+
+        Args:
+            route_id: Route identifier.
+            create: Whether to ensure the directory exists.
+        """
+        route_dir = settings.images_dir / route_id
+        if create:
+            route_dir.mkdir(parents=True, exist_ok=True)
+        return route_dir
+
     def create_simple_route(
         self,
         start_lat: float,
@@ -248,23 +271,45 @@ class RouteGenerator:
 
     def save_route(self, route: Route, filepath: Optional[Path] = None) -> Path:
         """Persist a route definition to disk."""
-        target_path = Path(filepath) if filepath else settings.data_dir / "routes" / f"{route.route_id}.json"
+        target_path = Path(filepath) if filepath else self.get_route_file(route.route_id)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_text(route.model_dump_json(indent=2), encoding="utf-8")
         self.logger.info("Route saved", route_id=route.route_id, path=str(target_path))
         return target_path
 
     @staticmethod
-    def load_route(filepath: Path | str) -> Route:
+    def load_route(identifier: Path | str) -> Route:
         """
         Load route from JSON file
 
         Args:
-            filepath: Path to route JSON file
+            identifier: Route identifier or path to JSON file
 
         Returns:
             Route object
         """
-        path = Path(filepath)
-        route_data = path.read_text(encoding="utf-8")
+        path = Path(identifier)
+        candidate_paths = []
+
+        if path.is_file():
+            candidate_paths.append(path)
+        else:
+            if path.suffix:
+                candidate_paths.append(path)
+                if not path.is_absolute():
+                    candidate_paths.append(settings.data_dir / "routes" / path.name)
+            else:
+                candidate_paths.append(path.with_suffix(".json"))
+                candidate_paths.append(settings.data_dir / "routes" / f"{path.name}.json")
+
+        resolved_path: Optional[Path] = None
+
+        for candidate in candidate_paths:
+            if candidate.exists():
+                resolved_path = candidate
+                break
+        else:
+            raise FileNotFoundError(f"Route file not found for identifier: {identifier}")
+
+        route_data = resolved_path.read_text(encoding="utf-8")
         return Route.model_validate_json(route_data)
