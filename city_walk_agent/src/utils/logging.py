@@ -4,20 +4,13 @@ Structured logging utilities for CityWalkAgent
 
 import logging
 import json
-from datetime import datetime
 from typing import Any, Dict, Optional
 from pathlib import Path
 
 
 class StructuredLogger:
     """
-    Structured logger that outputs JSON-formatted logs
-
-    Features:
-    - JSON output for easy parsing
-    - Context management
-    - Level-based filtering
-    - File and console output
+    Structured logger that outputs human-readable logs while preserving context.
     """
 
     def __init__(
@@ -67,15 +60,11 @@ class StructuredLogger:
             message: Log message
             **context: Additional context fields
         """
-        log_data = {
-            "timestamp": datetime.now().isoformat(),
-            "level": level.upper(),
-            "message": message,
-            **context
-        }
+        formatted_context = self._format_context(context)
+        full_message = message if not formatted_context else f"{message} | {formatted_context}"
 
         log_method = getattr(self.logger, level.lower())
-        log_method(json.dumps(log_data, ensure_ascii=False))
+        log_method(full_message)
 
     def debug(self, message: str, **context: Any) -> None:
         """Log debug message"""
@@ -97,19 +86,38 @@ class StructuredLogger:
         """Log critical message"""
         self.log("critical", message, **context)
 
+    @staticmethod
+    def _format_context_value(value: Any) -> str:
+        """Return a readable string for context values."""
+        if isinstance(value, str):
+            return value if " " not in value else f"\"{value}\""
+        if isinstance(value, (int, float, bool)) or value is None:
+            return str(value)
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except TypeError:
+            return repr(value)
+
+    def _format_context(self, context: Dict[str, Any]) -> str:
+        """Return formatted key=value pairs for log context."""
+        if not context:
+            return ""
+
+        pairs = [
+            f"{key}={self._format_context_value(value)}"
+            for key, value in sorted(context.items())
+        ]
+        return " ".join(pairs)
+
 
 class StructuredFormatter(logging.Formatter):
-    """Formatter that preserves JSON structure"""
+    """Formatter that provides consistent human-friendly output."""
 
-    def format(self, record: logging.LogRecord) -> str:
-        """Format log record"""
-        try:
-            # Try to parse message as JSON
-            data = json.loads(record.getMessage())
-            return json.dumps(data, ensure_ascii=False)
-        except json.JSONDecodeError:
-            # Fallback to plain text
-            return record.getMessage()
+    def __init__(self) -> None:
+        super().__init__(
+            fmt="[%(asctime)s] %(levelname)s %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
 
 
 # Named logger cache
