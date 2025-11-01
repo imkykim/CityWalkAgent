@@ -9,6 +9,7 @@ Status: Implemented (v0.1.0)
 
 from src.agent.base import AgentMetadata, AgentState, BaseAgent
 from src.agent.capabilities import (
+    ActionCapability,
     AgentMemory,
     ObservationCapability,
     ThinkingCapability,
@@ -34,6 +35,7 @@ __all__ = [
     "get_preset",
     "list_presets",
     # Capabilities
+    "ActionCapability",
     "AgentMemory",
     "ObservationCapability",
     "ThinkingCapability",

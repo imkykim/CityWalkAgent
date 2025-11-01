@@ -15,12 +15,14 @@ Each capability is designed to be:
 - Reusable: Shared across different agent types
 """
 
+from src.agent.capabilities.action import ActionCapability
 from src.agent.capabilities.analysis import AnalysisCapability
 from src.agent.capabilities.memory import AgentMemory
 from src.agent.capabilities.observation import ObservationCapability
 from src.agent.capabilities.thinking import ThinkingCapability
 
 __all__ = [
+    "ActionCapability",
     "AnalysisCapability",
     "AgentMemory",
     "ObservationCapability",
