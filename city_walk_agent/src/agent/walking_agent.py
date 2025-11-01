@@ -5,10 +5,13 @@ ThinkingCapability, and AgentMemory to analyze walking routes with personality-d
 decision making.
 """
 
-from typing import Any, Dict, Optional, Tuple
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from src.agent.base import AgentMetadata, AgentState, BaseAgent
 from src.agent.capabilities import (
+    ActionCapability,
     AnalysisCapability,
     AgentMemory,
     ObservationCapability,
@@ -16,6 +19,8 @@ from src.agent.capabilities import (
 )
 from src.agent.config import AgentPersonality, get_preset
 from src.pipeline import WalkingAgentPipeline
+from src.config import settings
+from src.utils.data_models import Route, Waypoint
 from src.utils.logging import get_logger
 
 
@@ -88,6 +93,7 @@ class WalkingAgent(BaseAgent):
         self._observer: Optional[ObservationCapability] = None
         self._analyzer: Optional[AnalysisCapability] = None
         self._thinker: Optional[ThinkingCapability] = None
+        self._actor: Optional[ActionCapability] = None
         self._pipeline: Optional[WalkingAgentPipeline] = None
 
         self.logger.info(
@@ -139,6 +145,143 @@ class WalkingAgent(BaseAgent):
             framework_id=framework_id,
         )
 
+    def run(
+        self,
+        start: Optional[Tuple[float, float]] = None,
+        end: Optional[Tuple[float, float]] = None,
+        *,
+        route_folder: Optional[Union[str, Path]] = None,
+        metadata_filename: str = "collection_metadata.json",
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Run the agent either by generating a route or from a pre-collected folder."""
+        if route_folder is not None:
+            if (start is not None) or (end is not None):
+                raise ValueError("Provide either start/end or route_folder, but not both.")
+
+            return self.run_from_folder(
+                route_folder=route_folder,
+                metadata_filename=metadata_filename,
+                **kwargs,
+            )
+
+        if start is None or end is None:
+            raise ValueError("Both start and end must be provided when route_folder is not supplied.")
+
+        return super().run(start=start, end=end, **kwargs)
+
+    def run_from_folder(
+        self,
+        route_folder: Union[str, Path],
+        *,
+        metadata_filename: str = "collection_metadata.json",
+        interval: Optional[int] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Execute the agent workflow using a pre-existing folder of route imagery."""
+        folder_path = Path(route_folder).expanduser().resolve()
+        if not folder_path.is_dir():
+            raise FileNotFoundError(f"Route folder does not exist: {folder_path}")
+
+        metadata_path = folder_path / metadata_filename
+        if not metadata_path.exists():
+            raise FileNotFoundError(
+                f"Route folder is missing metadata file '{metadata_filename}' in {folder_path}"
+            )
+
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        waypoint_entries: List[Dict[str, Any]] = metadata.get("results") or []
+        if not waypoint_entries:
+            raise ValueError(f"No waypoint entries found in {metadata_path}")
+
+        waypoint_entries = sorted(
+            waypoint_entries,
+            key=lambda entry: entry.get("waypoint_id", 0),
+        )
+
+        resolved_waypoints: List[Waypoint] = []
+        resolved_image_paths: List[str] = []
+
+        for entry in waypoint_entries:
+            sequence_id = entry.get("waypoint_id", len(resolved_waypoints))
+
+            image_path = entry.get("image_path")
+            image_candidate: Optional[Path]
+            if image_path:
+                image_candidate = Path(image_path)
+                if not image_candidate.is_absolute():
+                    image_candidate = folder_path / image_candidate
+            else:
+                waypoint_dir = folder_path / f"waypoint_{sequence_id:03d}"
+                if waypoint_dir.is_dir():
+                    image_candidate = next(waypoint_dir.glob("*.jpg"), None)
+                else:
+                    image_candidate = None
+
+            if image_candidate is None or not image_candidate.exists():
+                raise FileNotFoundError(
+                    f"Could not locate image for waypoint {sequence_id} in {folder_path}"
+                )
+
+            image_str = str(image_candidate.resolve())
+            resolved_image_paths.append(image_str)
+
+            waypoint = Waypoint(
+                lat=entry["lat"],
+                lon=entry["lon"],
+                sequence_id=sequence_id,
+                heading=entry.get("heading"),
+                timestamp=None,
+                image_path=image_str,
+            )
+            resolved_waypoints.append(waypoint)
+
+        if not resolved_waypoints:
+            raise ValueError(f"Failed to build waypoints from metadata {metadata_path}")
+
+        route_id = metadata.get("route_id") or folder_path.name
+        derived_interval = (
+            interval
+            or metadata.get("interval")
+            or metadata.get("interval_meters")
+            or kwargs.get("interval")
+            or settings.default_sampling_interval
+        )
+
+        route = Route(
+            route_id=route_id,
+            start_lat=resolved_waypoints[0].lat,
+            start_lon=resolved_waypoints[0].lon,
+            end_lat=resolved_waypoints[-1].lat,
+            end_lon=resolved_waypoints[-1].lon,
+            waypoints=resolved_waypoints,
+            route_name=metadata.get("route_name"),
+            interval_meters=int(derived_interval),
+        )
+
+        override_data = {
+            "route_id": route.route_id,
+            "route": route,
+            "image_paths": resolved_image_paths,
+            "waypoints": resolved_waypoints,
+            "distance": route.total_distance,
+            "interval": route.interval_meters,
+            "from_cache": True,
+            "source": "route_folder",
+            "folder_path": str(folder_path),
+            "metadata_file": str(metadata_path),
+        }
+
+        kwargs.setdefault("interval", route.interval_meters)
+
+        return super().run(
+            start=(route.start_lat, route.start_lon),
+            end=(route.end_lat, route.end_lon),
+            _route_data_override=override_data,
+            route_folder=str(folder_path),
+            **kwargs,
+        )
+
     @property
     def observer(self) -> ObservationCapability:
         """Lazy-load observation capability."""
@@ -162,6 +305,14 @@ class WalkingAgent(BaseAgent):
             self._thinker = ThinkingCapability()
             self.logger.debug("ThinkingCapability initialized")
         return self._thinker
+
+    @property
+    def actor(self) -> ActionCapability:
+        """Lazy-load action capability."""
+        if self._actor is None:
+            self._actor = ActionCapability()
+            self.logger.debug("ActionCapability initialized")
+        return self._actor
 
     @property
     def pipeline(self) -> WalkingAgentPipeline:
@@ -262,42 +413,15 @@ class WalkingAgent(BaseAgent):
         return decision
 
     def act(self, decision: Dict[str, Any]) -> Dict[str, Any]:
-        """Format decision into actionable output.
+        """Execute action using ActionCapability.
 
         Args:
             decision: Decision dict from reason().
 
         Returns:
-            Action dict with formatted message and details.
+            Action result with formatted message.
         """
-        recommendation = decision.get("recommendation", "unknown")
-        confidence = decision.get("confidence", 0.0)
-        explanation = decision.get("explanation", "")
-
-        # Format message based on recommendation
-        if recommendation == "accept":
-            action_type = "approve"
-            icon = "✅"
-        else:
-            action_type = "reject"
-            icon = "⚠️"
-
-        message = f"{icon} {explanation}"
-
-        # Build action result
-        result = {
-            "action_type": action_type,
-            "message": message,
-            "confidence": confidence,
-            "recommendation": recommendation,
-            "concerns": decision.get("concerns", []),
-            "highlights": decision.get("highlights", []),
-            "weighted_score": decision.get("weighted_score", 0.0),
-        }
-
-        self.logger.debug("Action formatted", action_type=action_type)
-
-        return result
+        return self.actor.execute(decision)
 
     def _get_route_data(
         self,
@@ -318,6 +442,16 @@ class WalkingAgent(BaseAgent):
         Returns:
             Route data dict with route_id, image_paths, waypoints, etc.
         """
+        override = kwargs.pop("_route_data_override", None)
+        kwargs.pop("route_folder", None)
+        if override is not None:
+            self.logger.info(
+                "Using provided route data override",
+                route_id=override.get("route_id"),
+                source=override.get("source", "unknown"),
+            )
+            return override
+
         interval = kwargs.get("interval", 50)
 
         # Generate route_id from coordinates if not provided
@@ -375,4 +509,3 @@ class WalkingAgent(BaseAgent):
         )
 
         return route_data
-

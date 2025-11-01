@@ -44,7 +44,7 @@ class ImageCollector:
     def collect_route_images(
         self,
         route: Route,
-        prefer_mapillary: bool = True,
+        prefer_mapillary: bool = False,
         output_dir: Optional[Path] = None
     ) -> List[Path]:
         """
@@ -52,7 +52,7 @@ class ImageCollector:
 
         Args:
             route: Route to collect images for.
-            prefer_mapillary: Whether to try Mapillary before Google Street View.
+            prefer_mapillary: Whether to try Mapillary before Google Street View. Defaults to False to try GSV first.
             output_dir: Optional override for the image output directory.
 
         Returns:

@@ -125,6 +125,7 @@ class ObservationCapability:
         observation = {
             "route_info": {
                 "route_id": route_id,
+                "route": route_data.get("route"),
                 "waypoints": route_data.get("waypoints", []),
                 "distance": route_data.get("distance"),
                 "interval": route_data.get("interval"),

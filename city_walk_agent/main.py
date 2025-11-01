@@ -53,6 +53,11 @@ def _build_parser() -> argparse.ArgumentParser:
         type=_parse_coord,
         help="Starting coordinate as 'lat,lon'. Requires --end.",
     )
+    group.add_argument(
+        "--route-folder",
+        type=Path,
+        help="Path to a pre-collected route folder (requires collection_metadata.json).",
+    )
 
     parser.add_argument(
         "--end",
@@ -162,6 +167,9 @@ def _run_pipeline(args: argparse.Namespace) -> PipelineResult:
     if args.route_file:
         return pipeline.analyze_existing_route(args.route_file)
 
+    if args.route_folder:
+        raise ValueError("--route-folder is only supported in agent mode.")
+
     if args.start is None or args.end is None:
         raise ValueError("Both --start and --end must be provided when not using --route-file.")
 
@@ -225,19 +233,32 @@ def _run_agent(args: argparse.Namespace) -> dict:
     print(f"Configuration: {'Semantic mapping' if args.use_semantic else 'Framework-specific'}")
     print()
 
-    # Validate coordinates
-    if args.start is None or args.end is None:
-        raise ValueError("Both --start and --end must be provided in agent mode.")
+    if args.route_folder:
+        if args.start is not None or args.end is not None:
+            raise ValueError("Provide either --route-folder or --start/--end, not both.")
 
-    # Run agent
-    print(f"Analyzing route from {args.start} to {args.end}...")
-    print(f"Interval: {args.interval} meters\n")
+        route_folder = args.route_folder.resolve()
+        print(f"Analyzing existing route folder: {route_folder}")
+        print(f"Interval override: {args.interval} meters (if provided)\n")
 
-    result = agent.run(
-        start=args.start,
-        end=args.end,
-        interval=args.interval,
-    )
+        result = agent.run(
+            route_folder=route_folder,
+            interval=args.interval,
+        )
+    else:
+        # Validate coordinates
+        if args.start is None or args.end is None:
+            raise ValueError("Both --start and --end must be provided in agent mode.")
+
+        # Run agent
+        print(f"Analyzing route from {args.start} to {args.end}...")
+        print(f"Interval: {args.interval} meters\n")
+
+        result = agent.run(
+            start=args.start,
+            end=args.end,
+            interval=args.interval,
+        )
 
     return result
 
