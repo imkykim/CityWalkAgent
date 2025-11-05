@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Dict, Optional, Tuple
 
 # Ensure local src/ package is importable when executed as a script
 REPO_ROOT = Path(__file__).resolve().parent
@@ -33,6 +34,73 @@ def _parse_coord(value: str) -> Tuple[float, float]:
         raise argparse.ArgumentTypeError(
             "Coordinates must be in 'lat,lon' format (e.g., 40.7589,-73.9851)"
         ) from exc
+
+
+def _export_agent_results(
+    agent: "WalkingAgent",
+    args: argparse.Namespace,
+    result: dict,
+) -> Optional[Dict[str, Path]]:
+    """Export agent evaluation artifacts using the pipeline exporter."""
+    try:
+        from analysis.comparator import MethodComparator
+        from analysis.sequential_analyzer import SequentialAnalyzer
+    except ImportError:
+        print("Unable to import analysis modules for exporting results.", file=sys.stderr)
+        return None
+
+    perception = result.get("perception", {})
+    route_info = perception.get("route_info", {})
+    route = route_info.get("route")
+    evaluations = perception.get("raw_evaluations", [])
+
+    if route is None:
+        print("Cannot export agent results: route data missing from perception.", file=sys.stderr)
+        return None
+
+    if not evaluations:
+        print("Cannot export agent results: no evaluation data available.", file=sys.stderr)
+        return None
+
+    # Configure pipeline output directory
+    pipeline = agent.pipeline
+    if args.output_dir:
+        pipeline.output_dir = Path(args.output_dir).expanduser().resolve()
+    else:
+        pipeline.output_dir = (settings.results_dir / "agent_runs")
+    pipeline.output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Re-run analysis to obtain dataclass outputs
+    analyzer = SequentialAnalyzer(
+        route,
+        evaluations,
+        volatility_threshold=settings.volatility_threshold,
+        barrier_threshold=settings.barrier_threshold,
+    )
+    seq_analysis = analyzer.full_analysis()
+
+    comparator = MethodComparator(
+        route,
+        evaluations,
+        volatility_threshold=settings.volatility_threshold,
+        barrier_threshold=settings.barrier_threshold,
+    )
+    comparison = comparator.compare()
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    exported = pipeline._export_results(
+        route,
+        evaluations,
+        seq_analysis,
+        comparison,
+        timestamp,
+    )
+
+    print("\nAgent outputs exported:")
+    for label, path in exported.items():
+        print(f"  - {label}: {path}")
+
+    return exported
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -233,16 +301,18 @@ def _run_agent(args: argparse.Namespace) -> dict:
     print(f"Configuration: {'Semantic mapping' if args.use_semantic else 'Framework-specific'}")
     print()
 
+    route_folder_path: Optional[Path] = None
+
     if args.route_folder:
         if args.start is not None or args.end is not None:
             raise ValueError("Provide either --route-folder or --start/--end, not both.")
 
-        route_folder = args.route_folder.resolve()
-        print(f"Analyzing existing route folder: {route_folder}")
+        route_folder_path = args.route_folder.resolve()
+        print(f"Analyzing existing route folder: {route_folder_path}")
         print(f"Interval override: {args.interval} meters (if provided)\n")
 
         result = agent.run(
-            route_folder=route_folder,
+            route_folder=route_folder_path,
             interval=args.interval,
         )
     else:
@@ -259,6 +329,10 @@ def _run_agent(args: argparse.Namespace) -> dict:
             end=args.end,
             interval=args.interval,
         )
+
+    exported = _export_agent_results(agent, args, result)
+    if exported:
+        print("\nExported files match pipeline outputs (route, evaluations, analysis, comparison).")
 
     return result
 
