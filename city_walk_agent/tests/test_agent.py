@@ -22,7 +22,7 @@ from src.agent.capabilities import (
     ObservationCapability,
     AnalysisCapability,
     ThinkingCapability,
-    AgentMemory,
+    LongTermMemory,
 )
 
 
@@ -309,14 +309,14 @@ class TestThinkingCapability:
 
 
 class TestMemoryCapability:
-    """Test AgentMemory functionality."""
+    """Test LongTermMemory functionality."""
 
     def test_memory_initialization(self, test_agent):
         """Test memory capability initialization."""
         memory = test_agent.memory
 
         assert memory is not None
-        assert isinstance(memory, AgentMemory)
+        assert isinstance(memory, LongTermMemory)
         assert memory.agent_id == test_agent.metadata.agent_id
 
     def test_memory_store_and_retrieve(self, test_agent):
@@ -464,7 +464,7 @@ class TestCognitivePipeline:
         assert "⚠️" in result["message"]
         assert result["recommendation"] == "reject"
 
-    @patch.object(AgentMemory, "store")
+    @patch.object(LongTermMemory, "store")
     def test_remember_method(self, mock_store, test_agent):
         """Test remember method stores experiences."""
         experience = {

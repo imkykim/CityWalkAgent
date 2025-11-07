@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from src.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    from src.agent.capabilities import AgentMemory
+    from src.agent.capabilities import LongTermMemory
 
 
 @dataclass
@@ -97,7 +97,7 @@ class BaseAgent(ABC):
 
         # Lazy-loaded components (initialized on first access)
         self._pipeline = None
-        self._memory_system: Optional[AgentMemory] = None
+        self._memory_system: Optional[LongTermMemory] = None
 
         self.logger.info(
             "Agent initialized",
@@ -107,20 +107,20 @@ class BaseAgent(ABC):
         )
 
     @property
-    def memory(self) -> AgentMemory:
+    def memory(self) -> LongTermMemory:
         """
         Lazy-load persistent memory system.
 
         Inspired by VIRL's pattern of initializing heavy components on demand.
-        The AgentMemory provides JSONL-based persistent storage for experiences,
+        The LongTermMemory provides JSONL-based persistent storage for experiences,
         replacing the simple in-memory list.
 
         Returns:
-            AgentMemory instance for this agent
+            LongTermMemory instance for this agent
         """
         if self._memory_system is None:
-            from src.agent.capabilities import AgentMemory
-            self._memory_system = AgentMemory(self.metadata.agent_id)
+            from src.agent.capabilities import LongTermMemory
+            self._memory_system = LongTermMemory(self.metadata.agent_id)
             self.logger.debug("Memory system initialized")
         return self._memory_system
 
@@ -167,7 +167,7 @@ class BaseAgent(ABC):
     def remember(self, experience: Dict[str, Any]) -> None:
         """Persist experience to disk, update counters, and learn from feedback.
 
-        Uses the persistent AgentMemory system to store experiences in JSONL format,
+        Uses the persistent LongTermMemory system to store experiences in JSONL format,
         similar to VIRL's Memory.add() but with append-only file storage instead of
         in-memory dict + pickle checkpoint.
 
@@ -176,7 +176,7 @@ class BaseAgent(ABC):
                 optional feedback metadata. Must contain 'route_id'.
 
         Side effects:
-            - Stores experience to disk via AgentMemory
+            - Stores experience to disk via LongTermMemory
             - Updates state.memory_count
             - Updates state.preferences if feedback provided
         """

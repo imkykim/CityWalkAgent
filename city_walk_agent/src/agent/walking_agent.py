@@ -1,8 +1,18 @@
 """WalkingAgent - orchestrates all capabilities for route analysis.
 
 This is the main concrete agent implementation that uses ObservationCapability,
-ThinkingCapability, and AgentMemory to analyze walking routes with personality-driven
+ThinkingCapability, and LongTermMemory to analyze walking routes with personality-driven
 decision making.
+
+Two Analysis Modes:
+1. run(): Traditional route-level analysis (backward compatible)
+   - Post-hoc batch evaluation of completed routes
+   - Uses ObservationCapability → AnalysisCapability → ThinkingCapability
+
+2. run_with_memory(): Waypoint-level analysis with full memory system (new)
+   - Real-time sequential analysis during route traversal
+   - Uses ContinuousAnalyzer → ShortTermMemory → ThinkingModule → LongTermMemory
+   - Includes pHash detection, triggered reasoning, and moment curation
 """
 
 import json
@@ -13,9 +23,11 @@ from src.agent.base import AgentMetadata, AgentState, BaseAgent
 from src.agent.capabilities import (
     ActionCapability,
     AnalysisCapability,
-    AgentMemory,
+    LongTermMemory,
     ObservationCapability,
+    ShortTermMemory,
     ThinkingCapability,
+    ThinkingModule,
 )
 from src.agent.config import AgentPersonality, get_preset
 from src.pipeline import WalkingAgentPipeline
@@ -89,12 +101,17 @@ class WalkingAgent(BaseAgent):
         # Initialize state with personality weights
         self.state.preferences = personality.dimension_weights.copy()
 
-        # Lazy-loaded capabilities
+        # Lazy-loaded capabilities (traditional)
         self._observer: Optional[ObservationCapability] = None
         self._analyzer: Optional[AnalysisCapability] = None
         self._thinker: Optional[ThinkingCapability] = None
         self._actor: Optional[ActionCapability] = None
         self._pipeline: Optional[WalkingAgentPipeline] = None
+
+        # Lazy-loaded memory system components (new)
+        self._continuous_analyzer = None
+        self._short_term_memory = None
+        self._thinking_module = None
 
         self.logger.info(
             "WalkingAgent created",
@@ -322,6 +339,58 @@ class WalkingAgent(BaseAgent):
             self.logger.debug("Pipeline initialized")
         return self._pipeline
 
+    # ========================================================================
+    # Memory System Properties (New)
+    # ========================================================================
+
+    @property
+    def continuous_analyzer(self):
+        """Lazy-load continuous analyzer for waypoint-level analysis.
+
+        Returns:
+            ContinuousAnalyzer instance configured with agent's framework.
+        """
+        if self._continuous_analyzer is None:
+            from src.analysis import ContinuousAnalyzer
+
+            self._continuous_analyzer = ContinuousAnalyzer(
+                framework_id=self.framework_id, context_window=3, adaptive_threshold=True
+            )
+            self.logger.debug("ContinuousAnalyzer initialized")
+        return self._continuous_analyzer
+
+    @property
+    def short_term_memory(self) -> ShortTermMemory:
+        """Lazy-load short-term memory for temporal context.
+
+        Returns:
+            ShortTermMemory instance with sliding window.
+        """
+        if self._short_term_memory is None:
+            self._short_term_memory = ShortTermMemory(window_size=5)
+            self.logger.debug("ShortTermMemory initialized")
+        return self._short_term_memory
+
+    @property
+    def thinking_module(self) -> ThinkingModule:
+        """Lazy-load thinking module for waypoint-level reasoning.
+
+        Returns:
+            ThinkingModule instance configured for triggered LLM reasoning.
+        """
+        if self._thinking_module is None:
+            self._thinking_module = ThinkingModule(
+                distance_trigger_meters=600.0,
+                score_delta_threshold=1.5,
+                enable_vlm_deep_dive=False,
+            )
+            self.logger.debug("ThinkingModule initialized")
+        return self._thinking_module
+
+    # ========================================================================
+    # Traditional Methods (Backward Compatible)
+    # ========================================================================
+
     def perceive(self, route_data: Dict[str, Any]) -> Dict[str, Any]:
         """Observe route using VLM evaluation.
 
@@ -509,3 +578,377 @@ class WalkingAgent(BaseAgent):
         )
 
         return route_data
+
+    # ========================================================================
+    # New Memory System Method
+    # ========================================================================
+
+    def run_with_memory(
+        self,
+        start: Tuple[float, float],
+        end: Tuple[float, float],
+        interval: int = 50,
+        output_dir: Optional[Path] = None,
+    ) -> Dict[str, Any]:
+        """Run agent with full memory system integration.
+
+        This method provides waypoint-level analysis with the complete memory pipeline:
+        1. ContinuousAnalyzer - per-waypoint VLM evaluation with pHash detection
+        2. ShortTermMemory - sliding window context for recent waypoints
+        3. ThinkingModule - triggered LLM-based reasoning at key moments
+        4. LongTermMemory - curated key moments and pattern extraction
+
+        This is separate from run() to maintain backward compatibility. Use this
+        method when you want deep waypoint-level analysis with memory formation.
+
+        Args:
+            start: Starting GPS coordinates (lat, lon).
+            end: Destination GPS coordinates (lat, lon).
+            interval: Sampling interval in meters (default: 50).
+            output_dir: Optional directory to save memory artifacts.
+
+        Returns:
+            Dictionary containing:
+            - analysis_results: List of WaypointAnalysis objects
+            - thinking_results: List of ThinkingResult objects
+            - long_term_memory: LongTermMemory instance
+            - route_summary: RouteSummary object
+            - statistics: Dict with pipeline statistics
+            - route_data: Basic route information
+
+        Example:
+            ```python
+            agent = WalkingAgent.from_preset("balanced", "sagai_2025")
+
+            result = agent.run_with_memory(
+                start=(40.7589, -73.9851),
+                end=(40.7614, -73.9776),
+                interval=50,
+                output_dir=Path("outputs/memory_analysis")
+            )
+
+            # Access results
+            print(f"Analyzed {len(result['analysis_results'])} waypoints")
+            print(f"Key moments: {len(result['long_term_memory'].get_key_images())}")
+            print(f"Recommendation: {result['route_summary'].overall_recommendation}")
+            ```
+        """
+        self.logger.info(
+            "Starting memory pipeline run",
+            start=start,
+            end=end,
+            interval=interval,
+        )
+
+        # ====================================================================
+        # Phase 1: Get Route Data
+        # ====================================================================
+        self.logger.debug("Phase 1: Collecting route data")
+
+        route_data = self.get_route_data(start, end, interval=interval)
+        route_id = route_data["route_id"]
+        route = route_data["route"]
+        image_paths = [Path(p) for p in route_data["image_paths"]]
+        waypoints = route_data["waypoints"]
+
+        # Calculate route length
+        route_length_km = route.total_distance / 1000.0
+
+        self.logger.info(
+            "Route data collected",
+            route_id=route_id,
+            num_waypoints=len(waypoints),
+            length_km=route_length_km,
+        )
+
+        # Prepare metadata
+        metadata = [
+            {
+                "filename": img_path.name,
+                "lat": wp.lat,
+                "lon": wp.lon,
+                "heading": wp.heading or 0.0,
+                "timestamp": wp.timestamp or "",
+            }
+            for img_path, wp in zip(image_paths, waypoints)
+        ]
+
+        # ====================================================================
+        # Phase 2: Continuous Analysis
+        # ====================================================================
+        self.logger.info("Phase 2: Running continuous analysis")
+
+        analysis_results = self.continuous_analyzer.analyze_route(
+            image_paths=image_paths, waypoint_metadata=metadata
+        )
+
+        # Get analysis statistics
+        analysis_stats = self.continuous_analyzer.get_statistics()
+
+        self.logger.info(
+            "Continuous analysis complete",
+            total_waypoints=analysis_stats["total_waypoints"],
+            visual_changes=analysis_stats["visual_changes_detected"],
+        )
+
+        # ====================================================================
+        # Phase 3: Thinking with Short-Term Memory
+        # ====================================================================
+        self.logger.info("Phase 3: Processing with short-term memory and thinking")
+
+        thinking_results = []
+        last_trigger_gps = (waypoints[0].lat, waypoints[0].lon)
+        last_avg_score = 0.0
+
+        for i, analysis in enumerate(analysis_results):
+            # Calculate average score
+            avg_score = (
+                sum(analysis.scores.values()) / len(analysis.scores)
+                if analysis.scores
+                else 0.0
+            )
+
+            # Add to short-term memory
+            self.short_term_memory.add(
+                waypoint_id=analysis.waypoint_id,
+                scores=analysis.scores,
+                summary=f"Waypoint {analysis.waypoint_id}: avg {avg_score:.1f}/10",
+                image_path=(
+                    analysis.image_path if analysis.visual_change_detected else None
+                ),
+                gps=analysis.gps,
+                timestamp=analysis.timestamp,
+            )
+
+            # Check if thinking should trigger
+            if i > 0:
+                curr_gps = analysis.gps
+
+                # Calculate distance from last trigger
+                import math
+
+                lat1, lon1 = last_trigger_gps
+                lat2, lon2 = curr_gps
+                R = 6371000  # Earth radius in meters
+
+                lat1_rad = math.radians(lat1)
+                lat2_rad = math.radians(lat2)
+                delta_lat = math.radians(lat2 - lat1)
+                delta_lon = math.radians(lon2 - lon1)
+
+                a = (
+                    math.sin(delta_lat / 2) ** 2
+                    + math.cos(lat1_rad)
+                    * math.cos(lat2_rad)
+                    * math.sin(delta_lon / 2) ** 2
+                )
+                c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+                distance_from_last = R * c
+
+                score_delta = abs(avg_score - last_avg_score)
+
+                # Check trigger
+                trigger = self.thinking_module.should_trigger(
+                    waypoint_id=analysis.waypoint_id,
+                    visual_change=analysis.visual_change_detected,
+                    score_delta=score_delta,
+                    distance_from_last=distance_from_last,
+                    is_exceptional=False,
+                )
+
+                if trigger:
+                    self.logger.debug(
+                        "Thinking triggered",
+                        waypoint_id=analysis.waypoint_id,
+                        trigger=trigger.value,
+                    )
+
+                    # Get STM context
+                    stm_context = self.short_term_memory.get_context()
+
+                    # Perform thinking
+                    try:
+                        result = self.thinking_module.think_waypoint(
+                            waypoint_id=analysis.waypoint_id,
+                            trigger_reason=trigger,
+                            stm_context=stm_context,
+                            current_scores=analysis.scores,
+                            current_reasoning=analysis.reasoning,
+                            current_image_path=analysis.image_path,
+                            route_metadata={
+                                "route_id": route_id,
+                                "length_km": route_length_km,
+                            },
+                        )
+
+                        thinking_results.append(result)
+                        last_trigger_gps = curr_gps
+
+                    except Exception as e:
+                        self.logger.warning(
+                            f"Thinking failed at waypoint {analysis.waypoint_id}: {e}"
+                        )
+
+            last_avg_score = avg_score
+
+        thinking_summary = self.thinking_module.get_thinking_summary()
+
+        self.logger.info(
+            "Thinking complete",
+            episodes=len(thinking_results),
+            avg_confidence=thinking_summary.get("avg_confidence", 0),
+        )
+
+        # ====================================================================
+        # Phase 4: Long-Term Memory Formation
+        # ====================================================================
+        self.logger.info("Phase 4: Forming long-term memory")
+
+        # Use agent's long-term memory
+        ltm = self.memory
+
+        # Add candidate moments
+        for result in thinking_results:
+            # Find corresponding analysis
+            analysis = next(
+                (a for a in analysis_results if a.waypoint_id == result.waypoint_id),
+                None,
+            )
+
+            if analysis:
+                ltm.add_candidate_moment(
+                    waypoint_id=analysis.waypoint_id,
+                    image_path=analysis.image_path,
+                    scores=analysis.scores,
+                    summary=result.interpretation[:200],
+                    significance=result.significance,
+                    gps=analysis.gps,
+                    timestamp=analysis.timestamp,
+                    thinking_confidence=result.confidence,
+                    visual_change_detected=analysis.visual_change_detected,
+                    score_delta=None,
+                )
+
+        # Curate moments
+        ltm.curate_moments(route_length_km=route_length_km)
+
+        # Extract patterns
+        analysis_dicts = [
+            {
+                "waypoint_id": a.waypoint_id,
+                "scores": a.scores,
+                "summary": "",
+            }
+            for a in analysis_results
+        ]
+        thinking_history = [t.interpretation for t in thinking_results]
+
+        ltm.extract_patterns(
+            all_analyses=analysis_dicts, thinking_history=thinking_history
+        )
+
+        # Generate route summary
+        route_summary = ltm.generate_route_summary(
+            route_id=route_id,
+            total_waypoints=len(analysis_results),
+            length_km=route_length_km,
+            all_analyses=analysis_dicts,
+        )
+
+        self.logger.info(
+            "Long-term memory formed",
+            key_moments=len(ltm.get_key_images()),
+            patterns=len(route_summary.patterns),
+        )
+
+        # ====================================================================
+        # Phase 5: Save Outputs (if output_dir provided)
+        # ====================================================================
+        if output_dir:
+            import shutil
+
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            self.logger.info("Saving outputs", output_dir=str(output_dir))
+
+            # Save analysis results
+            analysis_file = output_dir / "analysis_results.json"
+            with open(analysis_file, "w") as f:
+                json.dump(
+                    [
+                        {
+                            "waypoint_id": a.waypoint_id,
+                            "scores": a.scores,
+                            "reasoning": a.reasoning,
+                            "visual_change": a.visual_change_detected,
+                            "phash_distance": a.phash_distance,
+                        }
+                        for a in analysis_results
+                    ],
+                    f,
+                    indent=2,
+                )
+
+            # Save thinking results
+            thinking_file = output_dir / "thinking_results.json"
+            with open(thinking_file, "w") as f:
+                json.dump(
+                    [
+                        {
+                            "waypoint_id": t.waypoint_id,
+                            "trigger_reason": t.trigger_reason.value,
+                            "interpretation": t.interpretation,
+                            "significance": t.significance,
+                            "confidence": t.confidence,
+                        }
+                        for t in thinking_results
+                    ],
+                    f,
+                    indent=2,
+                )
+
+            # Save narrative
+            narrative_file = output_dir / "narrative.md"
+            with open(narrative_file, "w") as f:
+                f.write(ltm.get_narrative())
+
+            # Copy key images
+            key_images_dir = output_dir / "key_images"
+            key_images_dir.mkdir(exist_ok=True)
+
+            for img_path in ltm.get_key_images():
+                if img_path.exists():
+                    shutil.copy2(img_path, key_images_dir / img_path.name)
+
+            self.logger.info("Outputs saved", output_dir=str(output_dir))
+
+        # ====================================================================
+        # Build final result
+        # ====================================================================
+        result = {
+            "analysis_results": analysis_results,
+            "thinking_results": thinking_results,
+            "long_term_memory": ltm,
+            "route_summary": route_summary,
+            "statistics": {
+                "analysis": analysis_stats,
+                "thinking": thinking_summary,
+                "route_length_km": route_length_km,
+                "total_waypoints": len(analysis_results),
+            },
+            "route_data": {
+                "route_id": route_id,
+                "start": start,
+                "end": end,
+                "interval": interval,
+            },
+        }
+
+        self.logger.info(
+            "Memory pipeline complete",
+            route_id=route_id,
+            recommendation=route_summary.overall_recommendation,
+        )
+
+        return result

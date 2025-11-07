@@ -10,9 +10,18 @@ Status: Implemented (v0.1.0)
 from src.agent.base import AgentMetadata, AgentState, BaseAgent
 from src.agent.capabilities import (
     ActionCapability,
-    AgentMemory,
+    AnalysisCapability,
+    KeyMoment,
+    LongTermMemory,
+    MemoryItem,
     ObservationCapability,
+    RoutePattern,
+    RouteSummary,
+    ShortTermMemory,
     ThinkingCapability,
+    ThinkingModule,
+    ThinkingResult,
+    TriggerReason,
 )
 from src.agent.config import (
     AgentPersonality,
@@ -34,11 +43,23 @@ __all__ = [
     "create_neutral_personality",
     "get_preset",
     "list_presets",
-    # Capabilities
+    # Core capabilities
     "ActionCapability",
-    "AgentMemory",
+    "AnalysisCapability",
     "ObservationCapability",
     "ThinkingCapability",
+    # Long-term memory system
+    "LongTermMemory",
+    "KeyMoment",
+    "RoutePattern",
+    "RouteSummary",
+    # Short-term memory system
+    "ShortTermMemory",
+    "MemoryItem",
+    # Thinking module (waypoint-level reasoning)
+    "ThinkingModule",
+    "TriggerReason",
+    "ThinkingResult",
 ]
 
 __version__ = "0.1.0"
