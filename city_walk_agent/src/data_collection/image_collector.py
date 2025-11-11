@@ -1,11 +1,14 @@
 import json
 import math
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+from PIL import Image
 
 from src.config import settings
 from src.utils.data_models import Route, Waypoint
@@ -21,25 +24,23 @@ class ImageCollector:
         self.api_key = api_key or settings.mapillary_api_key
         self.max_workers = max_workers
         self.zensvi_path = settings.zensvi_root
+        self.virl_path = settings.virl_root
+
+        # Disable ZenSVI proxy usage by default to avoid slow, unreliable proxy hops
+        os.environ.setdefault("ZENSVI_DISABLE_PROXIES", "1")
 
         zensvi_src = self.zensvi_path / "src"
         if str(zensvi_src) not in sys.path:
             sys.path.insert(0, str(zensvi_src))
             self.logger.debug("ZenSVI path appended", path=str(zensvi_src))
 
-        try:
-            from zensvi.download import KVDownloader
+        virl_pkg_root = self.virl_path
+        if virl_pkg_root.exists() and str(virl_pkg_root) not in sys.path:
+            sys.path.insert(0, str(virl_pkg_root))
+            self.logger.debug("VIRL path appended", path=str(virl_pkg_root))
 
-            self.KVDownloader = KVDownloader
-        except ImportError as error:
-            self.logger.error(
-                "Failed to import ZenSVI",
-                zensvi_path=str(self.zensvi_path),
-                error=str(error)
-            )
-            raise ImportError(
-                f"Could not import ZenSVI from {self.zensvi_path}. Error: {error}"
-            ) from error
+        self._kv_downloader_cls = None
+        self._virl_google_api = None
 
     def collect_route_images(
         self,
@@ -114,7 +115,7 @@ class ImageCollector:
                     continue
 
                 try:
-                    results = self.collect_google_street_view_images(
+                    results = self.collect_google_street_view_images_static(
                         route,
                         output_dir=image_dir,
                         clean_output=True
@@ -551,105 +552,153 @@ class ImageCollector:
                 if chunk:
                     image_file.write(chunk)
 
-    def _download_gsv_image(
+    def _get_kv_downloader_cls(self):
+        """Lazily import the KartaView downloader to avoid heavy dependencies when unused."""
+
+        if self._kv_downloader_cls is not None:
+            return self._kv_downloader_cls
+
+        try:
+            from importlib import import_module
+
+            kv_module = import_module("zensvi.download.kv")
+            self._kv_downloader_cls = getattr(kv_module, "KVDownloader")
+            return self._kv_downloader_cls
+        except ImportError as error:
+            self.logger.error(
+                "Failed to import ZenSVI KartaView downloader",
+                zensvi_path=str(self.zensvi_path),
+                error=str(error)
+            )
+            raise ImportError(
+                f"Could not import ZenSVI KVDownloader from {self.zensvi_path}. Error: {error}"
+            ) from error
+
+    def _get_gsv_downloader_cls(self):
+        """Lazily import the GSV downloader to avoid geopandas dependency unless required."""
+
+        if self._gsv_downloader_cls is not None:
+            return self._gsv_downloader_cls
+
+        try:
+            from importlib import import_module
+
+            gsv_module = import_module("zensvi.download.gsv")
+            self._gsv_downloader_cls = getattr(gsv_module, "GSVDownloader")
+            return self._gsv_downloader_cls
+        except ImportError as error:
+            self.logger.error(
+                "Failed to import ZenSVI GSV downloader",
+                zensvi_path=str(self.zensvi_path),
+                error=str(error)
+            )
+            raise ImportError(
+                f"Could not import ZenSVI GSVDownloader from {self.zensvi_path}. Error: {error}"
+            ) from error
+
+    @staticmethod
+    def _compose_panorama_image(images: List[Image.Image]) -> Image.Image:
+        """Create a simple panorama by stitching images horizontally."""
+
+        if not images:
+            raise ValueError("No images provided for panorama composition")
+
+        total_width = sum(img.width for img in images)
+        max_height = max(img.height for img in images)
+        panorama = Image.new("RGB", (total_width, max_height))
+
+        offset = 0
+        for img in images:
+            panorama.paste(img, (offset, 0))
+            offset += img.width
+
+        return panorama
+
+    def _get_virl_google_api(self):
+        """Instantiate VIRL's Google Maps helper for Static Street View downloads."""
+
+        if self._virl_google_api is not None:
+            return self._virl_google_api
+
+        virl_root = self.virl_path
+        if not virl_root.exists():
+            raise FileNotFoundError(
+                f"VIRL root directory not found at {virl_root}. Cannot use VIRL Street View utilities."
+            )
+
+        try:
+            from virl.platform.google_map_apis import GoogleMapAPI
+        except ImportError as error:
+            self.logger.error(
+                "Failed to import VIRL GoogleMapAPI",
+                virl_path=str(virl_root),
+                error=str(error)
+            )
+            raise ImportError(
+                f"Could not import VIRL from {virl_root}. Error: {error}"
+            ) from error
+
+        offline_cfg = SimpleNamespace(
+            ENABLED=False,
+            PANORAMA_DIR="None",
+            GPS_TO_PANO_PATH="None",
+        )
+
+        if settings.google_maps_api_key and not os.environ.get("GOOGLE_MAP_API_KEY"):
+            os.environ["GOOGLE_MAP_API_KEY"] = settings.google_maps_api_key
+
+        api = GoogleMapAPI(offline_cfg=offline_cfg)
+        if not api.key:
+            raise ValueError(
+                "VIRL GoogleMapAPI did not receive a Google Maps API key. "
+                "Ensure GOOGLE_MAPS_API_KEY is configured."
+            )
+
+        self._virl_google_api = api
+        return api
+
+    def _get_streetview_metadata(
         self,
         lat: float,
         lon: float,
-        heading: float,
-        image_size: str,
-        fov: int,
         radius: int,
-        output_path: Path,
-        timeout: int = 20,
-    ) -> Dict[str, Any]:
-        """Fetch metadata and download a single Google Street View image, retrying with larger radii."""
+        source: str = "outdoor",
+        timeout: int = 15,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch metadata for the closest Street View panorama."""
 
         metadata_url = "https://maps.googleapis.com/maps/api/streetview/metadata"
-        image_url = "https://maps.googleapis.com/maps/api/streetview"
+        params = {
+            "location": f"{lat},{lon}",
+            "radius": radius,
+            "source": source,
+            "key": settings.google_maps_api_key,
+        }
 
-        base_radius = max(radius, 10)
-        search_radii = []
-        for multiplier in (1, 1.5, 2):
-            candidate_radius = max(10, int(base_radius * multiplier))
-            if candidate_radius not in search_radii:
-                search_radii.append(candidate_radius)
+        try:
+            response = requests.get(metadata_url, params=params, timeout=timeout)
+            response.raise_for_status()
+            metadata = response.json()
+        except requests.RequestException as error:
+            self.logger.warning(
+                "Street View metadata request failed",
+                latitude=lat,
+                longitude=lon,
+                error=str(error)
+            )
+            return None
 
-        last_metadata: Optional[Dict[str, Any]] = None
-        last_error: Optional[str] = None
+        if metadata.get("status") != "OK":
+            self.logger.debug(
+                "Street View metadata returned non-OK status",
+                latitude=lat,
+                longitude=lon,
+                status=metadata.get("status"),
+                error_message=metadata.get("error_message"),
+            )
+            return metadata
 
-        for current_radius in search_radii:
-            metadata_params = {
-                "location": f"{lat},{lon}",
-                "radius": current_radius,
-                "key": settings.google_maps_api_key,
-                "source": "outdoor",
-            }
-
-            try:
-                metadata_response = requests.get(
-                    metadata_url, params=metadata_params, timeout=timeout
-                )
-                metadata_response.raise_for_status()
-                metadata = metadata_response.json()
-                last_metadata = metadata
-            except requests.RequestException as request_error:
-                last_error = f"metadata_request_failed:{request_error}"
-                continue
-
-            if metadata.get("status") != "OK":
-                last_error = metadata.get("status", "UNKNOWN_STATUS")
-                continue
-
-            pano_id = metadata.get("pano_id")
-
-            image_params = {
-                "size": image_size,
-                "location": f"{lat},{lon}",
-                "fov": fov,
-                "heading": heading,
-                "pitch": 0,
-                "key": settings.google_maps_api_key,
-                "source": "outdoor",
-            }
-
-            if pano_id:
-                image_params["pano"] = pano_id
-
-            try:
-                image_response = requests.get(
-                    image_url, params=image_params, stream=True, timeout=timeout
-                )
-                image_response.raise_for_status()
-            except requests.RequestException as image_error:
-                last_error = f"image_request_failed:{image_error}"
-                continue
-
-            content_type = image_response.headers.get("Content-Type", "")
-            if "image" not in content_type.lower():
-                last_error = f"unexpected_content_type:{content_type}"
-                continue
-
-            if output_path.exists():
-                try:
-                    output_path.unlink()
-                except OSError:
-                    pass
-
-            with open(output_path, "wb") as image_file:
-                for chunk in image_response.iter_content(chunk_size=8192):
-                    if chunk:
-                        image_file.write(chunk)
-
-            metadata["search_radius_m"] = current_radius
-            return {"success": True, "metadata": metadata}
-
-        if output_path.exists() and output_path.stat().st_size == 0:
-            try:
-                output_path.unlink()
-            except OSError:
-                pass
-
-        return {"success": False, "metadata": last_metadata, "error": last_error}
+        return metadata
 
     def collect_kartaview_images(
         self,
@@ -674,8 +723,9 @@ class ImageCollector:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize KartaView downloader
-        downloader = self.KVDownloader(max_workers=self.max_workers)
+        # Initialize KartaView downloader lazily
+        downloader_cls = self._get_kv_downloader_cls()
+        downloader = downloader_cls(max_workers=self.max_workers)
 
         results = []
 
@@ -755,28 +805,37 @@ class ImageCollector:
 
         return results
 
-    def collect_google_street_view_images(
+
+    def collect_google_street_view_images_static(
         self,
         route: Route,
         output_dir: Optional[str] = None,
-        image_size: str = "640x640",
+        size: Tuple[int, int] = (640, 640),
         fov: int = 90,
-        buffer: Optional[int] = None,
+        pitch: int = 0,
+        headings: Optional[List[int]] = None,
+        all_around: bool = True,
+        buffer: int = 50,
         clean_output: bool = True,
+        source: str = "outdoor",
     ) -> List[Dict[str, Any]]:
         """
-        Collect Google Street View images for all waypoints in a route
+        Collect Street View images using VIRL's GoogleMapAPI helper with the static API.
 
         Args:
-            route: Route object containing waypoints
-            output_dir: Directory to save images
-            image_size: Image size string accepted by Google Street View Static API
-            fov: Field of view in degrees
-            buffer: Optional radius in meters when searching for nearby panoramas
-            clean_output: If True, delete existing JPEGs in the output directory before downloading
+            route: Route containing waypoints.
+            output_dir: Directory to save images (defaults to images_dir/<route_id>).
+            size: Tuple(width, height) for Static API requests (max 640x640 per Google).
+            fov: Field of view per capture (10-120 degrees).
+            pitch: Camera pitch angle.
+            headings: Optional list of heading angles to capture. If None and all_around=True, capture a 360 sweep.
+            all_around: Whether to automatically cover 360 degrees using the provided fov.
+            buffer: Metadata search radius in meters.
+            clean_output: If True, clears existing JPEGs before download.
+            source: Street View source parameter ("default" or "outdoor").
 
         Returns:
-            List of download results with metadata
+            List of metadata dictionaries describing the downloads.
         """
         if not settings.google_maps_api_key:
             raise ValueError("Google Maps API key is required for Street View images")
@@ -792,89 +851,145 @@ class ImageCollector:
                     existing_file.unlink()
                 except Exception as cleanup_error:
                     self.logger.warning(
-                        "Failed to remove existing GSV image",
+                        "Failed to remove existing Street View image",
                         file=str(existing_file),
                         error=str(cleanup_error)
                     )
 
-        radius = buffer if buffer is not None else 50
+        api = self._get_virl_google_api()
+        results: List[Dict[str, Any]] = []
 
-        results = []
+        fov = max(10, min(120, int(fov)))
+        heading_step = max(1, fov)
 
         for waypoint in route.waypoints:
+            heading_plan: List[int]
+            if headings:
+                heading_plan = [int(h) % 360 for h in headings]
+            elif all_around:
+                heading_plan = list(range(0, 360, heading_step))
+            else:
+                heading_value = waypoint.heading if waypoint.heading is not None else 0
+                heading_plan = [int(heading_value) % 360]
+
             try:
                 self.logger.info(
-                    "Collecting Google Street View image",
+                    "Collecting Static Street View images",
                     route_id=route.route_id,
                     waypoint_id=waypoint.sequence_id,
                     latitude=waypoint.lat,
-                    longitude=waypoint.lon
+                    longitude=waypoint.lon,
+                    headings=heading_plan,
                 )
 
-                image_filename = f"waypoint_{waypoint.sequence_id:03d}.jpg"
-                image_path = output_dir / image_filename
+                heading_images: List[Image.Image] = []
+                heading_entries: List[Dict[str, Any]] = []
 
-                download_info = self._download_gsv_image(
-                    lat=waypoint.lat,
-                    lon=waypoint.lon,
-                    heading=waypoint.heading or 0,
-                    image_size=image_size,
-                    fov=fov,
-                    radius=radius,
-                    output_path=image_path,
+                for heading in heading_plan:
+                    street_view_image = api.get_streetview_from_geocode(
+                        (waypoint.lat, waypoint.lon),
+                        size=size,
+                        heading=heading,
+                        pitch=pitch,
+                        fov=fov,
+                        source=source,
+                        idx=heading,
+                    )
+                    pil_image = street_view_image.image.copy()
+                    heading_path = output_dir / f"waypoint_{waypoint.sequence_id:03d}_heading_{heading:03d}.jpg"
+                    pil_image.save(heading_path)
+                    heading_images.append(pil_image)
+                    heading_entries.append(
+                        {
+                            "heading": heading,
+                            "image_path": str(heading_path),
+                        }
+                    )
+
+                panorama_path: Optional[Path] = None
+                if all_around and len(heading_images) > 1:
+                    panorama_path = output_dir / f"waypoint_{waypoint.sequence_id:03d}_panorama.jpg"
+                    panorama_image = self._compose_panorama_image(heading_images)
+                    panorama_image.save(panorama_path)
+
+                primary_image_path = (
+                    str(panorama_path)
+                    if panorama_path
+                    else (heading_entries[0]["image_path"] if heading_entries else None)
                 )
+                if primary_image_path:
+                    waypoint.image_path = primary_image_path
 
-                if download_info["success"]:
-                    waypoint.image_path = str(image_path)
-
-                result = {
-                    "waypoint_id": waypoint.sequence_id,
-                    "lat": waypoint.lat,
-                    "lon": waypoint.lon,
-                    "image_path": str(image_path) if download_info["success"] else None,
-                    "download_success": download_info["success"],
-                    "gsv_pano_id": (
-                        download_info.get("metadata", {}).get("pano_id")
-                        if download_info.get("metadata")
-                        else None
-                    ),
-                    "metadata": download_info.get("metadata"),
-                    "error": download_info.get("error"),
-                    "timestamp": datetime.now().isoformat(),
+                metadata_raw = self._get_streetview_metadata(waypoint.lat, waypoint.lon, buffer)
+                metadata = metadata_raw if isinstance(metadata_raw, dict) else {}
+                metadata_payload = {
+                    **metadata,
+                    "headings": heading_plan,
+                    "fov": fov,
+                    "pitch": pitch,
+                    "source": source,
+                    "size": size,
                 }
-                results.append(result)
 
-            except Exception as e:
+                results.append(
+                    {
+                        "waypoint_id": waypoint.sequence_id,
+                        "lat": waypoint.lat,
+                        "lon": waypoint.lon,
+                        "image_path": primary_image_path,
+                        "download_success": bool(heading_entries),
+                        "gsv_pano_id": metadata.get("pano_id"),
+                        "metadata": metadata_payload,
+                        "heading_images": heading_entries,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                )
+
+            except Exception as error:
                 self.logger.error(
-                    "Error downloading Google Street View image",
+                    "Error collecting Static Street View images",
                     route_id=route.route_id,
                     waypoint_id=waypoint.sequence_id,
-                    error=str(e)
+                    error=str(error)
                 )
-                result = {
-                    "waypoint_id": waypoint.sequence_id,
-                    "lat": waypoint.lat,
-                    "lon": waypoint.lon,
-                    "image_path": None,
-                    "download_success": False,
-                    "error": str(e),
-                    "timestamp": datetime.now().isoformat(),
-                }
-                results.append(result)
+                results.append(
+                    {
+                        "waypoint_id": waypoint.sequence_id,
+                        "lat": waypoint.lat,
+                        "lon": waypoint.lon,
+                        "image_path": None,
+                        "download_success": False,
+                        "error": str(error),
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                )
 
         metadata_file = output_dir / "collection_metadata.json"
-        with open(metadata_file, "w") as f:
+        with open(metadata_file, "w") as metadata_stream:
             json.dump(
                 {
                     "route_id": route.route_id,
                     "collection_timestamp": datetime.now().isoformat(),
                     "total_waypoints": len(route.waypoints),
-                    "platform": "google_street_view",
+                    "platform": "google_street_view_static",
+                    "fov": fov,
+                    "pitch": pitch,
+                    "size": size,
+                    "all_around": all_around,
+                    "buffer_m": buffer,
                     "results": results,
                 },
-                f,
+                metadata_stream,
                 indent=2,
             )
+
+        success_count = sum(1 for result in results if result.get("download_success"))
+        self.logger.info(
+            "Completed Static Street View collection",
+            route_id=route.route_id,
+            success=success_count,
+            total=len(results),
+        )
 
         return results
 

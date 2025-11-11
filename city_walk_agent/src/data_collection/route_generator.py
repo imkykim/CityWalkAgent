@@ -6,7 +6,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-import googlemaps
+try:
+    import googlemaps
+except ModuleNotFoundError as exc:
+    googlemaps = None  # type: ignore
+    GOOGLEMAPS_IMPORT_ERROR = exc
+else:
+    GOOGLEMAPS_IMPORT_ERROR = None
 import numpy as np
 from geopy.distance import geodesic
 
@@ -23,6 +29,13 @@ class RouteGenerator:
         self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
         self.api_key = api_key or settings.google_maps_api_key
         self.gmaps: Optional[googlemaps.Client] = None
+
+        if googlemaps is None:
+            self.logger.warning(
+                "googlemaps package not installed; Google Maps routing disabled. "
+                "Install the 'googlemaps' dependency to enable full functionality."
+            )
+            return
 
         if self.api_key and self.api_key != "test_key":
             try:
@@ -140,7 +153,10 @@ class RouteGenerator:
         """
         if not self.gmaps:
             self.logger.error("Google Maps client not available")
-            raise ValueError("Google Maps API key is required for this functionality")
+            raise ValueError(
+                "Google Maps client is unavailable. Ensure the 'googlemaps' package "
+                "is installed and a valid API key is configured."
+            )
 
         # Get directions from Google Maps
         directions = self.gmaps.directions(

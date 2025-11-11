@@ -1,7 +1,12 @@
+import math
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from geopy.distance import geodesic
+try:
+    from geopy.distance import geodesic as _geodesic_distance
+except ImportError:
+    _geodesic_distance = None
+
 from pydantic import BaseModel, Field
 
 from src.config import settings
@@ -56,10 +61,10 @@ class Route(BaseModel):
 
         total = 0.0
         for prev, curr in zip(self.waypoints, self.waypoints[1:]):
-            total += geodesic(
+            total += _compute_distance_meters(
                 (prev.lat, prev.lon),
                 (curr.lat, curr.lon)
-            ).meters
+            )
         return total
 
 
@@ -98,3 +103,32 @@ class ExperimentConfig(BaseModel):
     volatility_threshold: float = Field(default=2.0, description="Threshold for detecting volatility")
     barrier_threshold: float = Field(default=3.0, description="Score drop threshold for hidden barriers")
     created_at: datetime = Field(default_factory=datetime.now)
+
+
+def _compute_distance_meters(point_a, point_b) -> float:
+    """Compute distance between two (lat, lon) points in meters."""
+    if _geodesic_distance:
+        return _geodesic_distance(point_a, point_b).meters
+    return _haversine_distance(point_a, point_b)
+
+
+def _haversine_distance(point_a, point_b) -> float:
+    """Haversine fallback when geopy is unavailable."""
+    lat1, lon1 = point_a
+    lat2, lon2 = point_b
+    radius_earth = 6_371_000  # meters
+
+    lat1_rad = math.radians(lat1)
+    lon1_rad = math.radians(lon1)
+    lat2_rad = math.radians(lat2)
+    lon2_rad = math.radians(lon2)
+
+    delta_lat = lat2_rad - lat1_rad
+    delta_lon = lon2_rad - lon1_rad
+
+    a = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return radius_earth * c

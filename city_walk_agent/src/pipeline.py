@@ -239,7 +239,7 @@ class WalkingAgentPipeline:
                 image_collector = ImageCollector(
                     api_key=settings.google_maps_api_key
                 )
-                image_collector.collect_google_street_view_images(route)
+                image_collector.collect_google_street_view_images_static(route)
                 image_count = len([w for w in route.waypoints if w.image_path])
                 self.logger.info("Images collected", count=image_count)
             except Exception as error:

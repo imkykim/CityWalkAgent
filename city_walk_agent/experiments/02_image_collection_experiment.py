@@ -16,20 +16,37 @@ This is experimental code for research and hypothesis testing.
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any, Dict, List, Union
 import json
-import pandas as pd
+
+try:
+    import pandas as pd
+
+    HAS_PANDAS = True
+except ImportError:
+    pd = None  # type: ignore
+    HAS_PANDAS = False
 from datetime import datetime
 from dotenv import load_dotenv
-from PIL import Image
+try:
+    from PIL import Image
+
+    HAS_PILLOW = True
+except ImportError:
+    Image = None  # type: ignore
+    HAS_PILLOW = False
 import traceback
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Add src to path
-src_path = Path(__file__).parent.parent / "src"
-sys.path.insert(0, str(src_path))
+# Add project and src directories to sys.path for local imports
+repo_root = Path(__file__).parent.parent
+src_path = repo_root / "src"
+for path in (repo_root, src_path):
+    path_str = str(path)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
 
 from data_collection import ImageCollector
 from config import settings
@@ -38,6 +55,7 @@ from utils.data_models import Route
 # Constants
 MAX_RETRY_ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 2
+DEFAULT_GSV_FOV = 90
 
 
 def load_latest_routes() -> Dict[str, Route]:
@@ -99,7 +117,10 @@ def load_latest_routes() -> Dict[str, Route]:
 
 
 def experiment_gsv_collection(
-    route: Route, max_workers: int = 4, buffer: int = 50
+    route: Route,
+    max_workers: int = 4,
+    buffer: int = 50,
+    fov: int = DEFAULT_GSV_FOV,
 ) -> Dict[str, Any]:
     """
     Experiment: Google Street View image collection
@@ -108,6 +129,7 @@ def experiment_gsv_collection(
         route: Route to collect images for
         max_workers: Number of parallel workers
         buffer: Search radius from waypoint in meters
+        fov: Field of view per capture when creating panoramas from static API images
 
     Returns:
         Collection results with timing and statistics
@@ -116,15 +138,13 @@ def experiment_gsv_collection(
     print(f"   Route: {route.route_id}")
     print(f"   Waypoints: {len(route.waypoints)}")
     print(f"   Workers: {max_workers}")
+    print(f"   Static API FOV: {fov}")
     print("=" * 60)
 
     if not settings.google_maps_api_key:
-        print("⏭️  Skipping: No Google Maps API key found")
-        return {
-            "platform": "google_street_view",
-            "skipped": True,
-            "reason": "No API key",
-        }
+        print(
+            "   ℹ️  No Google Maps API key configured — continuing without augmentation data"
+        )
 
     try:
         # Initialize collector
@@ -137,9 +157,15 @@ def experiment_gsv_collection(
         # Collect images with timing
         start_time = time.time()
 
-        print(f"📥 Starting download to {output_dir}...")
-        results = collector.collect_google_street_view_images(
-            route=route, output_dir=str(output_dir), buffer=buffer
+        print(f"📥 Starting panorama download to {output_dir}...")
+        results = collector.collect_google_street_view_images_static(
+            route=route,
+            output_dir=str(output_dir),
+            buffer=buffer,
+            clean_output=True,
+            size=(640, 640),
+            fov=fov,
+            all_around=True,
         )
 
         end_time = time.time()
@@ -156,7 +182,7 @@ def experiment_gsv_collection(
         print(f"   Speed: {duration/len(results):.2f}s per waypoint")
 
         return {
-            "platform": "google_street_view",
+            "platform": "google_street_view_panorama",
             "route_id": route.route_id,
             "total_waypoints": len(results),
             "successful": successful,
@@ -167,6 +193,7 @@ def experiment_gsv_collection(
             "output_dir": str(output_dir),
             "max_workers": max_workers,
             "buffer": buffer,
+            "fov": fov,
             "results": results,
             "timestamp": datetime.now().isoformat(),
         }
@@ -175,11 +202,12 @@ def experiment_gsv_collection(
         print(f"❌ Error during GSV collection: {e}")
         traceback.print_exc()
         return {
-            "platform": "google_street_view",
+            "platform": "google_street_view_panorama",
             "route_id": route.route_id,
             "error": str(e),
             "traceback": traceback.format_exc(),
             "timestamp": datetime.now().isoformat(),
+            "fov": fov,
         }
 
 
@@ -318,33 +346,37 @@ def validate_image_collection(
 
     total_size_bytes = 0
     valid_count = 0
+    pillow_available = HAS_PILLOW and Image is not None
+
+    if not pillow_available:
+        print("   ℹ️  Pillow not installed; skipping pixel-level validation")
 
     for img_file in image_files:
-        try:
-            # Check file size
-            file_size = img_file.stat().st_size
-            file_size_kb = file_size / 1024
-            total_size_bytes += file_size
+        # Check file size
+        file_size = img_file.stat().st_size
+        file_size_kb = file_size / 1024
+        total_size_bytes += file_size
 
-            # Try to open and validate image
+        validation_results["image_stats"]["min_size_kb"] = min(
+            validation_results["image_stats"]["min_size_kb"], file_size_kb
+        )
+        validation_results["image_stats"]["max_size_kb"] = max(
+            validation_results["image_stats"]["max_size_kb"], file_size_kb
+        )
+
+        if not pillow_available:
+            valid_count += 1
+            continue
+
+        try:
             with Image.open(img_file) as img:
                 width, height = img.size
-
-                # Check if image is valid (not corrupted)
                 img.verify()
 
-                valid_count += 1
-                validation_results["image_stats"]["dimensions"].append(
-                    {"width": width, "height": height, "file": img_file.name}
-                )
-
-                # Update size stats
-                validation_results["image_stats"]["min_size_kb"] = min(
-                    validation_results["image_stats"]["min_size_kb"], file_size_kb
-                )
-                validation_results["image_stats"]["max_size_kb"] = max(
-                    validation_results["image_stats"]["max_size_kb"], file_size_kb
-                )
+            valid_count += 1
+            validation_results["image_stats"]["dimensions"].append(
+                {"width": width, "height": height, "file": img_file.name}
+            )
 
         except Exception as e:
             validation_results["corrupted_images"] += 1
@@ -384,7 +416,7 @@ def validate_image_collection(
 
 def compare_collection_methods(
     gsv_results: Dict[str, Any], mapillary_results: Dict[str, Any]
-) -> pd.DataFrame:
+) -> Union[List[Dict[str, Any]], "pd.DataFrame"]:
     """
     Compare GSV and Mapillary collection methods
 
@@ -434,7 +466,20 @@ def compare_collection_methods(
 
     if not comparison_data:
         print("⚠️  No valid results to compare")
-        return pd.DataFrame()
+        if HAS_PANDAS and pd is not None:
+            return pd.DataFrame()
+        return []
+
+    if not HAS_PANDAS or pd is None:
+        print("ℹ️  pandas is not installed. Showing raw comparison summary:")
+        for entry in comparison_data:
+            platform = entry.get("Platform", "Unknown")
+            success_rate = entry.get("Success Rate (%)", 0)
+            speed = entry.get("Speed (s/waypoint)", 0)
+            print(
+                f" - {platform}: success {success_rate:.1f}%, speed {speed:.2f}s/waypoint"
+            )
+        return comparison_data
 
     df = pd.DataFrame(comparison_data)
 
@@ -511,6 +556,7 @@ def experiment_parallel_processing(
             route=test_route,
             max_workers=workers,
             buffer=30,  # Smaller buffer for faster testing
+            fov=DEFAULT_GSV_FOV,
         )
 
         if "error" not in result and not result.get("skipped", False):
@@ -580,12 +626,17 @@ def main():
     print(f"   Waypoints: {len(test_route.waypoints)}")
 
     # Experiment 1: Google Street View Collection
-    gsv_results = experiment_gsv_collection(route=test_route, max_workers=4, buffer=50)
-
-    # Experiment 2: Mapillary Collection
-    mapillary_results = experiment_mapillary_collection(
-        route=test_route, max_workers=4, buffer=50
+    gsv_results = experiment_gsv_collection(
+        route=test_route,
+        max_workers=4,
+        buffer=50,
+        fov=DEFAULT_GSV_FOV,
     )
+
+    # # Experiment 2: Mapillary Collection
+    # mapillary_results = experiment_mapillary_collection(
+    #     route=test_route, max_workers=4, buffer=50
+    # )
 
     # Validate collections
     validation_results = {}
@@ -594,25 +645,25 @@ def main():
         gsv_output = Path(gsv_results["output_dir"])
         validation_results["gsv"] = validate_image_collection(
             output_dir=gsv_output,
-            platform="Google Street View",
+            platform="Google Street View (Panorama)",
             expected_count=gsv_results["total_waypoints"],
         )
 
-    if not mapillary_results.get("skipped", False) and "error" not in mapillary_results:
-        mly_output = Path(mapillary_results["output_dir"])
-        validation_results["mapillary"] = validate_image_collection(
-            output_dir=mly_output,
-            platform="Mapillary",
-            expected_count=mapillary_results["total_waypoints"],
-        )
+    # if not mapillary_results.get("skipped", False) and "error" not in mapillary_results:
+    #     mly_output = Path(mapillary_results["output_dir"])
+    #     validation_results["mapillary"] = validate_image_collection(
+    #         output_dir=mly_output,
+    #         platform="Mapillary",
+    #         expected_count=mapillary_results["total_waypoints"],
+    # )
 
-    # Compare methods
-    comparison_df = compare_collection_methods(gsv_results, mapillary_results)
+    # # Compare methods
+    # comparison_df = compare_collection_methods(gsv_results, mapillary_results)
 
-    if not comparison_df.empty:
-        comparison_file = results_dir / f"collection_comparison_{timestamp}.csv"
-        comparison_df.to_csv(comparison_file, index=False)
-        print(f"\n💾 Comparison saved to: {comparison_file}")
+    # if not comparison_df.empty:
+    #     comparison_file = results_dir / f"collection_comparison_{timestamp}.csv"
+    #     comparison_df.to_csv(comparison_file, index=False)
+    #     print(f"\n💾 Comparison saved to: {comparison_file}")
 
     # # Experiment 3: Parallel Processing (only if GSV available)
     # parallel_results = None
@@ -627,7 +678,7 @@ def main():
         "timestamp": timestamp,
         "test_route": test_route_name,
         "gsv_results": gsv_results,
-        "mapillary_results": mapillary_results,
+        # "mapillary_results": mapillary_results,
         "validation_results": validation_results,
         # "parallel_processing": parallel_results,
     }
@@ -647,13 +698,13 @@ def main():
 
     if not gsv_results.get("skipped", False) and "error" not in gsv_results:
         findings.append(
-            f"1. GSV: {gsv_results.get('success_rate', 0):.1f}% success rate, {gsv_results.get('seconds_per_waypoint', 0):.2f}s per waypoint"
+            f"1. GSV Panorama: {gsv_results.get('success_rate', 0):.1f}% success rate, {gsv_results.get('seconds_per_waypoint', 0):.2f}s per waypoint"
         )
 
-    if not mapillary_results.get("skipped", False) and "error" not in mapillary_results:
-        findings.append(
-            f"2. Mapillary: {mapillary_results.get('success_rate', 0):.1f}% success rate, {mapillary_results.get('avg_images_per_waypoint', 0):.1f} images/waypoint"
-        )
+    # if not mapillary_results.get("skipped", False) and "error" not in mapillary_results:
+    #     findings.append(
+    #         f"2. Mapillary: {mapillary_results.get('success_rate', 0):.1f}% success rate, {mapillary_results.get('avg_images_per_waypoint', 0):.1f} images/waypoint"
+    #     )
 
     if validation_results:
         findings.append(
@@ -676,10 +727,10 @@ def main():
     return {
         "routes": routes,
         "gsv_results": gsv_results,
-        "mapillary_results": mapillary_results,
+        # "mapillary_results": mapillary_results,
         "validation_results": validation_results,
         # "parallel_results": parallel_results,
-        "comparison_df": comparison_df,
+        # "comparison_df": comparison_df,
     }
 
 
