@@ -1,42 +1,42 @@
 {
   "framework_id": "kaplan_4d",
   "framework_name": "Kaplan Preference Framework",
-  "framework_name_cn": "Kaplan 环境偏好框架",
-  "description": "基于进化心理学的环境偏好理论",
+  "framework_name_cn": "Kaplan Preference Framework",
+  "description": "Environmental preference theory derived from evolutionary psychology.",
   "theory_base": "Kaplan & Kaplan (1989) - The Experience of Nature",
   "num_dimensions": 4,
   "dimensions": [
     {
       "id": "coherence",
       "name_en": "Coherence",
-      "name_cn": "连贯性",
-      "theory_base": "环境的有序性、可理解性和组织性",
-      "description": "评估环境的有序程度和易理解性",
-      "vlm_prompt": "请评估这张街景图像的**连贯性**（Coherence）。\n\n评估要点：\n- 组织性：环境元素是否有序排列，构成清晰的结构？\n- 重复模式：是否有重复的元素（如一致的建筑风格）增强认知？\n- 整体感：各部分是否属于一个统一的整体？\n- 可理解性：环境是否容易理解和把握，不会感到混乱？\n\n请以1-10分评分（1分=混乱无序，10分=高度连贯），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+      "name_cn": "Coherence",
+      "theory_base": "Order, legibility, and organization of the environment.",
+      "description": "Assess how orderly, structured, and easy to understand the scene is.",
+      "vlm_prompt": "Please evaluate the **Coherence** of this street view image.\n\nFocus on:\n- Organization: Are elements arranged in an orderly way that forms a clear structure?\n- Repetition: Do recurring materials, facades, or rhythms reinforce understanding?\n- Sense of wholeness: Do the pieces feel like they belong to a unified whole?\n- Legibility: Is the space easy to read without confusion?\n\nRate the scene from 1-10 (1 = chaotic, 10 = highly coherent) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
     },
     {
       "id": "legibility",
       "name_en": "Legibility",
-      "name_cn": "可读性",
-      "theory_base": "环境的可识别性和导航便利性",
-      "description": "评估环境的清晰度和方向感",
-      "vlm_prompt": "请评估这张街景图像的**可读性**（Legibility）。\n\n评估要点：\n- 导航清晰：能否从画面判断前进方向和路径？\n- 地标可见：是否有显著的参照物帮助定位？\n- 空间结构：能否理解这个空间在整体环境中的位置？\n- 迷失风险：在这个环境中是否容易迷路？\n\n请以1-10分评分（1分=易迷失，10分=极清晰），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+      "name_cn": "Legibility",
+      "theory_base": "Environmental recognizability and navigation clarity.",
+      "description": "Assess how clearly the space communicates direction and structure.",
+      "vlm_prompt": "Please evaluate the **Legibility** of this street view image.\n\nFocus on:\n- Navigational clarity: Can you infer the forward path or direction of travel?\n- Landmarks: Are there notable reference points that support orientation?\n- Spatial structure: Is it easy to understand how this space fits into the wider context?\n- Getting lost risk: Would a pedestrian feel confident that they will not get lost?\n\nRate the scene from 1-10 (1 = confusing, 10 = extremely clear) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
     },
     {
       "id": "complexity_mystery",
       "name_en": "Complexity & Mystery",
-      "name_cn": "复杂性与神秘感",
-      "theory_base": "环境的丰富度和探索欲望激发",
-      "description": "评估环境的信息丰富度和吸引探索的程度",
-      "vlm_prompt": "请评估这张街景图像的**复杂性与神秘感**（Complexity & Mystery）。\n\n评估要点：\n- 信息丰富：画面是否包含丰富的视觉信息和细节？\n- 探索欲望：画面是否暗示前方有更多有趣内容值得探索？\n- 部分遮挡：是否有弯道、树木等元素制造\"想知道转角之后是什么\"的好奇？\n- 层次变化：是否有足够的变化让人想继续前进？\n\n请以1-10分评分（1分=单调乏味，10分=引人入胜），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+      "name_cn": "Complexity & Mystery",
+      "theory_base": "Environmental richness that invites exploration.",
+      "description": "Assess informational richness and the desire to keep exploring.",
+      "vlm_prompt": "Please evaluate the **Complexity & Mystery** of this street view image.\n\nFocus on:\n- Information density: Does the scene contain diverse visual details worth examining?\n- Invitation to explore: Does it hint that more interesting content lies ahead?\n- Partial concealment: Do curves, trees, or layered elements spark curiosity?\n- Variation: Is there enough change to sustain interest while walking?\n\nRate the scene from 1-10 (1 = flat and dull, 10 = captivating) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
     },
     {
       "id": "affordance",
       "name_en": "Affordance",
-      "name_cn": "可供性",
-      "theory_base": "环境提供的行为可能性和功能线索",
-      "description": "评估环境支持的活动类型和使用可能性",
-      "vlm_prompt": "请评估这张街景图像的**可供性**（Affordance）。\n\n评估要点：\n- 活动支持：环境是否支持多样的活动（行走、停留、休息、社交）？\n- 功能暗示：环境是否清晰暗示\"可以做什么\"（如可坐的台阶、可走的路径）？\n- 使用便利：设施是否易用，满足实际需求？\n- 吸引停留：环境是否让人想停下来使用和体验？\n\n请以1-10分评分（1分=功能贫瘠，10分=功能丰富），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+      "name_cn": "Affordance",
+      "theory_base": "Behavioral invitations and functional cues in the environment.",
+      "description": "Assess what types of activities and uses the space clearly supports.",
+      "vlm_prompt": "Please evaluate the **Affordance** of this street view image.\n\nFocus on:\n- Activity support: Does the environment enable walking, lingering, resting, or socializing?\n- Functional cues: Are there clear hints about what people can do here (benches, stairs, shaded paths)?\n- Ease of use: Are facilities intuitive, accessible, and practical?\n- Desire to stay: Does the space invite people to stop and engage with it?\n\nRate the scene from 1-10 (1 = functionally poor, 10 = functionally rich) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
     }
   ]
 }

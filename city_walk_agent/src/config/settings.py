@@ -111,8 +111,7 @@ class Settings(BaseSettings):
 
         if not self.default_dimensions:
             self.default_dimensions = _framework_dimensions(
-                self.default_framework_id,
-                self.frameworks_dir
+                self.default_framework_id, self.frameworks_dir
             )
 
     @property

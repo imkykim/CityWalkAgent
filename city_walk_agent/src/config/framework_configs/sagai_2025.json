@@ -1,31 +1,28 @@
 {
   "framework_id": "sagai_2025",
   "framework_name": "SAGAI (2025) Baseline",
-  "framework_name_cn": "SAGAI (2025) 基准方法",
+  "framework_name_cn": "SAGAI (2025) Baseline",
   "description": "Zero-shot VLM baseline for walkability assessment. Point-based aggregation without sequential analysis.",
-  "description_cn": "零样本视觉语言模型基准方法。基于点位的聚合评估，不考虑序列关系。",
+  "description_cn": "Zero-shot VLM baseline for walkability assessment. Point-based aggregation without sequential analysis.",
   "theory_base": "OpenStreetMap + Google Street View + LLaVA Integration",
   "paper_reference": "SAGAI (2025) - Street-level Accessibility and Greenery Assessment using AI",
   "year": 2025,
   "num_dimensions": 4,
-
   "method": {
     "type": "zero_shot_vlm",
     "description": "Direct image scoring without fine-tuning",
     "requires_fine_tuning": false,
-    "model_approach": "图像直接评分，模拟化构造用于多种评估任务"
+    "model_approach": "Direct image scoring with prompt-engineered reasoning across multiple evaluation tasks"
   },
-
   "aggregation_method": {
     "point_level": "Individual image score (1-10)",
     "street_level_mean": "mean(all_point_scores)",
     "street_level_sum": "sum(all_point_scores)",
     "route_level": "mean(all_street_segments)",
     "description": "Simple mean and sum aggregation without considering spatial transitions",
-    "description_cn": "简单平均和求和聚合，不考虑空间转换关系",
+    "description_cn": "Simple mean and sum aggregation without considering spatial transitions",
     "contrast_with_sequential": "No volatility analysis, no hidden barrier detection, no transition weighting"
   },
-
   "validation_metrics": {
     "detection_rate_rural": "90%+",
     "detection_rate_urban": "85%+",
@@ -33,55 +30,51 @@
     "sidewalk_coverage_estimation": "Lower cost-effectiveness",
     "notes": "Good for baseline comparison, traditional walkability scores"
   },
-
   "dimensions": [
     {
       "id": "safety",
       "name_en": "Safety",
-      "name_cn": "安全性",
+      "name_cn": "Safety",
       "theory_base": "SAGAI baseline dimension - pedestrian safety assessment",
-      "description": "评估步行环境的安全性：交通、照明、路况",
-      "vlm_prompt": "请评估这张街景图像的**安全性**（Safety）。\n\n评估要点：\n- 交通安全：车辆速度、人车分离、交通设施\n- 照明条件：白天光照充足性、夜间照明设施\n- 路面状况：人行道平整度、无障碍设施\n- 可见性：视线开阔，无视觉死角\n\n请以1-10分评分（1分=极不安全，10分=非常安全），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+      "description": "Evaluate pedestrian safety: traffic separation, lighting, surface quality, and visibility.",
+      "vlm_prompt": "Please evaluate the **Safety** of this street view image.\n\nFocus on:\n- Traffic protection: Vehicle speeds, separation between people and cars, crossings, and signals.\n- Lighting: Daytime shading and nighttime fixtures that keep the path visible.\n- Surface quality: Sidewalk smoothness, maintenance, curb ramps, and other accessible features.\n- Visibility: Clear sightlines with minimal blind spots.\n\nRate the scene from 1-10 (1 = very unsafe, 10 = very safe) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
     },
     {
       "id": "comfort",
       "name_en": "Comfort",
-      "name_cn": "舒适性",
+      "name_cn": "Comfort",
       "theory_base": "SAGAI baseline dimension - pedestrian comfort assessment",
-      "description": "评估步行环境的舒适性：宽度、遮蔽、设施",
-      "vlm_prompt": "请评估这张街景图像的**舒适性**（Comfort）。\n\n评估要点：\n- 人行道宽度：是否足够宽敞，不拥挤\n- 遮阳避雨：是否有树荫、遮篷等防护设施\n- 休息设施：是否有座椅、休息区\n- 环境宜人度：噪音、温度、空气质量的感知\n\n请以1-10分评分（1分=非常不舒适，10分=非常舒适），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+      "description": "Evaluate walking comfort: width, shade, rest options, and perceived pleasantness.",
+      "vlm_prompt": "Please evaluate the **Comfort** of this street view image.\n\nFocus on:\n- Width: Is the walkway generous enough to avoid crowding?\n- Weather protection: Are there trees, canopies, or other forms of shade and shelter?\n- Resting amenities: Are there benches or informal places to pause?\n- Environmental pleasantness: Consider noise, heat, and air quality cues.\n\nRate the scene from 1-10 (1 = very uncomfortable, 10 = very comfortable) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
     },
     {
       "id": "interest",
       "name_en": "Interest",
-      "name_cn": "趣味性",
+      "name_cn": "Interest",
       "theory_base": "SAGAI baseline dimension - visual interest and engagement",
-      "description": "评估步行环境的趣味性：视觉丰富度、活动吸引力",
-      "vlm_prompt": "请评估这张街景图像的**趣味性**（Interest）。\n\n评估要点：\n- 视觉丰富度：建筑、景观、细节的多样性\n- 活动吸引力：是否有商铺、咖啡馆、文化设施\n- 人文气息：是否有人的活动、社交场景\n- 新奇感：是否有独特、有趣的元素吸引注意\n\n请以1-10分评分（1分=极度乏味，10分=非常有趣），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+      "description": "Evaluate visual richness and activity cues that make the walk engaging.",
+      "vlm_prompt": "Please evaluate the **Interest** level of this street view image.\n\nFocus on:\n- Visual richness: Variety of buildings, landscape, signage, or art.\n- Activity draw: Presence of shops, cafes, cultural venues, or street life.\n- Human presence: Signs of people interacting or socializing.\n- Novelty: Unique or surprising elements that attract attention.\n\nRate the scene from 1-10 (1 = dull, 10 = highly interesting) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
     },
     {
       "id": "aesthetics",
       "name_en": "Aesthetics",
-      "name_cn": "美观性",
+      "name_cn": "Aesthetics",
       "theory_base": "SAGAI baseline dimension - visual aesthetics and appeal",
-      "description": "评估步行环境的美观性：整洁度、绿化、建筑品质",
-      "vlm_prompt": "请评估这张街景图像的**美观性**（Aesthetics）。\n\n评估要点：\n- 整洁度：环境是否干净整洁，无垃圾杂物\n- 绿化质量：植物、树木、花卉的数量和质量\n- 建筑品质：建筑外观、材质、维护状况\n- 视觉和谐：色彩、形式、比例的协调性\n\n请以1-10分评分（1分=非常丑陋，10分=非常美观），并用2-3句话解释评分理由。\n\n请以JSON格式回复：\n{\"score\": <1-10的数字>, \"reasoning\": \"<中文解释>\"}"
+      "description": "Evaluate cleanliness, greenery, architectural quality, and visual harmony.",
+      "vlm_prompt": "Please evaluate the **Aesthetics** of this street view image.\n\nFocus on:\n- Cleanliness: Is the environment tidy and well-maintained?\n- Greenery quality: Quantity and health of trees, planters, and landscaping.\n- Architectural care: Building facades, materials, and upkeep.\n- Harmony: How well colors, proportions, and forms work together.\n\nRate the scene from 1-10 (1 = unattractive, 10 = very beautiful) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
     }
   ],
-
   "comparison_notes": {
     "vs_streetagent": "StreetAgent uses sequential analysis and theory-grounded dimensions; SAGAI uses simple point aggregation",
     "vs_ewing_handy": "Ewing & Handy focuses on urban design qualities; SAGAI is more general baseline",
     "vs_kaplan": "Kaplan uses environmental psychology framework; SAGAI is practical assessment oriented",
     "use_case": "Baseline comparison, traditional walkability metrics, large-scale screening"
   },
-
   "scoring_range": {
     "min": 1,
     "max": 10,
     "type": "continuous"
   },
-
   "features": {
     "confidence_tracking": false,
     "sequential_analysis": false,
@@ -91,20 +84,22 @@
     "spatial_weighting": false,
     "point_aggregation_only": true
   },
-
   "cost_effectiveness": {
     "api_calls_per_route": "n_waypoints * 4",
     "processing_time": "Standard (no sequential overhead)",
-    "suitable_for": ["Large-scale surveys", "Baseline comparison", "Quick assessment", "Cost-constrained projects"]
+    "suitable_for": [
+      "Large-scale surveys",
+      "Baseline comparison",
+      "Quick assessment",
+      "Cost-constrained projects"
+    ]
   },
-
   "limitations": {
     "sequential_gaps": "Cannot detect hidden barriers or sudden quality drops",
     "transition_blind": "Misses important spatial transitions and experience shifts",
     "aggregation_bias": "Mean score may hide problematic segments",
     "no_context": "Each point evaluated independently without route context"
   },
-
   "advantages": {
     "simplicity": "Easy to understand and implement",
     "no_training": "Zero-shot, no model fine-tuning required",
