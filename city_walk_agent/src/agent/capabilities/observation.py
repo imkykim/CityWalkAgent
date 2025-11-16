@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional
 
 from src.agent.config.constants import MAX_CONCURRENT_VLM_CALLS
 from src.config import load_framework, settings
-from src.data_collection.image_collector import load_metadata
 from src.evaluation.evaluator import Evaluator
 from src.evaluation.vlm_client import VLMConfig
 from src.utils.logging import get_logger
@@ -87,58 +86,57 @@ class ObservationCapability:
     def load_route_data(self, route_dir: str) -> None:
         """
         Load collected images and metadata for a route.
-
-        Supports two metadata formats:
-        - collection_metadata.json (from ImageCollector)
-        - metadata.jsonl (from DirectionalImageCollector)
-
+        
+        Loads collection_metadata.json produced by ImageCollector.
+        
         Args:
-            route_dir: Path to route directory (contains images/ and metadata)
-
+            route_dir: Path to route directory containing collection_metadata.json
+        
         Sets:
             self.route_dir: Path object
             self.metadata: List of metadata dicts (one per waypoint)
             self.num_waypoints: Total waypoints in route
+            
+        Raises:
+            FileNotFoundError: If collection_metadata.json not found
         """
-        from src.data_collection.image_collector import load_metadata
-
         self.route_dir = Path(route_dir)
-
-        # Try JSONL first (DirectionalImageCollector format)
-        jsonl_path = self.route_dir / "metadata.jsonl"
-        if jsonl_path.exists():
-            self.logger.info("Loading JSONL metadata", path=str(jsonl_path))
-            self.metadata = load_metadata(jsonl_path)
-            self.num_waypoints = len(self.metadata)
-            return
-
-        # Fall back to JSON (ImageCollector format)
+        
+        # Load JSON metadata from ImageCollector
         json_path = self.route_dir / "collection_metadata.json"
-        if json_path.exists():
-            self.logger.info("Loading JSON metadata", path=str(json_path))
-            with open(json_path, 'r') as f:
-                data = json.load(f)
-
-            # Convert ImageCollector format to list of waypoint metadata
-            self.metadata = []
-            for result in data.get('results', []):
-                waypoint_meta = {
-                    'waypoint_index': result.get('waypoint_id', 0),
-                    'lat': result.get('lat'),
-                    'lon': result.get('lon'),
-                    'heading': result.get('metadata', {}).get('headings', [0])[0] if result.get('metadata') else 0,
-                    'image_path': result.get('image_path'),
-                    'success': result.get('download_success', False),
-                    'timestamp': result.get('timestamp'),
-                }
-                self.metadata.append(waypoint_meta)
-
-            self.num_waypoints = len(self.metadata)
-            return
-
-        raise FileNotFoundError(
-            f"No metadata found in {route_dir}. "
-            f"Expected metadata.jsonl or collection_metadata.json"
+        if not json_path.exists():
+            raise FileNotFoundError(
+                f"Metadata file not found: {json_path}. "
+                f"Ensure images have been collected with ImageCollector."
+            )
+        
+        self.logger.info("Loading collection metadata", path=str(json_path))
+        
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+        
+        # Convert ImageCollector format to list of waypoint metadata
+        self.metadata = []
+        for result in data.get('results', []):
+            waypoint_meta = {
+                'waypoint_index': result.get('waypoint_id', 0),
+                'lat': result.get('lat'),
+                'lon': result.get('lon'),
+                'heading': result.get('metadata', {}).get('headings', [0])[0] if result.get('metadata') else 0,
+                'image_path': result.get('image_path'),
+                'success': result.get('download_success', False),
+                'timestamp': result.get('timestamp'),
+                # Add corner detection fields if present
+                'is_corner': result.get('is_corner', False),
+                'angle_change': result.get('angle_change', 0.0),
+            }
+            self.metadata.append(waypoint_meta)
+        
+        self.num_waypoints = len(self.metadata)
+        self.logger.info(
+            "Route data loaded",
+            num_waypoints=self.num_waypoints,
+            route_dir=str(self.route_dir)
         )
 
     def observe_waypoint(self, waypoint_index: int) -> Dict[str, Any]:

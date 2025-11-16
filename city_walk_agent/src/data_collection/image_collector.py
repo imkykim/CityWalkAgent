@@ -65,76 +65,6 @@ def calculate_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> flo
     return bearing_normalized
 
 
-def save_metadata_line(metadata: Dict, metadata_file: Path) -> None:
-    """
-    Append one metadata entry to JSONL file.
-
-    JSONL (JSON Lines) format stores one JSON object per line, making it easy
-    to append new entries and process large files line-by-line.
-
-    Args:
-        metadata: Dictionary containing metadata to save
-        metadata_file: Path to the JSONL file
-
-    Example:
-        >>> metadata = {'waypoint_index': 0, 'lat': 37.7749, 'success': True}
-        >>> save_metadata_line(metadata, Path('route/metadata.jsonl'))
-    """
-    with open(metadata_file, 'a') as f:
-        f.write(json.dumps(metadata) + '\n')
-        f.flush()  # Ensure data is written immediately
-
-
-def load_metadata(metadata_file: Path) -> List[Dict]:
-    """
-    Load all metadata from JSONL file.
-
-    Reads a JSON Lines file and parses each line as a separate JSON object.
-    Handles malformed JSON gracefully by logging errors and skipping bad lines.
-
-    Args:
-        metadata_file: Path to the JSONL file to read
-
-    Returns:
-        List of metadata dictionaries, one per waypoint
-
-    Raises:
-        FileNotFoundError: If metadata file doesn't exist
-
-    Example:
-        >>> metadata_list = load_metadata(Path('route/metadata.jsonl'))
-        >>> print(f"Loaded {len(metadata_list)} waypoints")
-        >>> for meta in metadata_list:
-        ...     print(f"Waypoint {meta['waypoint_index']}: {meta['heading']}°")
-    """
-    if not metadata_file.exists():
-        raise FileNotFoundError(f"Metadata file not found: {metadata_file}")
-
-    metadata_list = []
-    logger = get_logger(__name__)
-
-    with open(metadata_file, 'r') as f:
-        for line_num, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line:
-                continue  # Skip empty lines
-
-            try:
-                metadata = json.loads(line)
-                metadata_list.append(metadata)
-            except json.JSONDecodeError as e:
-                logger.warning(
-                    "Malformed JSON in metadata file",
-                    file=str(metadata_file),
-                    line_number=line_num,
-                    error=str(e)
-                )
-                # Skip malformed lines but continue processing
-                continue
-
-    return metadata_list
-
-
 def get_walking_direction_with_lookahead(
     waypoints: List[Tuple[float, float]],
     current_index: int,
@@ -1048,6 +978,9 @@ class ImageCollector:
         clean_output: bool = True,
         source: str = "outdoor",
         use_route_direction: bool = False,
+        lookahead_distance: int = 1,
+        detect_corners: bool = False,
+        corner_threshold: float = 30.0,
     ) -> List[Dict[str, Any]]:
         """
         Collect Street View images using VIRL's GoogleMapAPI helper with the static API.
@@ -1066,6 +999,10 @@ class ImageCollector:
             use_route_direction: If True, calculate heading from route geometry using get_walking_direction().
                                 If False, use waypoint.heading or default to 0 (north).
                                 Only applies when headings=None and all_around=False.
+            lookahead_distance: How many waypoints ahead to look when calculating direction (requires use_route_direction=True).
+                                1 = look at next waypoint (default), 2+ = look further ahead for smoother corners.
+            detect_corners: If True, detect and mark corners/intersections in metadata.
+            corner_threshold: Minimum angle change (degrees) to qualify as a corner (requires detect_corners=True).
 
         Returns:
             List of metadata dictionaries describing the downloads.
@@ -1110,13 +1047,56 @@ class ImageCollector:
                         None
                     )
                     if waypoint_index is not None:
-                        heading_value = get_walking_direction(waypoint_coords, waypoint_index)
+                        # Use lookahead if configured
+                        if lookahead_distance > 1:
+                            heading_value = get_walking_direction_with_lookahead(
+                                waypoint_coords,
+                                waypoint_index,
+                                lookahead_distance
+                            )
+                        else:
+                            heading_value = get_walking_direction(waypoint_coords, waypoint_index)
                     else:
                         heading_value = waypoint.heading if waypoint.heading is not None else 0
                 else:
                     heading_value = waypoint.heading if waypoint.heading is not None else 0
 
                 heading_plan = [int(heading_value) % 360]
+
+            # Detect corners if enabled
+            is_corner = False
+            angle_change = 0.0
+            if detect_corners and use_route_direction and not all_around:
+                waypoint_coords = [(w.lat, w.lon) for w in route.waypoints]
+                waypoint_index = next(
+                    (i for i, w in enumerate(route.waypoints) if w.sequence_id == waypoint.sequence_id),
+                    None
+                )
+                if waypoint_index is not None and 0 < waypoint_index < len(waypoint_coords) - 1:
+                    # Calculate angle change
+                    prev_heading = calculate_bearing(
+                        waypoint_coords[waypoint_index - 1][0],
+                        waypoint_coords[waypoint_index - 1][1],
+                        waypoint_coords[waypoint_index][0],
+                        waypoint_coords[waypoint_index][1]
+                    )
+                    next_heading = calculate_bearing(
+                        waypoint_coords[waypoint_index][0],
+                        waypoint_coords[waypoint_index][1],
+                        waypoint_coords[waypoint_index + 1][0],
+                        waypoint_coords[waypoint_index + 1][1]
+                    )
+                    angle_change = abs(next_heading - prev_heading)
+                    if angle_change > 180:
+                        angle_change = 360 - angle_change
+                    is_corner = angle_change > corner_threshold
+
+                    if is_corner:
+                        self.logger.info(
+                            "Corner detected",
+                            waypoint_id=waypoint.sequence_id,
+                            angle_change=f"{angle_change:.1f}°"
+                        )
 
             try:
                 self.logger.info(
@@ -1176,21 +1156,27 @@ class ImageCollector:
                     "source": source,
                     "size": size,
                     "use_route_direction": use_route_direction,
+                    "lookahead_distance": lookahead_distance if use_route_direction else None,
                 }
 
-                results.append(
-                    {
-                        "waypoint_id": waypoint.sequence_id,
-                        "lat": waypoint.lat,
-                        "lon": waypoint.lon,
-                        "image_path": primary_image_path,
-                        "download_success": bool(heading_entries),
-                        "gsv_pano_id": metadata.get("pano_id"),
-                        "metadata": metadata_payload,
-                        "heading_images": heading_entries,
-                        "timestamp": datetime.now().isoformat(),
-                    }
-                )
+                result = {
+                    "waypoint_id": waypoint.sequence_id,
+                    "lat": waypoint.lat,
+                    "lon": waypoint.lon,
+                    "image_path": primary_image_path,
+                    "download_success": bool(heading_entries),
+                    "gsv_pano_id": metadata.get("pano_id"),
+                    "metadata": metadata_payload,
+                    "heading_images": heading_entries,
+                    "timestamp": datetime.now().isoformat(),
+                }
+
+                # Add corner detection info if enabled
+                if detect_corners:
+                    result["is_corner"] = is_corner
+                    result["angle_change"] = round(angle_change, 1)
+
+                results.append(result)
 
             except Exception as error:
                 self.logger.error(
@@ -1267,4 +1253,3 @@ class ImageCollector:
             "coverage_percentage": (waypoints_with_images / total_waypoints) * 100,
             "validation_timestamp": datetime.now().isoformat(),
         }
-

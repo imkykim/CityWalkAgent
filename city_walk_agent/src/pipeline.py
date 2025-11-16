@@ -245,7 +245,13 @@ class WalkingAgentPipeline:
                 )
                 image_collector.collect_google_street_view_images_static(
                     route,
-                    use_route_direction=True  # Enable directional alignment
+                    use_route_direction=True,   # Walking-aligned perspectives
+                    all_around=False,           # Single forward view
+                    fov=90,
+                    pitch=-5,
+                    lookahead_distance=2,       # Natural corner handling
+                    detect_corners=True,        # Mark intersections
+                    corner_threshold=30.0
                 )
                 image_count = len([w for w in route.waypoints if w.image_path])
                 self.logger.info("Images collected", count=image_count)

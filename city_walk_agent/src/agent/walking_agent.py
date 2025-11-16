@@ -558,11 +558,17 @@ class WalkingAgent(BaseAgent):
             # Use ImageCollector to get images
             from src.data_collection.image_collector import ImageCollector
 
-            collector = ImageCollector()
-            # Use directional collection for walking-aligned perspectives
+            collector = ImageCollector(api_key=settings.google_maps_api_key)
+            # Use directional collection with advanced features
             results = collector.collect_google_street_view_images_static(
                 route,
-                use_route_direction=True
+                use_route_direction=True,
+                all_around=False,
+                fov=90,
+                pitch=-5,
+                lookahead_distance=2,
+                detect_corners=True,
+                corner_threshold=30.0
             )
             image_paths = [
                 Path(result["image_path"])
