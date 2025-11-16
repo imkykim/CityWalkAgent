@@ -9,10 +9,239 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from PIL import Image
-
 from src.config import settings
 from src.utils.data_models import Route, Waypoint
 from src.utils.logging import get_logger
+
+
+def calculate_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    Calculate the bearing (heading) between two GPS coordinates using spherical geometry.
+
+    The bearing represents the direction from point 1 to point 2, measured clockwise
+    from true north. Uses the forward azimuth formula on a spherical Earth model.
+
+    Args:
+        lat1: Latitude of the starting point in decimal degrees
+        lon1: Longitude of the starting point in decimal degrees
+        lat2: Latitude of the destination point in decimal degrees
+        lon2: Longitude of the destination point in decimal degrees
+
+    Returns:
+        Bearing in degrees (0-360), where:
+            - 0° = North
+            - 90° = East
+            - 180° = South
+            - 270° = West
+
+    Example:
+        >>> # San Francisco to a point northeast
+        >>> bearing = calculate_bearing(37.7749, -122.4194, 37.7849, -122.4094)
+        >>> print(f"{bearing:.1f}")
+        38.3
+    """
+    # Convert all coordinates from degrees to radians
+    lat1_rad = math.radians(lat1)
+    lon1_rad = math.radians(lon1)
+    lat2_rad = math.radians(lat2)
+    lon2_rad = math.radians(lon2)
+
+    # Calculate the difference in longitude
+    delta_lon = lon2_rad - lon1_rad
+
+    # Calculate bearing using the forward azimuth formula
+    # Formula: θ = atan2(sin(Δλ)⋅cos(φ₂), cos(φ₁)⋅sin(φ₂) − sin(φ₁)⋅cos(φ₂)⋅cos(Δλ))
+    x = math.sin(delta_lon) * math.cos(lat2_rad)
+    y = math.cos(lat1_rad) * math.sin(lat2_rad) - math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(delta_lon)
+
+    bearing_rad = math.atan2(x, y)
+
+    # Convert from radians to degrees
+    bearing_deg = math.degrees(bearing_rad)
+
+    # Normalize to 0-360 range
+    bearing_normalized = (bearing_deg + 360) % 360
+
+    return bearing_normalized
+
+
+def save_metadata_line(metadata: Dict, metadata_file: Path) -> None:
+    """
+    Append one metadata entry to JSONL file.
+
+    JSONL (JSON Lines) format stores one JSON object per line, making it easy
+    to append new entries and process large files line-by-line.
+
+    Args:
+        metadata: Dictionary containing metadata to save
+        metadata_file: Path to the JSONL file
+
+    Example:
+        >>> metadata = {'waypoint_index': 0, 'lat': 37.7749, 'success': True}
+        >>> save_metadata_line(metadata, Path('route/metadata.jsonl'))
+    """
+    with open(metadata_file, 'a') as f:
+        f.write(json.dumps(metadata) + '\n')
+        f.flush()  # Ensure data is written immediately
+
+
+def load_metadata(metadata_file: Path) -> List[Dict]:
+    """
+    Load all metadata from JSONL file.
+
+    Reads a JSON Lines file and parses each line as a separate JSON object.
+    Handles malformed JSON gracefully by logging errors and skipping bad lines.
+
+    Args:
+        metadata_file: Path to the JSONL file to read
+
+    Returns:
+        List of metadata dictionaries, one per waypoint
+
+    Raises:
+        FileNotFoundError: If metadata file doesn't exist
+
+    Example:
+        >>> metadata_list = load_metadata(Path('route/metadata.jsonl'))
+        >>> print(f"Loaded {len(metadata_list)} waypoints")
+        >>> for meta in metadata_list:
+        ...     print(f"Waypoint {meta['waypoint_index']}: {meta['heading']}°")
+    """
+    if not metadata_file.exists():
+        raise FileNotFoundError(f"Metadata file not found: {metadata_file}")
+
+    metadata_list = []
+    logger = get_logger(__name__)
+
+    with open(metadata_file, 'r') as f:
+        for line_num, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue  # Skip empty lines
+
+            try:
+                metadata = json.loads(line)
+                metadata_list.append(metadata)
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "Malformed JSON in metadata file",
+                    file=str(metadata_file),
+                    line_number=line_num,
+                    error=str(e)
+                )
+                # Skip malformed lines but continue processing
+                continue
+
+    return metadata_list
+
+
+def get_walking_direction_with_lookahead(
+    waypoints: List[Tuple[float, float]],
+    current_index: int,
+    lookahead_distance: int = 2
+) -> float:
+    """
+    Calculate walking direction with lookahead for natural corner perception.
+
+    Instead of looking directly at the next waypoint, look slightly ahead
+    to simulate how humans naturally anticipate turns. This creates more
+    natural perspective views, especially at corners and intersections where
+    humans tend to look ahead rather than directly at their feet.
+
+    Args:
+        waypoints: List of (lat, lon) tuples representing the route path
+        current_index: The index of the current waypoint (0 to len(waypoints)-1)
+        lookahead_distance: How many waypoints ahead to look (default: 2)
+                           - 1 = same as get_walking_direction()
+                           - 2+ = look further ahead for smoother turns
+
+    Returns:
+        Heading in degrees (0-360), where 0° is North, 90° is East, etc.
+
+    Examples:
+        >>> route = [(37.7749, -122.4194), (37.7799, -122.4144),
+        ...          (37.7849, -122.4094), (37.7899, -122.4044)]
+        >>> # At waypoint 0 with lookahead=2: Look toward waypoint 2 (not 1)
+        >>> heading = get_walking_direction_with_lookahead(route, 0, lookahead_distance=2)
+        >>> # Near end (waypoint 2 of 4, lookahead=2): Look toward waypoint 3 (last)
+        >>> heading = get_walking_direction_with_lookahead(route, 2, lookahead_distance=2)
+    """
+    if not waypoints or len(waypoints) < 2:
+        raise ValueError("Need at least 2 waypoints to calculate walking direction")
+
+    if current_index < 0 or current_index >= len(waypoints):
+        raise ValueError(
+            f"current_index {current_index} out of bounds for waypoints list of length {len(waypoints)}"
+        )
+
+    # If at the last waypoint, look in direction of arrival
+    if current_index >= len(waypoints) - 1:
+        prev_lat, prev_lon = waypoints[current_index - 1]
+        current_lat, current_lon = waypoints[current_index]
+        return calculate_bearing(prev_lat, prev_lon, current_lat, current_lon)
+
+    # Calculate target index with lookahead, capped at last waypoint
+    target_index = min(current_index + lookahead_distance, len(waypoints) - 1)
+
+    # Get current and target waypoints
+    current_lat, current_lon = waypoints[current_index]
+    target_lat, target_lon = waypoints[target_index]
+
+    # Calculate bearing to target waypoint
+    return calculate_bearing(current_lat, current_lon, target_lat, target_lon)
+
+
+def get_walking_direction(waypoints: List[Tuple[float, float]], current_index: int) -> float:
+    """
+    Determine the walking direction (heading) an agent should be looking at a waypoint.
+
+    The direction is calculated based on the route progression:
+    - For waypoints with a next point: look toward the next waypoint (forward along route)
+    - For the final waypoint: look in the direction of arrival (from previous waypoint)
+
+    Args:
+        waypoints: List of (latitude, longitude) tuples representing the route path
+        current_index: The index of the current waypoint (0 to len(waypoints)-1)
+
+    Returns:
+        Heading in degrees (0-360), where 0° is North, 90° is East, etc.
+
+    Raises:
+        ValueError: If current_index is out of bounds or waypoints list is too short
+
+    Example:
+        >>> route = [(37.7749, -122.4194), (37.7849, -122.4094), (37.7949, -122.3994)]
+        >>> # At the first waypoint, look toward the second
+        >>> heading = get_walking_direction(route, 0)
+        >>> print(f"Look {heading:.1f}° at waypoint 0")
+        Look 38.3° at waypoint 0
+        >>> # At the last waypoint, look in the direction we arrived from
+        >>> heading = get_walking_direction(route, 2)
+        >>> print(f"Look {heading:.1f}° at waypoint 2")
+        Look 38.3° at waypoint 2
+    """
+    if not waypoints:
+        raise ValueError("Waypoints list cannot be empty")
+
+    if current_index < 0 or current_index >= len(waypoints):
+        raise ValueError(
+            f"current_index {current_index} out of bounds for waypoints list of length {len(waypoints)}"
+        )
+
+    if len(waypoints) < 2:
+        raise ValueError("Need at least 2 waypoints to calculate walking direction")
+
+    # If not at the end of the route, look toward the next waypoint (forward)
+    if current_index < len(waypoints) - 1:
+        current_lat, current_lon = waypoints[current_index]
+        next_lat, next_lon = waypoints[current_index + 1]
+        return calculate_bearing(current_lat, current_lon, next_lat, next_lon)
+
+    # If at the end of the route, look in the direction we arrived (from previous to current)
+    else:
+        prev_lat, prev_lon = waypoints[current_index - 1]
+        current_lat, current_lon = waypoints[current_index]
+        return calculate_bearing(prev_lat, prev_lon, current_lat, current_lon)
 
 
 class ImageCollector:
@@ -818,6 +1047,7 @@ class ImageCollector:
         buffer: int = 50,
         clean_output: bool = True,
         source: str = "outdoor",
+        use_route_direction: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Collect Street View images using VIRL's GoogleMapAPI helper with the static API.
@@ -833,6 +1063,9 @@ class ImageCollector:
             buffer: Metadata search radius in meters.
             clean_output: If True, clears existing JPEGs before download.
             source: Street View source parameter ("default" or "outdoor").
+            use_route_direction: If True, calculate heading from route geometry using get_walking_direction().
+                                If False, use waypoint.heading or default to 0 (north).
+                                Only applies when headings=None and all_around=False.
 
         Returns:
             List of metadata dictionaries describing the downloads.
@@ -869,7 +1102,20 @@ class ImageCollector:
             elif all_around:
                 heading_plan = list(range(0, 360, heading_step))
             else:
-                heading_value = waypoint.heading if waypoint.heading is not None else 0
+                if use_route_direction:
+                    # Calculate walking direction from route geometry
+                    waypoint_coords = [(w.lat, w.lon) for w in route.waypoints]
+                    waypoint_index = next(
+                        (i for i, w in enumerate(route.waypoints) if w.sequence_id == waypoint.sequence_id),
+                        None
+                    )
+                    if waypoint_index is not None:
+                        heading_value = get_walking_direction(waypoint_coords, waypoint_index)
+                    else:
+                        heading_value = waypoint.heading if waypoint.heading is not None else 0
+                else:
+                    heading_value = waypoint.heading if waypoint.heading is not None else 0
+
                 heading_plan = [int(heading_value) % 360]
 
             try:
@@ -929,6 +1175,7 @@ class ImageCollector:
                     "pitch": pitch,
                     "source": source,
                     "size": size,
+                    "use_route_direction": use_route_direction,
                 }
 
                 results.append(
@@ -1020,3 +1267,4 @@ class ImageCollector:
             "coverage_percentage": (waypoints_with_images / total_waypoints) * 100,
             "validation_timestamp": datetime.now().isoformat(),
         }
+

@@ -7,12 +7,15 @@ structured dimension scores without making decisions.
 Design principle: OBSERVE, don't decide.
 """
 
+import json
 import statistics
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.agent.config.constants import MAX_CONCURRENT_VLM_CALLS
 from src.config import load_framework, settings
+from src.data_collection.image_collector import load_metadata
 from src.evaluation.evaluator import Evaluator
 from src.evaluation.vlm_client import VLMConfig
 from src.utils.logging import get_logger
@@ -75,6 +78,151 @@ class ObservationCapability:
             framework_id=self.framework_id,
             max_concurrent=self.max_concurrent,
         )
+
+        # Route data storage (for collected Street View metadata)
+        self.route_dir: Optional[Path] = None
+        self.metadata: List[Dict[str, Any]] = []
+        self.num_waypoints: int = 0
+
+    def load_route_data(self, route_dir: str) -> None:
+        """
+        Load collected images and metadata for a route.
+
+        Supports two metadata formats:
+        - collection_metadata.json (from ImageCollector)
+        - metadata.jsonl (from DirectionalImageCollector)
+
+        Args:
+            route_dir: Path to route directory (contains images/ and metadata)
+
+        Sets:
+            self.route_dir: Path object
+            self.metadata: List of metadata dicts (one per waypoint)
+            self.num_waypoints: Total waypoints in route
+        """
+        from src.data_collection.image_collector import load_metadata
+
+        self.route_dir = Path(route_dir)
+
+        # Try JSONL first (DirectionalImageCollector format)
+        jsonl_path = self.route_dir / "metadata.jsonl"
+        if jsonl_path.exists():
+            self.logger.info("Loading JSONL metadata", path=str(jsonl_path))
+            self.metadata = load_metadata(jsonl_path)
+            self.num_waypoints = len(self.metadata)
+            return
+
+        # Fall back to JSON (ImageCollector format)
+        json_path = self.route_dir / "collection_metadata.json"
+        if json_path.exists():
+            self.logger.info("Loading JSON metadata", path=str(json_path))
+            with open(json_path, 'r') as f:
+                data = json.load(f)
+
+            # Convert ImageCollector format to list of waypoint metadata
+            self.metadata = []
+            for result in data.get('results', []):
+                waypoint_meta = {
+                    'waypoint_index': result.get('waypoint_id', 0),
+                    'lat': result.get('lat'),
+                    'lon': result.get('lon'),
+                    'heading': result.get('metadata', {}).get('headings', [0])[0] if result.get('metadata') else 0,
+                    'image_path': result.get('image_path'),
+                    'success': result.get('download_success', False),
+                    'timestamp': result.get('timestamp'),
+                }
+                self.metadata.append(waypoint_meta)
+
+            self.num_waypoints = len(self.metadata)
+            return
+
+        raise FileNotFoundError(
+            f"No metadata found in {route_dir}. "
+            f"Expected metadata.jsonl or collection_metadata.json"
+        )
+
+    def observe_waypoint(self, waypoint_index: int) -> Dict[str, Any]:
+        """
+        Analyze what agent sees at a specific waypoint.
+
+        Returns basic observation data for now. VLM evaluation can be added
+        later for detailed perception analysis.
+
+        Args:
+            waypoint_index: Which waypoint to observe (0 to num_waypoints-1)
+
+        Returns:
+            Dict containing:
+                - waypoint_index: int
+                - location: {'lat': float, 'lon': float}
+                - heading: float (0-360 degrees)
+                - image_path: str (absolute path to image)
+                - is_corner: bool (if corner detection was enabled)
+                - angle_change: float (if corner detection was enabled)
+                - vlm_evaluation: Dict (placeholder for future VLM analysis)
+
+        Raises:
+            ValueError: If route data not loaded or waypoint_index out of bounds
+
+        Example:
+            >>> observer = ObservationCapability()
+            >>> observer.load_route_data("/data/routes/route_001")
+            >>> obs = observer.observe_waypoint(0)
+            >>> print(f"At ({obs['location']['lat']}, {obs['location']['lon']})")
+            >>> print(f"Heading: {obs['heading']}°")
+        """
+        if not self.metadata:
+            raise ValueError(
+                "No route data loaded. Call load_route_data() first."
+            )
+
+        if waypoint_index < 0 or waypoint_index >= self.num_waypoints:
+            raise ValueError(
+                f"waypoint_index {waypoint_index} out of bounds "
+                f"(0 to {self.num_waypoints - 1})"
+            )
+
+        # Get metadata for this waypoint
+        waypoint_meta = self.metadata[waypoint_index]
+
+        # Build absolute image path
+        image_path = waypoint_meta.get('image_path')
+        if image_path and self.route_dir:
+            # Convert relative path to absolute
+            abs_image_path = str(self.route_dir / image_path)
+        else:
+            abs_image_path = None
+
+        # Build observation
+        observation = {
+            'waypoint_index': waypoint_index,
+            'location': {
+                'lat': waypoint_meta.get('lat'),
+                'lon': waypoint_meta.get('lon'),
+            },
+            'heading': waypoint_meta.get('heading'),
+            'image_path': abs_image_path,
+            'success': waypoint_meta.get('success', False),
+        }
+
+        # Add corner detection info if available
+        if 'is_corner' in waypoint_meta:
+            observation['is_corner'] = waypoint_meta['is_corner']
+            observation['angle_change'] = waypoint_meta.get('angle_change', 0.0)
+
+        # Placeholder for future VLM evaluation
+        # TODO: Integrate VLM evaluation for detailed perception analysis
+        # Could use self.evaluator.evaluate_images([abs_image_path])
+        observation['vlm_evaluation'] = None
+
+        self.logger.debug(
+            "Waypoint observed",
+            waypoint_index=waypoint_index,
+            heading=waypoint_meta.get('heading'),
+            has_image=abs_image_path is not None,
+        )
+
+        return observation
 
     def observe_route(self, route_data: Dict[str, Any]) -> Dict[str, Any]:
         """Observe a complete route with images.

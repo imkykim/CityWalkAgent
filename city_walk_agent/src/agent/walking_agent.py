@@ -539,12 +539,13 @@ class WalkingAgent(BaseAgent):
 
         # Cache miss - generate new route
         self.logger.debug("Cache miss - generating new route", start=start, end=end)
-        route = self.pipeline.route_generator.create_simple_route(
-            start_lat=start[0],
-            start_lon=start[1],
-            end_lat=end[0],
-            end_lon=end[1],
+        route = self.pipeline.route_generator.create_google_maps_route(
+            origin=start,
+            destination=end,
             interval_meters=interval,
+            mode="walking",
+            route_name=None,
+            route_id=route_id,
         )
         route_id = route.route_id
 
@@ -558,7 +559,16 @@ class WalkingAgent(BaseAgent):
             from src.data_collection.image_collector import ImageCollector
 
             collector = ImageCollector()
-            image_paths = collector.collect_route_images(route)
+            # Use directional collection for walking-aligned perspectives
+            results = collector.collect_google_street_view_images_static(
+                route,
+                use_route_direction=True
+            )
+            image_paths = [
+                Path(result["image_path"])
+                for result in results
+                if result.get("image_path")
+            ]
 
         # Build route data
         route_data = {
