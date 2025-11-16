@@ -9,7 +9,11 @@ from .constants import (
     MIN_SAMPLING_INTERVAL,
     MIN_SCORE,
     OPTIMAL_BATCH_SIZE,
-    SCORE_DECIMAL_PLACES
+    SCORE_DECIMAL_PLACES,
+    DEFAULT_PHASH_THRESHOLD,
+    DEFAULT_MULTI_IMAGE_THRESHOLD,
+    DEFAULT_ENABLE_MULTI_IMAGE,
+    DEFAULT_CONTEXT_WINDOW
 )
 from .frameworks import (
     FrameworkManager,
@@ -31,6 +35,10 @@ __all__ = [
     "MIN_SCORE",
     "OPTIMAL_BATCH_SIZE",
     "SCORE_DECIMAL_PLACES",
+    "DEFAULT_PHASH_THRESHOLD",
+    "DEFAULT_MULTI_IMAGE_THRESHOLD",
+    "DEFAULT_ENABLE_MULTI_IMAGE",
+    "DEFAULT_CONTEXT_WINDOW",
     "FrameworkManager",
     "get_framework_manager",
     "load_framework",

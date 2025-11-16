@@ -78,7 +78,8 @@ class Evaluator:
     def evaluate_image(
         self,
         image_path: str,
-        dimensions: Optional[List[str]] = None
+        dimensions: Optional[List[str]] = None,
+        previous_context: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
         Evaluate single image across specified dimensions
@@ -86,6 +87,12 @@ class Evaluator:
         Args:
             image_path: Path to street view image
             dimensions: List of dimension IDs to evaluate (None = all)
+            previous_context: Optional dict containing previous waypoint info:
+                - waypoint_id: int
+                - scores: Dict[str, float]
+                - reasoning: Dict[str, str]
+                - phash_distance: float
+                - visual_change_detected: bool
 
         Returns:
             List of evaluation results (one per dimension)
@@ -105,7 +112,14 @@ class Evaluator:
                 )
                 continue
 
-            prompt = self.prompts[dimension_id]
+            base_prompt = self.prompts[dimension_id]
+
+            # Prepend context if available
+            if previous_context:
+                context_text = self._format_context_for_prompt(previous_context)
+                prompt = context_text + base_prompt
+            else:
+                prompt = base_prompt
 
             # Call VLM
             response = self.vlm_client.call_vlm(prompt, image_path)
@@ -247,6 +261,151 @@ class Evaluator:
         )
 
         return self.evaluate_images(image_paths, dimensions)
+
+    def evaluate_with_comparison(
+        self,
+        previous_image_path: Path,
+        current_image_path: Path,
+        previous_context: Dict[str, Any],
+        dimensions: Optional[List[str]] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Evaluate current waypoint by comparing with previous waypoint visually.
+
+        Uses multi-image VLM call to directly compare two consecutive waypoints.
+        More expensive but provides better insight on transitions.
+
+        Args:
+            previous_image_path: Path to previous waypoint image
+            current_image_path: Path to current waypoint image
+            previous_context: Previous waypoint metadata
+            dimensions: Dimensions to evaluate (default: all)
+
+        Returns:
+            Dict mapping dimension_id to {score, reasoning, comparison_notes}
+        """
+        if dimensions is None:
+            dimensions = self.prompt_builder.get_all_dimension_ids()
+
+        results = {}
+
+        for dimension_id in dimensions:
+            if dimension_id not in self.prompts:
+                continue
+
+            # Build comparison prompt
+            base_prompt = self.prompts[dimension_id]
+            dimension_meta = self.prompt_builder.get_dimension_metadata(dimension_id)
+            dimension_name = dimension_meta.get("name_cn", dimension_id)
+
+            prev_score = previous_context.get('scores', {}).get(dimension_id, 'N/A')
+            prev_score_str = f"{prev_score:.1f}" if isinstance(prev_score, (int, float)) else str(prev_score)
+
+            comparison_prompt = f"""
+# Sequential Waypoint Comparison - {dimension_name}
+
+You are evaluating two consecutive waypoints along a walking route.
+
+**Previous Waypoint (ID: {previous_context.get('waypoint_id', 'N/A')})**
+- Previous {dimension_name} score: {prev_score_str}/10
+- Visual change detected: {'Yes' if previous_context.get('visual_change_detected') else 'No'}
+- pHash distance: {previous_context.get('phash_distance', 'N/A'):.1f}
+
+**Images:**
+Image 1 (Previous): First image below
+Image 2 (Current): Second image below
+
+**Evaluation Task:**
+1. Compare the two images directly
+2. Identify what changed between previous and current location
+3. Determine if the change improves or worsens the {dimension_name}
+4. Assign a score to the CURRENT waypoint (Image 2)
+
+{base_prompt}
+
+**Additional Focus:**
+- Did a sudden barrier appear?
+- Is this a gradual transition or abrupt change?
+- How does the current location compare to what came before?
+"""
+
+            # Multi-image VLM call
+            response = self.vlm_client.call_vlm_multi_image(
+                prompt=comparison_prompt,
+                image_paths=[str(previous_image_path), str(current_image_path)]
+            )
+
+            if response and "content" in response:
+                parsed = self.response_parser.parse_response(
+                    response["content"],
+                    dimension_id
+                )
+
+                if parsed:
+                    results[dimension_id] = {
+                        "score": parsed["score"],
+                        "reasoning": parsed["reasoning"],
+                        "comparison_mode": True,
+                        "previous_score": previous_context.get('scores', {}).get(dimension_id)
+                    }
+
+        return results
+
+    def _format_context_for_prompt(
+        self,
+        context: Dict[str, Any]
+    ) -> str:
+        """
+        Format previous waypoint context for prompt inclusion.
+
+        Args:
+            context: Previous waypoint information
+
+        Returns:
+            Formatted string to prepend to evaluation prompt
+        """
+        if not context:
+            return ""
+
+        scores = context.get("scores", {})
+        if scores:
+            scores_str = ", ".join([
+                f"{dim}: {score:.1f}/10"
+                for dim, score in scores.items()
+            ])
+        else:
+            scores_str = "N/A"
+
+        phash_info = ""
+        if context.get("phash_distance") is not None:
+            phash_info = f"\n- Visual change: {context['phash_distance']:.1f} (perceptual hash distance)"
+
+        # Get a summary from reasoning if available
+        reasoning = context.get("reasoning", {})
+        if reasoning:
+            # Use the first reasoning entry as summary
+            summary = next(iter(reasoning.values()), "N/A")
+        else:
+            summary = "N/A"
+
+        context_text = f"""
+## Previous Waypoint Context (Waypoint {context.get('waypoint_id', 'N/A')})
+
+This evaluation is part of a sequential route analysis. Consider the previous location:
+
+- Previous scores: {scores_str}
+- Summary: {summary}{phash_info}
+
+**Evaluation Instructions:**
+- Compare the current waypoint to the previous one
+- Identify significant changes (improvements or deteriorations)
+- Consider how the walking experience has evolved
+- Note any sudden transitions or barriers
+
+---
+
+"""
+        return context_text
 
     def get_statistics(self) -> Dict[str, Any]:
         """Return evaluation and framework statistics."""

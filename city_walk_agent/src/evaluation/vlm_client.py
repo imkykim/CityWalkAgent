@@ -8,7 +8,7 @@ import asyncio
 import base64
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -209,6 +209,150 @@ class VLMClient:
         return {
             "content": result.get("choices", [{}])[0].get("message", {}).get("content", ""),
             "usage": result.get("usage", {})
+        }
+
+    async def call_vlm_multi_image_async(
+        self,
+        prompt: str,
+        image_paths: List[str],
+        **kwargs
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Call VLM with multiple images for comparison.
+
+        Args:
+            prompt: Evaluation prompt
+            image_paths: List of 2-3 image paths (previous + current)
+            **kwargs: Additional parameters
+
+        Returns:
+            VLM response dict or None on failure
+        """
+        if not image_paths or len(image_paths) > 3:
+            self.logger.error(
+                "Invalid image count for multi-image",
+                count=len(image_paths) if image_paths else 0
+            )
+            return None
+
+        # Rate limiting
+        if self.stats.last_call_time > 0:
+            elapsed = time.time() - self.stats.last_call_time
+            if elapsed < self.config.rate_limit_delay:
+                await asyncio.sleep(self.config.rate_limit_delay - elapsed)
+
+        # Try with retries
+        for attempt in range(self.config.max_retries):
+            try:
+                start_time = time.time()
+                response = await self._call_qwen_multi_image(prompt, image_paths, **kwargs)
+
+                elapsed = time.time() - start_time
+                self.stats.last_call_time = time.time()
+                self.stats.total_calls += 1
+                self.stats.successful_calls += 1
+                self.stats.total_time += elapsed
+
+                return response
+
+            except Exception as error:
+                self.logger.warning(
+                    "Multi-image VLM call attempt failed",
+                    attempt=attempt + 1,
+                    max_retries=self.config.max_retries,
+                    error=str(error)
+                )
+
+                if attempt == self.config.max_retries - 1:
+                    self.stats.total_calls += 1
+                    self.stats.failed_calls += 1
+                    self.logger.error(
+                        "Multi-image VLM call exhausted retries",
+                        max_retries=self.config.max_retries,
+                        error=str(error)
+                    )
+                    return None
+
+                await asyncio.sleep(self.config.retry_delay * (2 ** attempt))
+
+        return None
+
+    def call_vlm_multi_image(
+        self,
+        prompt: str,
+        image_paths: List[str],
+        **kwargs
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Synchronous wrapper for multi-image VLM call
+
+        Args:
+            prompt: Evaluation prompt
+            image_paths: List of 2-3 image paths
+            **kwargs: Additional parameters
+
+        Returns:
+            Response dictionary with 'content' field, or None on failure
+        """
+        return asyncio.run(self.call_vlm_multi_image_async(prompt, image_paths, **kwargs))
+
+    async def _call_qwen_multi_image(
+        self,
+        prompt: str,
+        image_paths: List[str],
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Call Qwen VLM API with multiple images"""
+        # Encode all images
+        images_b64 = []
+        for img_path in image_paths:
+            try:
+                img_b64 = self.encode_image(img_path)
+                images_b64.append(img_b64)
+            except Exception as e:
+                self.logger.error(f"Failed to encode {img_path}: {e}")
+                raise
+
+        # Build multi-image payload for Qwen
+        content = [{"type": "text", "text": prompt}]
+        for img_b64 in images_b64:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
+            })
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.config.api_key}"
+        }
+
+        payload = {
+            "model": self.config.model,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": self.config.max_tokens,
+            "temperature": self.config.temperature
+        }
+
+        # Use asyncio to run requests in thread pool
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: requests.post(
+                f"{self.config.api_url}/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=DEFAULT_VLM_TIMEOUT
+            )
+        )
+
+        response.raise_for_status()
+        result = response.json()
+
+        return {
+            "content": result.get("choices", [{}])[0].get("message", {}).get("content", ""),
+            "usage": result.get("usage", {}),
+            "multi_image": True,
+            "image_count": len(image_paths)
         }
 
     def get_stats(self) -> Dict[str, Any]:

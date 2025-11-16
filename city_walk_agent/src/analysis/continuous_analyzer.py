@@ -72,7 +72,9 @@ class ContinuousAnalyzer:
         framework_id: str,
         context_window: int = 3,
         phash_threshold: float = 15.0,
-        adaptive_threshold: bool = True
+        adaptive_threshold: bool = True,
+        multi_image_threshold: float = 15.0,
+        enable_multi_image: bool = True
     ):
         """
         Initialize continuous analyzer with VLM evaluator and change detection
@@ -82,6 +84,8 @@ class ContinuousAnalyzer:
             context_window: Number of previous waypoints to maintain in memory
             phash_threshold: Fixed threshold for pHash distance (if not adaptive)
             adaptive_threshold: Use adaptive threshold based on running statistics
+            multi_image_threshold: pHash threshold to trigger multi-image evaluation
+            enable_multi_image: Enable/disable multi-image comparison feature
         """
         logger.info(f"Initializing ContinuousAnalyzer with framework: {framework_id}")
 
@@ -100,14 +104,138 @@ class ContinuousAnalyzer:
         self.phash_threshold = phash_threshold
         self.adaptive_threshold = adaptive_threshold
 
+        # Multi-image evaluation configuration
+        self.multi_image_threshold = multi_image_threshold
+        self.enable_multi_image = enable_multi_image
+        self.multi_image_evaluations: int = 0
+
         # History for temporal context
         self.analysis_history: List[WaypointAnalysis] = []
         self.context_window = context_window
 
         logger.info(
             f"Analyzer initialized - context_window={context_window}, "
-            f"phash_threshold={phash_threshold}, adaptive={adaptive_threshold}"
+            f"phash_threshold={phash_threshold}, adaptive={adaptive_threshold}, "
+            f"multi_image: {'enabled' if enable_multi_image else 'disabled'}, "
+            f"multi_image_threshold={multi_image_threshold}"
         )
+
+    def analyze_waypoint(
+        self,
+        waypoint_id: int,
+        image_path: Path,
+        metadata: Dict
+    ) -> WaypointAnalysis:
+        """
+        Analyze single waypoint with optional multi-image comparison
+
+        This method:
+        1. Computes pHash for visual change detection
+        2. Determines whether to use multi-image or single-image evaluation
+        3. Calls appropriate evaluator method
+        4. Returns WaypointAnalysis object
+
+        Args:
+            waypoint_id: Sequential ID of this waypoint
+            image_path: Path to waypoint image
+            metadata: Metadata dict with timestamp, lat, lon, heading
+
+        Returns:
+            WaypointAnalysis object with scores, reasoning, and metadata
+        """
+        logger.debug(f"Analyzing waypoint {waypoint_id}: {image_path}")
+
+        # 1. Compute pHash for visual change detection
+        current_phash = self._compute_phash(image_path)
+        visual_change, phash_dist = self._detect_visual_change(current_phash)
+
+        if visual_change:
+            logger.info(
+                f"Visual change detected at waypoint {waypoint_id} "
+                f"(phash_distance={phash_dist:.2f})"
+            )
+
+        # 2. Build previous context if available
+        previous_context = None
+        prev_img_path = None
+        if self.analysis_history:
+            prev_analysis = self.analysis_history[-1]
+            prev_img_path = prev_analysis.image_path
+            previous_context = {
+                "waypoint_id": prev_analysis.waypoint_id,
+                "scores": prev_analysis.scores,
+                "reasoning": prev_analysis.reasoning,
+                "summary": self._summarize_analysis(prev_analysis),
+                "phash_distance": phash_dist,
+                "visual_change_detected": visual_change
+            }
+
+        # 3. Determine evaluation mode
+        use_multi_image = (
+            self.enable_multi_image
+            and visual_change
+            and phash_dist is not None
+            and phash_dist >= self.multi_image_threshold
+            and prev_img_path is not None  # Need previous waypoint
+        )
+
+        # 4. Choose evaluation method based on trigger logic
+        if use_multi_image:
+            logger.info(
+                f"Using multi-image evaluation for waypoint {waypoint_id} "
+                f"(pHash distance: {phash_dist:.1f})"
+            )
+
+            comparison_results = self.evaluator.evaluate_with_comparison(
+                previous_image_path=prev_img_path,
+                current_image_path=image_path,
+                previous_context=previous_context
+            )
+
+            # Convert comparison results to standard format
+            scores = {dim_id: res['score'] for dim_id, res in comparison_results.items()}
+            reasoning = {dim_id: res['reasoning'] for dim_id, res in comparison_results.items()}
+
+            self.multi_image_evaluations += 1
+
+        else:
+            # Standard single-image evaluation with context
+            logger.debug(
+                f"Using single-image evaluation with context for waypoint {waypoint_id}"
+            )
+
+            eval_results = self.evaluator.evaluate_image(
+                str(image_path),
+                previous_context=previous_context
+            )
+
+            scores = {r['dimension_id']: r['score'] for r in eval_results}
+            reasoning = {r['dimension_id']: r['reasoning'] for r in eval_results}
+
+        # 5. Build WaypointAnalysis object
+        analysis = WaypointAnalysis(
+            waypoint_id=waypoint_id,
+            image_path=image_path,
+            scores=scores,
+            reasoning=reasoning,
+            timestamp=metadata.get('timestamp', ''),
+            gps=(metadata.get('lat', 0.0), metadata.get('lon', 0.0)),
+            heading=metadata.get('heading', 0.0),
+            visual_change_detected=visual_change,
+            phash_distance=phash_dist
+        )
+
+        # 6. Update state for next iteration
+        self.last_phash = current_phash
+
+        logger.debug(
+            f"Waypoint {waypoint_id} analyzed - "
+            f"avg_score={sum(scores.values()) / len(scores):.2f}, "
+            f"visual_change={visual_change}, "
+            f"mode={'multi-image' if use_multi_image else 'single-image'}"
+        )
+
+        return analysis
 
     def analyze_route(
         self,
@@ -117,11 +245,8 @@ class ContinuousAnalyzer:
         """
         Analyze all waypoints sequentially with temporal context
 
-        This is the main analysis method that processes each waypoint by:
-        1. Computing pHash for visual change detection
-        2. Calling Evaluator for dimension scoring (N VLM calls per image)
-        3. Building WaypointAnalysis with enriched metadata
-        4. Updating analysis history for context window
+        This is the main analysis method that processes each waypoint by calling
+        analyze_waypoint() and maintaining the analysis history.
 
         Args:
             image_paths: Ordered list of paths to waypoint images
@@ -149,37 +274,14 @@ class ContinuousAnalyzer:
         for i, (img_path, metadata) in enumerate(zip(image_paths, waypoint_metadata)):
             logger.debug(f"Processing waypoint {i}/{len(image_paths)}: {img_path}")
 
-            # 1. Compute pHash for visual change detection
-            current_phash = self._compute_phash(img_path)
-            visual_change, phash_dist = self._detect_visual_change(current_phash)
-
-            if visual_change:
-                logger.info(
-                    f"Visual change detected at waypoint {i} "
-                    f"(phash_distance={phash_dist:.2f})"
-                )
-
-            # 2. Call existing Evaluator (N VLM calls internally)
-            eval_results = self.evaluator.evaluate_image(str(img_path))
-
-            # 3. Convert to WaypointAnalysis format
-            scores = {r['dimension_id']: r['score'] for r in eval_results}
-            reasoning = {r['dimension_id']: r['reasoning'] for r in eval_results}
-
-            analysis = WaypointAnalysis(
+            # Analyze waypoint using extracted method
+            analysis = self.analyze_waypoint(
                 waypoint_id=i,
                 image_path=img_path,
-                scores=scores,
-                reasoning=reasoning,
-                timestamp=metadata.get('timestamp', ''),
-                gps=(metadata.get('lat', 0.0), metadata.get('lon', 0.0)),
-                heading=metadata.get('heading', 0.0),
-                visual_change_detected=visual_change,
-                phash_distance=phash_dist
+                metadata=metadata
             )
 
-            # 4. Update state for next iteration
-            self.last_phash = current_phash
+            # Update analysis history
             self.analysis_history.append(analysis)
 
             # Maintain context window (sliding window)
@@ -187,12 +289,6 @@ class ContinuousAnalyzer:
                 self.analysis_history.pop(0)
 
             results.append(analysis)
-
-            logger.debug(
-                f"Waypoint {i} analyzed - "
-                f"avg_score={sum(scores.values()) / len(scores):.2f}, "
-                f"visual_change={visual_change}"
-            )
 
         logger.info(f"Route analysis complete: {len(results)} waypoints processed")
         return results
@@ -286,6 +382,7 @@ class ContinuousAnalyzer:
             - visual_changes_detected: Count of waypoints with visual changes
             - avg_phash_distance: Average pHash distance across waypoints
             - phash_distances: List of all pHash distances (for plotting)
+            - multi_image_evaluations: Count of multi-image comparisons performed
         """
         if not self.analysis_history:
             return {}
@@ -299,13 +396,15 @@ class ContinuousAnalyzer:
                 sum(self.phash_distances) / len(self.phash_distances)
                 if self.phash_distances else 0
             ),
-            "phash_distances": self.phash_distances
+            "phash_distances": self.phash_distances,
+            "multi_image_evaluations": self.multi_image_evaluations
         }
 
         logger.info(
             f"Statistics: {stats['visual_changes_detected']} changes in "
             f"{stats['total_waypoints']} waypoints "
-            f"(avg distance={stats['avg_phash_distance']:.2f})"
+            f"(avg distance={stats['avg_phash_distance']:.2f}), "
+            f"multi-image evals: {stats['multi_image_evaluations']}"
         )
 
         return stats
@@ -341,3 +440,30 @@ class ContinuousAnalyzer:
 
         logger.debug(f"Found {len(change_points)} change points")
         return change_points
+
+    def _summarize_analysis(self, analysis: WaypointAnalysis) -> str:
+        """
+        Create concise summary of waypoint analysis for context
+
+        Args:
+            analysis: WaypointAnalysis object to summarize
+
+        Returns:
+            Human-readable summary string
+        """
+        if not analysis.scores:
+            return "No evaluation data"
+
+        avg_score = sum(analysis.scores.values()) / len(analysis.scores)
+
+        # Find highest and lowest scoring dimensions
+        best_dim = max(analysis.scores.items(), key=lambda x: x[1])
+        worst_dim = min(analysis.scores.items(), key=lambda x: x[1])
+
+        summary = (
+            f"Average score: {avg_score:.1f}/10. "
+            f"Best: {best_dim[0]} ({best_dim[1]:.1f}), "
+            f"Worst: {worst_dim[0]} ({worst_dim[1]:.1f})"
+        )
+
+        return summary
