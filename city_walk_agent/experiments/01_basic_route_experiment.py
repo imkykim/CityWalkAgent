@@ -42,6 +42,9 @@ def experiment_route_comparison():
         print("⚠️  Running in offline mode. No real API key found.")
     if settings.google_maps_api_key:
         print("🔑 Using provided Google Maps API key.")
+    if route_gen.gmaps is None:
+        print("❌ Google Maps client unavailable. Install googlemaps and configure an API key to run this experiment.")
+        return {}
 
     # Test different route configurations
     test_routes = [
@@ -73,11 +76,9 @@ def experiment_route_comparison():
     for config in test_routes:
         print(f"\nGenerating {config['name']}: {config['description']}")
 
-        route = route_gen.create_simple_route(
-            start_lat=config["start"][0],
-            start_lon=config["start"][1],
-            end_lat=config["end"][0],
-            end_lon=config["end"][1],
+        route = route_gen.create_google_maps_route(
+            origin=config["start"],
+            destination=config["end"],
             interval_meters=config["interval"],
             route_name=config["name"],
         )
@@ -175,12 +176,14 @@ def experiment_sampling_impact():
 
     print("Testing sampling intervals:", intervals)
 
+    if route_gen.gmaps is None:
+        print("❌ Google Maps client unavailable. Install googlemaps and configure an API key to run this experiment.")
+        return
+
     for interval in intervals:
-        route = route_gen.create_simple_route(
-            start_lat=start_lat,
-            start_lon=start_lon,
-            end_lat=end_lat,
-            end_lon=end_lon,
+        route = route_gen.create_google_maps_route(
+            origin=(start_lat, start_lon),
+            destination=(end_lat, end_lon),
             interval_meters=interval,
             route_name=f"sampling_test_{interval}m",
         )

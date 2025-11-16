@@ -219,10 +219,14 @@ class WalkingAgentPipeline:
 
         # Step 1: Generate route
         self.logger.info("Generating route")
-        route = self.route_generator.create_simple_route(
-            start[0], start[1], end[0], end[1],
+        default_route_id = f"route_{start[0]:.6f}_{start[1]:.6f}_{end[0]:.6f}_{end[1]:.6f}_{interval_meters}"
+        route = self.route_generator.create_google_maps_route(
+            origin=start,
+            destination=end,
             interval_meters=interval_meters,
-            route_name=route_name
+            mode="walking",
+            route_name=route_name,
+            route_id=route_name or default_route_id,
         )
 
         # Save route
@@ -239,7 +243,10 @@ class WalkingAgentPipeline:
                 image_collector = ImageCollector(
                     api_key=settings.google_maps_api_key
                 )
-                image_collector.collect_google_street_view_images_static(route)
+                image_collector.collect_google_street_view_images_static(
+                    route,
+                    use_route_direction=True  # Enable directional alignment
+                )
                 image_count = len([w for w in route.waypoints if w.image_path])
                 self.logger.info("Images collected", count=image_count)
             except Exception as error:

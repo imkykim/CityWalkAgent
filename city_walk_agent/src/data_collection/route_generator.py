@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 try:
     import googlemaps
@@ -13,7 +13,6 @@ except ModuleNotFoundError as exc:
     GOOGLEMAPS_IMPORT_ERROR = exc
 else:
     GOOGLEMAPS_IMPORT_ERROR = None
-import numpy as np
 from geopy.distance import geodesic
 
 from src.config import DEFAULT_SAMPLING_INTERVAL, settings
@@ -70,73 +69,14 @@ class RouteGenerator:
             route_dir.mkdir(parents=True, exist_ok=True)
         return route_dir
 
-    def create_simple_route(
-        self,
-        start_lat: float,
-        start_lon: float,
-        end_lat: float,
-        end_lon: float,
-        interval_meters: int = DEFAULT_SAMPLING_INTERVAL,
-        route_name: Optional[str] = None,
-    ) -> Route:
-        """
-        Create a simple straight-line route between two points
-
-        Args:
-            start_lat: Starting latitude
-            start_lon: Starting longitude
-            end_lat: Ending latitude
-            end_lon: Ending longitude
-            interval_meters: Distance between waypoints in meters
-            route_name: Optional name for the route
-
-        Returns:
-            Route object with waypoints
-        """
-        start_point = (start_lat, start_lon)
-        end_point = (end_lat, end_lon)
-
-        # Calculate total distance
-        total_distance = geodesic(start_point, end_point).meters
-
-        # Calculate number of waypoints
-        num_points = max(2, int(total_distance / interval_meters) + 1)
-
-        # Generate waypoints using linear interpolation
-        lats = np.linspace(start_lat, end_lat, num_points)
-        lons = np.linspace(start_lon, end_lon, num_points)
-
-        waypoints = []
-        for i, (lat, lon) in enumerate(zip(lats, lons)):
-            waypoint = Waypoint(
-                lat=lat, lon=lon, sequence_id=i, timestamp=datetime.now()
-            )
-            waypoints.append(waypoint)
-
-        route_id = f"route_{int(datetime.now().timestamp())}"
-        if route_name:
-            route_id = f"{route_name}_{route_id}"
-
-        route = Route(
-            route_id=route_id,
-            start_lat=start_lat,
-            start_lon=start_lon,
-            end_lat=end_lat,
-            end_lon=end_lon,
-            waypoints=waypoints,
-            route_name=route_name,
-            interval_meters=interval_meters,
-        )
-
-        return route
-
     def create_google_maps_route(
         self,
-        origin: str,
-        destination: str,
+        origin: Union[str, Tuple[float, float]],
+        destination: Union[str, Tuple[float, float]],
         interval_meters: int = DEFAULT_SAMPLING_INTERVAL,
         mode: str = "walking",
         route_name: Optional[str] = None,
+        route_id: Optional[str] = None,
     ) -> Route:
         """
         Create a route using Google Maps Directions API
@@ -147,6 +87,7 @@ class RouteGenerator:
             interval_meters: Distance between waypoints in meters
             mode: Travel mode (walking, driving, etc.)
             route_name: Optional name for the route
+            route_id: Optional explicit route_id to override generated value (useful for caching)
 
         Returns:
             Route object with waypoints along the actual path
@@ -158,9 +99,18 @@ class RouteGenerator:
                 "is installed and a valid API key is configured."
             )
 
+        def _normalize_location(value: Union[str, Tuple[float, float]]) -> str:
+            if isinstance(value, tuple):
+                lat, lon = value
+                return f"{lat},{lon}"
+            return value
+
+        origin_normalized = _normalize_location(origin)
+        destination_normalized = _normalize_location(destination)
+
         # Get directions from Google Maps
         directions = self.gmaps.directions(
-            origin=origin, destination=destination, mode=mode
+            origin=origin_normalized, destination=destination_normalized, mode=mode
         )
 
         if not directions:
@@ -190,19 +140,19 @@ class RouteGenerator:
         start_location = legs[0]["start_location"]
         end_location = legs[-1]["end_location"]
 
-        route_id = f"gmaps_route_{int(datetime.now().timestamp())}"
-        if route_name:
-            route_id = f"{route_name}_{route_id}"
+        resolved_route_id = route_id or f"gmaps_route_{int(datetime.now().timestamp())}"
+        if route_name and route_id is None:
+            resolved_route_id = route_name
 
         route = Route(
-            route_id=route_id,
+            route_id=resolved_route_id,
             start_lat=start_location["lat"],
             start_lon=start_location["lng"],
             end_lat=end_location["lat"],
             end_lon=end_location["lng"],
             waypoints=waypoints,
             route_name=route_name,
-            description=f"Google Maps route from {origin} to {destination}",
+            description=f"Google Maps route from {origin_normalized} to {destination_normalized}",
             interval_meters=interval_meters,
         )
 

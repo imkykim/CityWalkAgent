@@ -645,7 +645,7 @@ class TestCacheFunctionality:
 
         # Create a fully mocked route_generator
         mock_route_generator = MagicMock()
-        mock_route_generator.create_simple_route.return_value = mock_route
+        mock_route_generator.create_google_maps_route.return_value = mock_route
 
         # Mock image directory
         mock_dir = Mock()
@@ -687,7 +687,7 @@ class TestCacheFunctionality:
 
             # Create a fully mocked route_generator
             mock_route_generator = MagicMock()
-            mock_route_generator.create_simple_route.return_value = mock_route
+            mock_route_generator.create_google_maps_route.return_value = mock_route
 
             # Mock image directory with existing images (to skip ImageCollector)
             mock_dir = Mock()
