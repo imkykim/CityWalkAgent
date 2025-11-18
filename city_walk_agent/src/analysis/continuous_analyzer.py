@@ -284,10 +284,6 @@ class ContinuousAnalyzer:
             # Update analysis history
             self.analysis_history.append(analysis)
 
-            # Maintain context window (sliding window)
-            if len(self.analysis_history) > self.context_window:
-                self.analysis_history.pop(0)
-
             results.append(analysis)
 
         logger.info(f"Route analysis complete: {len(results)} waypoints processed")
@@ -419,7 +415,7 @@ class ContinuousAnalyzer:
         Returns:
             List of recent WaypointAnalysis objects (up to context_window size)
         """
-        return self.analysis_history.copy()
+        return self.analysis_history[-self.context_window :].copy()
 
     def get_change_points(self) -> List[WaypointAnalysis]:
         """

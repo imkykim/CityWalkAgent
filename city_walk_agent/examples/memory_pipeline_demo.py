@@ -47,6 +47,8 @@ from src.agent.capabilities import (
     TriggerReason,
     LongTermMemory,
 )
+from src.utils.exporters import export_evaluations_csv
+from src.utils.visualization import plot_analysis_results
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -323,6 +325,28 @@ def run_memory_pipeline(
             )
 
         print(f"✓ Saved analysis results to {analysis_file}")
+        analysis_csv = output_dir / "analysis_results.csv"
+        export_evaluations_csv(
+            (
+                {
+                    "image_id": analysis.waypoint_id,
+                    "dimension_id": dim_id,
+                    "dimension_name": dim_id,
+                    "score": score,
+                    "reasoning": str(analysis.reasoning.get(dim_id, "")),
+                }
+                for analysis in analysis_results
+                for dim_id, score in analysis.scores.items()
+            ),
+            analysis_csv,
+        )
+        print(f"✓ Saved analysis CSV to {analysis_csv}")
+        try:
+            metrics_plot = output_dir / "analysis_metrics.png"
+            plot_analysis_results(analysis_results, metrics_plot)
+            print(f"✓ Saved analysis metrics plot to {metrics_plot}")
+        except Exception as e:
+            logger.warning(f"Analysis visualization failed: {e}")
 
     except Exception as e:
         logger.error(f"Analysis failed: {e}")
@@ -632,6 +656,8 @@ def run_memory_pipeline(
 
     print("OUTPUTS:")
     print(f"  Analysis results: {output_dir / 'analysis_results.json'}")
+    print(f"  Analysis CSV: {output_dir / 'analysis_results.csv'}")
+    print(f"  Analysis metrics plot: {output_dir / 'analysis_metrics.png'}")
     if use_thinking:
         print(f"  Thinking results: {output_dir / 'thinking_results.json'}")
     print(f"  Long-term memory: {output_dir / 'long_term_memory.json'}")
@@ -695,7 +721,7 @@ Examples:
     parser.add_argument(
         "--framework",
         type=str,
-        default="sagai_2025",
+        default="streetagent_5d",
         help="Evaluation framework to use (default: sagai_2025)",
     )
 
