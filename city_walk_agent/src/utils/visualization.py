@@ -18,7 +18,7 @@ if __name__ == "__main__":  # only adjust when invoked as a script
 
 import json
 import csv
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 try:
     import matplotlib
@@ -34,6 +34,20 @@ except ImportError as exc:
 
 import numpy as np
 from scipy.signal import savgol_filter
+
+# Shared palette used by pandas-style rendering example; fallbacks use matplotlib cycles.
+DEFAULT_SCORE_COLORS = {
+    "functional_quality": "#D97706",
+    "sensory_complexity": "#60A5FA",
+    "spatial_legibility": "#10B981",
+    "spatial_sequence": "#EAB308",
+    "visual_coherence": "#1D4ED8",
+    "safety": "#2E86AB",
+    "comfort": "#A23B72",
+    "interest": "#F18F01",
+    "aesthetics": "#C73E1D",
+}
+DEFAULT_SCORE_ORDER: Tuple[str, ...] = tuple(DEFAULT_SCORE_COLORS.keys())
 
 
 class RouteVisualizer:
@@ -585,84 +599,138 @@ def plot_analysis_results(
             return obj.get(key, default)
         return getattr(obj, key, default)
 
-    dim_keys = (
-        list(dimensions)
-        if dimensions
-        else sorted({k for a in analyses_list for k in get(a, "scores", {}).keys()})
-    )
+    def _coerce_float(value: object, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _coerce_waypoint_id(raw_wp: object, fallback_idx: int) -> Tuple[float, str]:
+        """Return numeric waypoint for plotting plus the display label."""
+        label = raw_wp if raw_wp is not None else fallback_idx
+        try:
+            numeric = float(raw_wp)
+        except (TypeError, ValueError):
+            numeric = float(fallback_idx)
+        return numeric, str(label)
+
+    def _format_tick(label: str, numeric: float) -> str:
+        try:
+            return f"wp{int(float(label)):03d}"
+        except (TypeError, ValueError):
+            try:
+                return f"wp{int(round(numeric)):03d}"
+            except (TypeError, ValueError):
+                return str(label)
+
+    discovered_dims: Set[str] = set()
+    records: List[Dict] = []
+    for idx, analysis in enumerate(analyses_list):
+        waypoint = get(analysis, "waypoint_id", idx)
+        numeric_wp, label = _coerce_waypoint_id(waypoint, idx)
+        scores_dict = get(analysis, "scores", {}) or {}
+        discovered_dims.update(scores_dict.keys())
+        visual_change = bool(
+            get(
+                analysis,
+                "visual_change_detected",
+                get(analysis, "visual_change", False),
+            )
+        )
+        records.append(
+            {
+                "order": idx,
+                "numeric_id": numeric_wp,
+                "label": label,
+                "scores": scores_dict,
+                "visual_change": visual_change,
+            }
+        )
+
+    if dimensions:
+        dim_keys = list(dimensions)
+    else:
+        ordered_defaults = [dim for dim in DEFAULT_SCORE_ORDER if dim in discovered_dims]
+        remaining = sorted(discovered_dims - set(ordered_defaults))
+        dim_keys = ordered_defaults + remaining
     if not dim_keys:
         raise ValueError("No dimensions found in analyses.")
 
-    # Build flattened data for plotting
-    scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
-    waypoint_ids: List[str] = []
-    numeric_waypoints: List[float] = []
-    for analysis in analyses_list:
-        wp = get(analysis, "waypoint_id", len(waypoint_ids))
-        waypoint_ids.append(str(wp))
-        try:
-            numeric_waypoints.append(float(wp))
-        except (TypeError, ValueError):
-            numeric_waypoints.append(len(numeric_waypoints))
+    # Ensure chronological ordering using numeric ids (fallbacks keep insertion order)
+    records.sort(key=lambda rec: (rec["numeric_id"], rec["order"]))
+    x_values = [rec["numeric_id"] for rec in records]
+    xtick_labels = [_format_tick(rec["label"], rec["numeric_id"]) for rec in records]
+    visual_change_positions = [
+        rec["numeric_id"] for rec in records if rec["visual_change"]
+    ]
 
-        for dim in dim_keys:
-            val = get(analysis, "scores", {}).get(dim, 0.0)
-            scores[dim].append(float(val))
+    scores_by_dim: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+    for dim in dim_keys:
+        for record in records:
+            scores_by_dim[dim].append(
+                _coerce_float(record["scores"].get(dim, 0.0), default=0.0)
+            )
 
-    # Plot in the requested style
-    fig, ax = plt.subplots(figsize=(18, 4))
-    color_cycle = ["skyblue", "gold", "orange", "lightgreen", "green"]
+    avg_scores = [
+        float(np.mean([scores_by_dim[dim][idx] for dim in dim_keys]))
+        for idx in range(len(records))
+    ]
+
+    fig, ax = plt.subplots(figsize=(16, 6))
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
 
     for idx, dim in enumerate(dim_keys):
-        color = color_cycle[idx % len(color_cycle)]
+        color = DEFAULT_SCORE_COLORS.get(dim) or plt.cm.tab10(idx % 10)
         ax.plot(
-            numeric_waypoints,
-            scores[dim],
+            x_values,
+            scores_by_dim[dim],
             marker="o",
-            linestyle="-",
-            linewidth=1.5,
+            linewidth=2,
             markersize=4,
             label=dim,
             color=color,
         )
 
-    # Average line (black dashed)
-    avg_scores = [
-        float(np.mean([scores[dim][i] for dim in dim_keys])) for i in range(len(waypoint_ids))
-    ]
     ax.plot(
-        numeric_waypoints,
+        x_values,
         avg_scores,
         linestyle="--",
-        marker="o",
-        linewidth=2,
+        linewidth=2.5,
         color="black",
-        markersize=4,
-        label="Average",
+        label="average",
     )
 
-    ax.grid(which="both", linestyle=":", linewidth=0.3, alpha=0.6)
-    ax.set_title("Scores by Dimension (Average included)")
-    ax.set_xlabel("Waypoint")
+    for wp in visual_change_positions:
+        ax.axvline(
+            x=wp,
+            color="gray",
+            linestyle="-",
+            alpha=0.35,
+            linewidth=1,
+            zorder=0,
+        )
+
+    ax.set_title("Scores by Dimension (Average included, Visual Change Highlighted)")
+    ax.set_xlabel("Waypoint ID")
     ax.set_ylabel("Score")
+    ax.set_ylim(0, 10.5)
+    ax.set_yticks(range(0, 11, 1))
+    ax.set_axisbelow(True)
+    ax.grid(True, linewidth=0.3, alpha=0.25, color="#CFCFCF")
+    for spine in ("left", "bottom"):
+        ax.spines[spine].set_linewidth(1.2)
+        ax.spines[spine].set_color("#1F2933")
+        ax.spines[spine].set_visible(True)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+    ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5))
 
-    # y-range similar to example
-    ax.set_ylim(3, 9.5)
+    if x_values:
+        ax.set_xticks(x_values)
+        ax.set_xticklabels(xtick_labels, rotation=90, fontsize=6)
 
-    if numeric_waypoints:
-        xmin, xmax = min(numeric_waypoints), max(numeric_waypoints)
-        ax.set_xlim(xmin, xmax)
-        try:
-            step = max(1, int((xmax - xmin) // 10))  # keep ticks reasonable
-            step = 3 if step < 3 else step
-            ticks = np.arange(xmin, xmax + 1, step)
-            ax.set_xticks(ticks)
-        except Exception:
-            pass
-
-    ax.legend(ncol=3, fontsize=8)
-    plt.tight_layout()
-
+    fig.tight_layout()
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
     return output_path
