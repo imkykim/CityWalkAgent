@@ -18,7 +18,7 @@ if __name__ == "__main__":  # only adjust when invoked as a script
 
 import json
 import csv
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 try:
     import matplotlib
@@ -87,6 +87,7 @@ class RouteVisualizer:
         smooth_window: int = 11,
         save_path: Optional[Path] = None,
         dimensions: Optional[Sequence[str]] = None,
+        visual_change_waypoints: Optional[Sequence[Union[str, int]]] = None,
     ) -> plt.Figure:
         """
         Plot dimension scores with smoothed trend lines.
@@ -99,6 +100,7 @@ class RouteVisualizer:
             smooth_window: Window size for Savitzky-Golay smoothing (must be odd)
             save_path: Optional path to save figure
             dimensions: Optional ordered list of dimension ids to plot
+            visual_change_waypoints: Optional ids/indices for waypoints with visual changes
 
         Returns:
             Matplotlib figure object
@@ -164,6 +166,32 @@ class RouteVisualizer:
         ax.set_xticklabels(
             waypoint_ids[::tick_step], rotation=45, ha="right", fontsize=8
         )
+
+        # Highlight waypoints that triggered visual change detections
+        if visual_change_waypoints:
+            wp_to_idx = {str(wp_id): idx for idx, wp_id in enumerate(waypoint_ids)}
+            change_indices: List[int] = []
+            for wp in visual_change_waypoints:
+                idx = wp_to_idx.get(str(wp))
+                if idx is None:
+                    try:
+                        numeric_idx = int(wp)
+                    except (TypeError, ValueError):
+                        continue
+                    if 0 <= numeric_idx < n_points:
+                        change_indices.append(numeric_idx)
+                else:
+                    change_indices.append(idx)
+
+            for idx in sorted(set(change_indices)):
+                ax.axvline(
+                    x=idx,
+                    color="gray",
+                    linestyle="-",
+                    alpha=0.35,
+                    linewidth=1,
+                    zorder=0,
+                )
 
         if show_legend:
             ax.legend(loc="best", framealpha=0.9, fontsize=10)
@@ -350,8 +378,139 @@ class RouteVisualizer:
             }
         return stats
 
+    def plot_radar_charts(
+        self,
+        analyses: Iterable[Mapping],
+        output_dir: Path,
+        dimensions: Optional[Sequence[str]] = None,
+        figsize: Tuple[int, int] = (8, 8),
+    ) -> List[Path]:
+        """
+        Generate radar charts for waypoints with visual change detection.
+
+        Creates one radar chart per waypoint that has visual_change_detected=True,
+        showing all dimension scores in a spider/radar plot.
+
+        Args:
+            analyses: Iterable of WaypointAnalysis-like objects or dicts
+            output_dir: Directory to save radar chart images
+            dimensions: Optional ordered list of dimensions to plot
+            figsize: Figure size in inches (width, height)
+
+        Returns:
+            List of paths to saved radar chart images
+        """
+        # Create output directory for radar charts
+        radar_dir = output_dir / "radar_charts"
+        radar_dir.mkdir(parents=True, exist_ok=True)
+
+        analyses_list = list(analyses)
+        if not analyses_list:
+            print("No analyses provided for radar charts.")
+            return []
+
+        def get(obj, key, default=None):
+            if isinstance(obj, Mapping):
+                return obj.get(key, default)
+            return getattr(obj, key, default)
+
+        # Filter for waypoints with visual change detected
+        def _has_visual_change(analysis) -> bool:
+            detected = get(analysis, "visual_change_detected", None)
+            if detected is None:
+                detected = get(analysis, "visual_change", False)
+            return bool(detected)
+
+        filtered_analyses = [a for a in analyses_list if _has_visual_change(a)]
+
+        if not filtered_analyses:
+            print(
+                "No waypoints with visual change detection passed. No radar charts generated."
+            )
+            return []
+
+        print(
+            f"Generating radar charts for {len(filtered_analyses)} waypoints with visual changes..."
+        )
+
+        # Determine dimensions
+        dim_keys = (
+            list(dimensions)
+            if dimensions
+            else sorted(
+                {k for a in filtered_analyses for k in get(a, "scores", {}).keys()}
+            )
+        )
+        if not dim_keys:
+            print("No dimensions found in analyses.")
+            return []
+
+        dim_config = self._build_dim_config(dim_keys)
+        saved_paths = []
+
+        # Generate one radar chart per filtered waypoint
+        for analysis in filtered_analyses:
+            waypoint_id = get(analysis, "waypoint_id", "unknown")
+            scores_dict = get(analysis, "scores", {})
+
+            # Prepare data for radar chart
+            labels = [dim_config[dim]["label"] for dim in dim_keys if dim in scores_dict]
+            values = [scores_dict[dim] for dim in dim_keys if dim in scores_dict]
+
+            if not values:
+                continue
+
+            # Number of variables
+            num_vars = len(labels)
+
+            # Compute angle for each axis
+            angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+
+            # The plot is circular, so close the loop by appending the start value
+            values += values[:1]
+            angles += angles[:1]
+
+            # Create radar chart
+            fig, ax = plt.subplots(figsize=figsize, subplot_kw=dict(projection="polar"), dpi=self.dpi)
+
+            # Plot data
+            ax.plot(angles, values, "o-", linewidth=2, color="#2E86AB", label="Scores")
+            ax.fill(angles, values, alpha=0.25, color="#2E86AB")
+
+            # Set labels for each axis
+            ax.set_xticks(angles[:-1])
+            ax.set_xticklabels(labels, fontsize=10)
+
+            # Set y-axis limits
+            ax.set_ylim(0, 10)
+            ax.set_yticks([2, 4, 6, 8, 10])
+            ax.set_yticklabels(["2", "4", "6", "8", "10"], fontsize=8, alpha=0.7)
+
+            # Add grid
+            ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.7)
+
+            # Add title
+            phash_distance = get(analysis, "phash_distance", None)
+            title = f"Waypoint {waypoint_id}"
+            if phash_distance is not None:
+                title += f" (pHash: {phash_distance:.2f})"
+            ax.set_title(title, fontsize=13, fontweight="bold", pad=20)
+
+            # Save figure
+            output_path = radar_dir / f"radar_waypoint_{waypoint_id}.png"
+            fig.savefig(output_path, dpi=self.dpi, bbox_inches="tight")
+            plt.close(fig)
+
+            saved_paths.append(output_path)
+            print(f"  Saved radar chart: {output_path.name}")
+
+        print(f"Generated {len(saved_paths)} radar charts in {radar_dir}")
+        return saved_paths
+
     @classmethod
-    def from_jsonl(cls, jsonl_path: Path, score_fields: Optional[List[str]] = None):
+    def from_jsonl(
+        cls, jsonl_path: Path, score_fields: Optional[List[str]] = None
+    ) -> Tuple[Dict[str, List[float]], List[str], List[Mapping]]:
         """
         Load scores from JSONL file and create visualizations.
 
@@ -360,10 +519,11 @@ class RouteVisualizer:
             score_fields: List of score field names (default: ['safety', 'comfort', 'interest', 'aesthetics'])
 
         Returns:
-            Tuple of (scores dict, waypoint_ids list)
+            Tuple of (scores dict, waypoint_ids list, analyses list)
         """
         scores: Dict[str, List[float]] = {}
         waypoint_ids: List[str] = []
+        analyses: List[Mapping] = []
 
         with open(jsonl_path, "r", encoding="utf-8") as f:
             for idx, line in enumerate(f):
@@ -379,13 +539,28 @@ class RouteVisualizer:
                 if score_fields is None:
                     score_fields = list(cls.DIMENSIONS.keys())
 
-                waypoint_ids.append(data.get("waypoint_id", str(len(waypoint_ids))))
+                waypoint_id = data.get("waypoint_id", str(len(waypoint_ids)))
+                waypoint_ids.append(str(waypoint_id))
+                record_scores: Dict[str, float] = {}
 
                 for field in score_fields:
                     score = data.get(field, data.get(f"{field}_score", 0))
-                    scores.setdefault(field, []).append(float(score))
+                    value = float(score)
+                    scores.setdefault(field, []).append(value)
+                    record_scores[field] = value
 
-        return scores, waypoint_ids
+                record = {
+                    "waypoint_id": waypoint_id,
+                    "scores": record_scores,
+                    "visual_change_detected": data.get(
+                        "visual_change_detected", data.get("visual_change", False)
+                    ),
+                }
+                if "phash_distance" in data:
+                    record["phash_distance"] = data["phash_distance"]
+                analyses.append(record)
+
+        return scores, waypoint_ids, analyses
 
 
 def plot_analysis_results(
@@ -531,6 +706,31 @@ def _load_analyses_from_csv(path: Path) -> List[Mapping]:
     return [by_waypoint[k] for k in sorted(by_waypoint.keys(), key=_sort_key)]
 
 
+def _extract_visual_change_waypoints(
+    analyses: Iterable[Mapping],
+) -> List[str]:
+    """Return waypoint ids that include a visual change flag."""
+    change_ids: List[str] = []
+
+    for idx, analysis in enumerate(analyses):
+        if isinstance(analysis, Mapping):
+            wp = analysis.get("waypoint_id", idx)
+            change_flag = analysis.get(
+                "visual_change_detected", analysis.get("visual_change", False)
+            )
+        else:
+            wp = getattr(analysis, "waypoint_id", idx)
+            change_flag = getattr(
+                analysis,
+                "visual_change_detected",
+                getattr(analysis, "visual_change", False),
+            )
+        if change_flag:
+            change_ids.append(str(wp))
+
+    return change_ids
+
+
 def main():
     """CLI entrypoint: visualize analysis JSON/CSV/JSONL outputs."""
     import argparse
@@ -554,6 +754,16 @@ def main():
         nargs="+",
         help="Explicit dimension ids to plot (otherwise derived from data)",
     )
+    parser.add_argument(
+        "--radar-charts",
+        action="store_true",
+        help="Generate radar charts for waypoints that flagged visual change",
+    )
+    parser.add_argument(
+        "--radar-dir",
+        type=Path,
+        help="Override directory for radar chart outputs (default: alongside input)",
+    )
     args = parser.parse_args()
 
     input_path: Path = args.input
@@ -561,28 +771,47 @@ def main():
         raise SystemExit(f"Input not found: {input_path}")
 
     output_path = args.output or input_path.with_suffix(".png")
+    generate_radar = bool(args.radar_charts or args.radar_dir)
+    radar_dir = args.radar_dir or output_path.parent
+    analyses_for_radar: Optional[List[Mapping]] = None
+    viz = RouteVisualizer()
 
     suffix = input_path.suffix.lower()
     if suffix == ".jsonl":
-        scores, waypoint_ids = RouteVisualizer.from_jsonl(
+        scores, waypoint_ids, analyses_for_radar = RouteVisualizer.from_jsonl(
             input_path, score_fields=args.dimensions
         )
-        viz = RouteVisualizer()
+        change_wp_ids = (
+            _extract_visual_change_waypoints(analyses_for_radar)
+            if analyses_for_radar
+            else None
+        )
         viz.plot_scores_with_trends(
             scores,
             waypoint_ids=waypoint_ids,
             title="Waypoint Metrics by Dimension",
             dimensions=args.dimensions,
+            visual_change_waypoints=change_wp_ids,
             save_path=output_path,
         )
     elif suffix == ".json":
         analyses = _load_analyses_from_json(input_path)
+        analyses_for_radar = analyses
         plot_analysis_results(analyses, output_path, dimensions=args.dimensions)
     elif suffix == ".csv":
         analyses = _load_analyses_from_csv(input_path)
+        analyses_for_radar = analyses
         plot_analysis_results(analyses, output_path, dimensions=args.dimensions)
     else:
         raise SystemExit("Unsupported input format. Use .json, .csv, or .jsonl.")
+
+    if generate_radar:
+        if not analyses_for_radar:
+            print("No analyses available to generate radar charts.")
+        else:
+            viz.plot_radar_charts(
+                analyses_for_radar, radar_dir, dimensions=args.dimensions
+            )
 
     print(f"Saved plot to {output_path}")
     try:
