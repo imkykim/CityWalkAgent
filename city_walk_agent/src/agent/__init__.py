@@ -23,6 +23,7 @@ from src.agent.capabilities import (
     ThinkingResult,
     TriggerReason,
 )
+from src.agent.cognitive_controller import CognitiveController
 from src.agent.config import (
     AgentPersonality,
     create_neutral_personality,
@@ -60,6 +61,8 @@ __all__ = [
     "ThinkingModule",
     "TriggerReason",
     "ThinkingResult",
+    # Cognitive controller
+    "CognitiveController",
 ]
 
 __version__ = "0.1.0"

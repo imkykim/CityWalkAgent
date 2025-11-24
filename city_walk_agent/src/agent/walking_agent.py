@@ -30,6 +30,7 @@ from src.agent.capabilities import (
     ThinkingCapability,
     ThinkingModule,
 )
+from src.agent.cognitive_controller import CognitiveController
 from src.agent.config import AgentPersonality, get_preset
 from src.pipeline import WalkingAgentPipeline
 from src.config import settings
@@ -98,6 +99,7 @@ class WalkingAgent(BaseAgent):
         self.personality = personality
         self.framework_id = framework_id or "sagai_2025"
         self.enable_memory = enable_memory
+        self._cognitive_controller: Optional[CognitiveController] = None
 
         # Initialize state with personality weights
         self.state.preferences = personality.dimension_weights.copy()
@@ -414,6 +416,14 @@ class WalkingAgent(BaseAgent):
 
             self.logger.debug("MemoryManager initialized")
         return self._memory_manager
+
+    @property
+    def cognitive(self) -> CognitiveController:
+        """Lazy-load cognitive controller for trigger logic."""
+        if self._cognitive_controller is None:
+            self._cognitive_controller = CognitiveController(phash_threshold=20)
+            self.logger.debug("CognitiveController initialized")
+        return self._cognitive_controller
 
     # ========================================================================
     # Traditional Methods (Backward Compatible)
@@ -744,8 +754,20 @@ class WalkingAgent(BaseAgent):
         memory_manager = self.memory_manager
 
         for analysis in analysis_results:
-            # Process waypoint through memory manager (handles attention + trigger)
-            context = memory_manager.process_waypoint(analysis)
+            should_think, reason = self.cognitive.should_trigger_thinking(
+                current_image=analysis.image_path,
+                waypoint=analysis,
+                force=analysis.waypoint_id == 0,
+            )
+
+            trigger_reason = TriggerReason.VISUAL_CHANGE if reason == "visual_change" else TriggerReason.EXCEPTIONAL_MOMENT
+
+            # Process waypoint through memory manager (attention gate + STM)
+            context = memory_manager.process_waypoint(
+                analysis,
+                triggered=should_think,
+                trigger_reason=trigger_reason,
+            )
 
             if context is None:
                 continue

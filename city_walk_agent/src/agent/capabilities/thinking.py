@@ -197,9 +197,7 @@ class ThinkingModule:
         """
         # Exceptional moments always trigger
         if is_exceptional:
-            self.logger.debug(
-                "Trigger: Exceptional moment", waypoint_id=waypoint_id
-            )
+            self.logger.debug("Trigger: Exceptional moment", waypoint_id=waypoint_id)
             return TriggerReason.EXCEPTIONAL_MOMENT
 
         # Visual change trigger
@@ -312,9 +310,17 @@ class ThinkingModule:
                 score_adjustments=adjustments,
                 revision_reasoning=parsed.get("revision_reasoning", {}),
                 memory_influence=parsed.get("memory_influence", {}),
-                used_stm_context=parsed.get("memory_influence", {}).get("stm_impact", "none") != "none",
-                used_ltm_patterns=parsed.get("memory_influence", {}).get("ltm_impact", "none") != "none",
-                personality_factor=parsed.get("memory_influence", {}).get("personality_impact", "unknown"),
+                used_stm_context=parsed.get("memory_influence", {}).get(
+                    "stm_impact", "none"
+                )
+                != "none",
+                used_ltm_patterns=parsed.get("memory_influence", {}).get(
+                    "ltm_impact", "none"
+                )
+                != "none",
+                personality_factor=parsed.get("memory_influence", {}).get(
+                    "personality_impact", "unknown"
+                ),
                 vlm_model_used="qwen-vl-max",
                 system1_scores=system1_scores.copy(),
                 processing_time_seconds=time.time() - start_time,
@@ -366,7 +372,9 @@ class ThinkingModule:
             used_vlm=False,
             revised_scores=system1_scores.copy(),
             score_adjustments={dim: 0.0 for dim in system1_scores.keys()},
-            revision_reasoning={dim: "Fallback - System 2 failed" for dim in system1_scores.keys()},
+            revision_reasoning={
+                dim: "Fallback - System 2 failed" for dim in system1_scores.keys()
+            },
             memory_influence={},
             used_stm_context=False,
             used_ltm_patterns=False,
@@ -395,7 +403,9 @@ class ThinkingModule:
                     "content": [
                         {
                             "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{image_data}"},
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_data}"
+                            },
                         },
                         {"type": "text", "text": prompt},
                     ],
@@ -666,9 +676,7 @@ Provide 1-2 sentences of visual insight."""
             # Simplified payload (real implementation needs image encoding)
             payload = {
                 "model": settings.qwen_vlm_model,
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ],
+                "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.5,
                 "max_tokens": 200,
             }
@@ -682,7 +690,11 @@ Provide 1-2 sentences of visual insight."""
             response.raise_for_status()
 
             response_data = response.json()
-            insight = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            insight = (
+                response_data.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
 
             self.logger.debug("VLM deep dive successful")
             return insight
@@ -813,7 +825,7 @@ Now re-evaluate this SAME image, but with FULL CONTEXT:
   "pattern_detected": "<pattern name or null>",
   "prediction": "<What to expect in next waypoints>",
   "significance": "<high/medium/low>"
-}
+}}
 ```
 
 **CRITICAL**: Base your evaluation on what you SEE in the image, enriched by context. Don't hallucinate details not visible.
@@ -924,18 +936,12 @@ Now re-evaluate this SAME image, but with FULL CONTEXT:
 
         # High significance waypoints
         high_sig_waypoints = [
-            r.waypoint_id
-            for r in self.thinking_history
-            if r.significance == "high"
+            r.waypoint_id for r in self.thinking_history if r.significance == "high"
         ]
 
         # Unique patterns detected
         patterns = list(
-            set(
-                r.pattern_detected
-                for r in self.thinking_history
-                if r.pattern_detected
-            )
+            set(r.pattern_detected for r in self.thinking_history if r.pattern_detected)
         )
 
         summary = {
@@ -1087,8 +1093,7 @@ class ThinkingCapability:
             "num_barriers": len(hidden_barriers),
             "pattern_type": pattern_type,
             "dimension_averages": {
-                dim: stats.get("avg", 0.0)
-                for dim, stats in dimension_stats.items()
+                dim: stats.get("avg", 0.0) for dim, stats in dimension_stats.items()
             },
             "applied_weights": personality_weights,
             "thresholds_used": decision_thresholds,
@@ -1189,9 +1194,7 @@ class ThinkingCapability:
         # Check volatility
         max_volatility = decision_thresholds.get("max_volatility", 999)
         if volatility > max_volatility:
-            concerns.append(
-                f"High volatility ({volatility:.1f} > {max_volatility})"
-            )
+            concerns.append(f"High volatility ({volatility:.1f} > {max_volatility})")
 
         # Check hidden barriers
         max_barriers = decision_thresholds.get("max_barriers", 999)
@@ -1229,19 +1232,16 @@ class ThinkingCapability:
 
             # Highlight if important dimension has excellent score
             if weight >= 1.5 and avg_score >= EXCELLENT_SCORE_THRESHOLD:
-                highlights.append(
-                    f"Excellent {dimension_id} ({avg_score:.1f}/10)"
-                )
+                highlights.append(f"Excellent {dimension_id} ({avg_score:.1f}/10)")
 
         # Check for low volatility (consistency)
         if volatility <= LOW_VOLATILITY_THRESHOLD:
-            highlights.append(f"Very consistent experience (volatility: {volatility:.1f})")
+            highlights.append(
+                f"Very consistent experience (volatility: {volatility:.1f})"
+            )
 
         # Check for universally high scores
-        all_scores = [
-            stats.get("avg", 0.0)
-            for stats in dimension_stats.values()
-        ]
+        all_scores = [stats.get("avg", 0.0) for stats in dimension_stats.values()]
         if all_scores and min(all_scores) >= 7.0:
             highlights.append("All dimensions score well")
 

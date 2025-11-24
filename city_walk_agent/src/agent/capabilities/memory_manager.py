@@ -341,132 +341,6 @@ class MemoryManager:
         else:
             return 5.0  # Standard
 
-    # ========================================================================
-    # System 2 Trigger: Decide When to Activate ThinkingModule
-    # ========================================================================
-
-    def should_trigger_thinking(
-        self,
-        waypoint_analysis: Any  # WaypointAnalysis type hint
-    ) -> bool:
-        """Determine if this waypoint warrants System 2 (LLM) reasoning.
-
-        More selective than attention gate - aims for ~20% of waypoints.
-
-        Trigger conditions:
-        1. **Major Visual Change**: Large pHash distance
-        2. **Significant Score Delta**: Change exceeds personality threshold
-        3. **Persistent Low Scores**: 3+ consecutive waypoints below threshold
-        4. **Transition Detection**: STM shows clear environmental shift
-
-        Args:
-            waypoint_analysis: WaypointAnalysis object
-
-        Returns:
-            True if ThinkingModule should be invoked
-        """
-        # Trigger 1: Major visual change
-        if waypoint_analysis.visual_change_detected:
-            if waypoint_analysis.phash_distance and waypoint_analysis.phash_distance > 20.0:
-                self.logger.debug(
-                    "System 2 trigger: Major visual change",
-                    waypoint_id=waypoint_analysis.waypoint_id,
-                    phash_distance=waypoint_analysis.phash_distance
-                )
-                return True
-
-        # Get current waypoint average score
-        current_scores = waypoint_analysis.scores
-        if not current_scores:
-            return False
-
-        current_avg = sum(current_scores.values()) / len(current_scores)
-
-        # Trigger 2: Significant score delta from STM
-        stm_context = self.stm.get_context()
-        if stm_context and stm_context.get("recent_scores"):
-            recent_scores = stm_context["recent_scores"]
-
-            # Calculate STM average
-            stm_avgs = []
-            for score_dict in recent_scores:
-                if score_dict:
-                    avg = sum(score_dict.values()) / len(score_dict)
-                    stm_avgs.append(avg)
-
-            if stm_avgs:
-                stm_mean = sum(stm_avgs) / len(stm_avgs)
-                score_delta = abs(current_avg - stm_mean)
-
-                # Personality-based threshold
-                system2_threshold = self._get_system2_delta_threshold()
-
-                if score_delta >= system2_threshold:
-                    self.logger.debug(
-                        "System 2 trigger: Significant score delta",
-                        waypoint_id=waypoint_analysis.waypoint_id,
-                        delta=score_delta,
-                        threshold=system2_threshold
-                    )
-                    return True
-
-        # Trigger 3: Persistent low scores
-        if self._check_persistent_low_scores(current_avg):
-            self.logger.debug(
-                "System 2 trigger: Persistent low scores",
-                waypoint_id=waypoint_analysis.waypoint_id
-            )
-            return True
-
-        # Trigger 4: Transition detection (trend change)
-        if stm_context:
-            trend = stm_context.get("trend")
-            if trend in ["volatile", "declining"]:
-                self.logger.debug(
-                    "System 2 trigger: Transition detected",
-                    waypoint_id=waypoint_analysis.waypoint_id,
-                    trend=trend
-                )
-                return True
-
-        # No triggers
-        return False
-
-    def _get_trigger_reason(self, waypoint_analysis: Any) -> TriggerReason:
-        """Best-effort trigger reason used for System 2 context."""
-        if getattr(waypoint_analysis, "visual_change_detected", False):
-            if getattr(waypoint_analysis, "phash_distance", 0) and waypoint_analysis.phash_distance > 20.0:
-                return TriggerReason.VISUAL_CHANGE
-
-        current_scores = getattr(waypoint_analysis, "scores", {}) or {}
-        current_avg = (
-            sum(current_scores.values()) / len(current_scores)
-            if current_scores else 0.0
-        )
-
-        stm_context = self.stm.get_context()
-        if stm_context and stm_context.get("recent_scores"):
-            stm_avgs = []
-            for score_dict in stm_context["recent_scores"]:
-                if score_dict:
-                    stm_avgs.append(sum(score_dict.values()) / len(score_dict))
-
-            if stm_avgs:
-                stm_mean = sum(stm_avgs) / len(stm_avgs)
-                score_delta = abs(current_avg - stm_mean)
-                if score_delta >= self._get_system2_delta_threshold():
-                    return TriggerReason.SCORE_VOLATILITY
-
-        if self._check_persistent_low_scores(current_avg):
-            return TriggerReason.SCORE_VOLATILITY
-
-        if stm_context:
-            trend = stm_context.get("trend")
-            if trend in ["volatile", "declining"]:
-                return TriggerReason.SCORE_VOLATILITY
-
-        return TriggerReason.EXCEPTIONAL_MOMENT
-
     def _get_system2_delta_threshold(self) -> float:
         """Get System 2 delta threshold based on personality.
 
@@ -485,52 +359,14 @@ class MemoryManager:
         else:
             return 2.0  # Standard
 
-    def _check_persistent_low_scores(self, current_avg: float) -> bool:
-        """Check if there are 3+ consecutive low-scoring waypoints in STM.
-
-        Args:
-            current_avg: Current waypoint average score
-
-        Returns:
-            True if persistent low scores detected
-        """
-        stm_context = self.stm.get_context()
-        if not stm_context or not stm_context.get("recent_scores"):
-            return False
-
-        recent_scores = stm_context["recent_scores"]
-
-        # Calculate averages for recent waypoints
-        recent_avgs = []
-        for score_dict in recent_scores:
-            if score_dict:
-                avg = sum(score_dict.values()) / len(score_dict)
-                recent_avgs.append(avg)
-
-        # Add current
-        recent_avgs.append(current_avg)
-
-        # Check for 3+ consecutive low scores
-        threshold = self._get_low_score_threshold()
-        consecutive_low = 0
-
-        for avg in reversed(recent_avgs):  # Check most recent first
-            if avg < threshold:
-                consecutive_low += 1
-                if consecutive_low >= 3:
-                    return True
-            else:
-                break  # Reset if we hit a good score
-
-        return False
-
     # ========================================================================
     # Context Preparation for System 2
     # ========================================================================
 
     def prepare_context_for_thinking(
         self,
-        waypoint_analysis: Any  # WaypointAnalysis type hint
+        waypoint_analysis: Any,  # WaypointAnalysis type hint
+        trigger_reason: Optional[TriggerReason] = None,
     ) -> Dict[str, Any]:
         """Package complete context for ThinkingModule reasoning.
 
@@ -576,7 +412,7 @@ class MemoryManager:
             }
 
         context = {
-            "trigger_reason": self._get_trigger_reason(waypoint_analysis),
+            "trigger_reason": trigger_reason or TriggerReason.VISUAL_CHANGE,
             "waypoint_analysis": {
                 "waypoint_id": waypoint_analysis.waypoint_id,
                 "scores": waypoint_analysis.scores,
@@ -625,16 +461,17 @@ class MemoryManager:
 
     def process_waypoint(
         self,
-        waypoint_analysis: Any  # WaypointAnalysis type hint
+        waypoint_analysis: Any,  # WaypointAnalysis type hint
+        triggered: bool = False,
+        trigger_reason: Optional[TriggerReason] = None,
     ) -> Optional[Dict[str, Any]]:
         """Main processing pipeline for each waypoint.
 
         Flow:
         1. Check attention gate
         2. Add to STM if passes
-        3. Check if System 2 should be triggered
-        4. If yes, prepare context and return
-        5. Track statistics
+        3. If caller indicates trigger, prepare context
+        4. Track statistics
 
         Args:
             waypoint_analysis: VLM evaluation result from ContinuousAnalyzer
@@ -678,14 +515,15 @@ class MemoryManager:
             stm_size=self.stm.get_memory_size()
         )
 
-        # Step 3: Check System 2 trigger
-        if not self.should_trigger_thinking(waypoint_analysis):
+        # Step 3: Return context only if triggered by controller
+        if not triggered:
             return None
 
-        # Step 4: System 2 triggered - prepare context
         self._system2_triggers += 1
 
-        context = self.prepare_context_for_thinking(waypoint_analysis)
+        context = self.prepare_context_for_thinking(
+            waypoint_analysis, trigger_reason=trigger_reason or TriggerReason.VISUAL_CHANGE
+        )
 
         self.logger.info(
             "System 2 reasoning triggered",
