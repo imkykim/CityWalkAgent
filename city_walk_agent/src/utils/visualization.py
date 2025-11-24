@@ -18,7 +18,7 @@ if __name__ == "__main__":  # only adjust when invoked as a script
 
 import json
 import csv
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 try:
     import matplotlib
@@ -368,6 +368,252 @@ class RouteVisualizer:
 
         return fig
 
+    def plot_dual_system_comparison(
+        self,
+        waypoint_results: List[Dict[str, Any]],
+        title: str = "System 1 (Raw VLM) vs System 2 (Memory Context)",
+        save_path: Optional[Path] = None,
+        dimensions: Optional[Sequence[str]] = None,
+    ) -> plt.Figure:
+        """Plot System 1 vs System 2 scores to visualize memory influence."""
+        waypoint_ids = [r["waypoint_id"] for r in waypoint_results]
+
+        system1_scores: Dict[str, List[float]] = {}
+        system2_scores: Dict[str, List[float]] = {}
+
+        dim_keys = list(dimensions) if dimensions else ["safety", "comfort", "interest", "aesthetics"]
+        for dim in dim_keys:
+            system1_scores[dim] = [r["system1_scores"].get(dim, 0) for r in waypoint_results]
+            system2_scores[dim] = [
+                r.get("system2_scores", {}).get(dim, r["system1_scores"].get(dim, 0))
+                if r.get("system2_scores")
+                else r["system1_scores"].get(dim, 0)
+                for r in waypoint_results
+            ]
+
+        system2_triggered = [
+            i for i, r in enumerate(waypoint_results) if r.get("system2_triggered", False)
+        ]
+
+        dim_config = self._build_dim_config(dim_keys)
+
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12), dpi=self.dpi)
+        axes = axes.flatten()
+        x = np.arange(len(waypoint_ids))
+
+        for idx, dim_key in enumerate(dim_keys):
+            if idx >= 4:
+                continue
+
+            ax = axes[idx]
+            config = dim_config[dim_key]
+
+            ax.plot(
+                x,
+                system1_scores[dim_key],
+                marker="o",
+                markersize=4,
+                linewidth=1.5,
+                color=config["color"],
+                alpha=0.5,
+                label="System 1 (Raw VLM)",
+                linestyle="--",
+            )
+
+            ax.plot(
+                x,
+                system2_scores[dim_key],
+                marker="s",
+                markersize=5,
+                linewidth=2,
+                color=config["color"],
+                alpha=0.9,
+                label="System 2 (Context)",
+                linestyle="-",
+            )
+
+            for i in system2_triggered:
+                s1_score = system1_scores[dim_key][i]
+                s2_score = system2_scores[dim_key][i]
+                if abs(s2_score - s1_score) >= 0.5:
+                    color = "green" if s2_score > s1_score else "red"
+                    ax.annotate(
+                        "",
+                        xy=(i, s2_score),
+                        xytext=(i, s1_score),
+                        arrowprops=dict(
+                            arrowstyle="->",
+                            color=color,
+                            alpha=0.6,
+                            lw=1.5,
+                        ),
+                    )
+
+            ax.set_title(f"{config['label']} - Memory Influence", fontsize=12, fontweight="bold")
+            ax.set_xlabel("Waypoint ID", fontsize=10)
+            ax.set_ylabel("Score", fontsize=10)
+            ax.set_ylim(0, 10.5)
+            ax.grid(True, alpha=0.3)
+            ax.legend(loc="best", fontsize=9)
+
+            tick_step = max(1, len(waypoint_ids) // 10)
+            ax.set_xticks(x[::tick_step])
+            ax.set_xticklabels(
+                [str(wid) for wid in waypoint_ids[::tick_step]],
+                rotation=45,
+                ha="right",
+                fontsize=8,
+            )
+
+            s1_mean = np.mean(system1_scores[dim_key])
+            s2_mean = np.mean(system2_scores[dim_key])
+            delta = s2_mean - s1_mean
+            stats_text = f"Δ: {delta:+.2f}\nS1: {s1_mean:.2f}\nS2: {s2_mean:.2f}"
+            ax.text(
+                0.02,
+                0.98,
+                stats_text,
+                transform=ax.transAxes,
+                fontsize=9,
+                verticalalignment="top",
+                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+            )
+
+        plt.suptitle(title, fontsize=14, fontweight="bold", y=0.995)
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
+            print(f"Saved dual-system comparison to {save_path}")
+
+        return fig
+
+    def plot_adjustment_heatmap(
+        self,
+        waypoint_results: List[Dict[str, Any]],
+        save_path: Optional[Path] = None,
+        dimensions: Optional[Sequence[str]] = None,
+    ) -> plt.Figure:
+        """Create heatmap showing System 2 score adjustments."""
+        dim_keys = list(dimensions) if dimensions else ["safety", "comfort", "interest", "aesthetics"]
+
+        adjustments: List[List[float]] = []
+        for dim in dim_keys:
+            dim_adjustments = [
+                r.get("score_adjustments", {}).get(dim, 0) if r.get("score_adjustments") else 0
+                for r in waypoint_results
+            ]
+            adjustments.append(dim_adjustments)
+
+        adjustments_arr = np.array(adjustments)
+        waypoint_ids = [r["waypoint_id"] for r in waypoint_results]
+
+        fig, ax = plt.subplots(figsize=(14, 4), dpi=self.dpi)
+
+        im = ax.imshow(
+            adjustments_arr, aspect="auto", cmap="RdYlGn", vmin=-3, vmax=3, interpolation="nearest"
+        )
+
+        ax.set_yticks(np.arange(len(dim_keys)))
+        ax.set_yticklabels(dim_keys)
+
+        tick_step = max(1, len(waypoint_ids) // 20)
+        ax.set_xticks(np.arange(0, len(waypoint_ids), tick_step))
+        ax.set_xticklabels(
+            [str(wid) for wid in waypoint_ids[::tick_step]],
+            rotation=45,
+            ha="right",
+            fontsize=8,
+        )
+
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label("Score Adjustment (System 2 - System 1)", rotation=270, labelpad=20)
+
+        ax.set_xlabel("Waypoint ID", fontsize=11, fontweight="bold")
+        ax.set_title(
+            "System 2 Score Adjustments (Memory Influence)",
+            fontsize=13,
+            fontweight="bold",
+            pad=15,
+        )
+
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
+            print(f"Saved adjustment heatmap to {save_path}")
+
+        return fig
+
+    def plot_narrative_timeline(
+        self,
+        narrative_chapters: List[Dict[str, Any]],
+        waypoint_scores: Dict[str, List[float]],
+        save_path: Optional[Path] = None,
+    ) -> plt.Figure:
+        """Visualize narrative chapters alongside score timeline."""
+        fig, (ax_scores, ax_narrative) = plt.subplots(
+            2, 1, figsize=(16, 10), gridspec_kw={"height_ratios": [3, 2]}, dpi=self.dpi
+        )
+
+        waypoint_ids = list(range(len(next(iter(waypoint_scores.values())))))
+
+        for dim, scores in waypoint_scores.items():
+            ax_scores.plot(waypoint_ids, scores, marker="o", label=dim, linewidth=2)
+
+        for chapter in narrative_chapters:
+            wid = chapter["waypoint_id"]
+            ax_scores.axvline(x=wid, color="red", linestyle="--", alpha=0.3)
+            ax_scores.text(
+                wid,
+                9.5,
+                f"Ch{chapter['chapter_number']}",
+                fontsize=8,
+                ha="center",
+                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+            )
+
+        ax_scores.set_title("Score Timeline with Narrative Chapters", fontsize=13, fontweight="bold")
+        ax_scores.set_ylabel("Score", fontsize=11)
+        ax_scores.legend(loc="best")
+        ax_scores.grid(True, alpha=0.3)
+        ax_scores.set_ylim(0, 10.5)
+
+        ax_narrative.set_xlim(0, len(waypoint_ids))
+        ax_narrative.set_ylim(0, len(narrative_chapters) + 1)
+        ax_narrative.axis("off")
+
+        for i, chapter in enumerate(narrative_chapters):
+            y_pos = len(narrative_chapters) - i
+            x_pos = chapter["waypoint_id"]
+            ax_narrative.plot([x_pos, x_pos], [0, y_pos], "k-", alpha=0.3)
+
+            text = f"Ch{chapter['chapter_number']}: {chapter.get('key_observation', '')[:60]}..."
+            tone_colors = {
+                "optimistic": "#10B981",
+                "neutral": "#6B7280",
+                "cautious": "#F59E0B",
+                "concerned": "#EF4444",
+            }
+            color = tone_colors.get(chapter.get("emotional_tone", "neutral"), "#6B7280")
+
+            ax_narrative.text(
+                x_pos + 1,
+                y_pos,
+                text,
+                fontsize=9,
+                va="center",
+                bbox=dict(boxstyle="round", facecolor=color, alpha=0.3),
+            )
+
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=150, bbox_inches="tight")
+            print(f"Saved narrative timeline to {save_path}")
+
+        return fig
+
     def generate_summary_stats(self, scores: Dict[str, List[float]]) -> Dict:
         """
         Calculate summary statistics for each dimension.
@@ -520,6 +766,79 @@ class RouteVisualizer:
 
         print(f"Generated {len(saved_paths)} radar charts in {radar_dir}")
         return saved_paths
+
+
+def plot_dual_system_analysis(
+    waypoint_results: List[Dict[str, Any]],
+    narrative_chapters: Optional[List[Dict[str, Any]]] = None,
+    output_dir: Path = Path("."),
+    dimensions: Optional[Sequence[str]] = None,
+) -> Dict[str, Path]:
+    """Generate complete dual-system analysis visualizations."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    viz = RouteVisualizer()
+    paths: Dict[str, Path] = {}
+
+    comparison_path = output_dir / "system1_vs_system2_comparison.png"
+    viz.plot_dual_system_comparison(
+        waypoint_results,
+        save_path=comparison_path,
+        dimensions=dimensions,
+    )
+    paths["comparison"] = comparison_path
+
+    heatmap_path = output_dir / "system2_adjustments_heatmap.png"
+    viz.plot_adjustment_heatmap(
+        waypoint_results,
+        save_path=heatmap_path,
+        dimensions=dimensions,
+    )
+    paths["heatmap"] = heatmap_path
+
+    waypoint_ids = [r["waypoint_id"] for r in waypoint_results]
+    system1_scores: Dict[str, List[float]] = {}
+    for dim in dimensions or ["safety", "comfort", "interest", "aesthetics"]:
+        system1_scores[dim] = [r["system1_scores"].get(dim, 0) for r in waypoint_results]
+
+    system1_path = output_dir / "system1_scores.png"
+    viz.plot_scores_with_trends(
+        system1_scores,
+        waypoint_ids=[str(wid) for wid in waypoint_ids],
+        title="System 1 Scores (Raw VLM Perception)",
+        save_path=system1_path,
+        dimensions=dimensions,
+    )
+    paths["system1"] = system1_path
+
+    final_scores: Dict[str, List[float]] = {}
+    for dim in dimensions or ["safety", "comfort", "interest", "aesthetics"]:
+        final_scores[dim] = [
+            r.get("system2_scores", {}).get(dim, r["system1_scores"].get(dim, 0))
+            if r.get("system2_scores")
+            else r["system1_scores"].get(dim, 0)
+            for r in waypoint_results
+        ]
+
+    final_path = output_dir / "final_scores.png"
+    viz.plot_scores_with_trends(
+        final_scores,
+        waypoint_ids=[str(wid) for wid in waypoint_ids],
+        title="Final Scores (System 2 when triggered)",
+        save_path=final_path,
+        dimensions=dimensions,
+    )
+    paths["final_scores"] = final_path
+
+    if narrative_chapters:
+        narrative_path = output_dir / "narrative_timeline.png"
+        viz.plot_narrative_timeline(
+            narrative_chapters=narrative_chapters,
+            waypoint_scores=final_scores,
+            save_path=narrative_path,
+        )
+        paths["narrative"] = narrative_path
+
+    return paths
 
     @classmethod
     def from_jsonl(
