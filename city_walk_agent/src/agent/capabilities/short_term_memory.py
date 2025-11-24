@@ -86,6 +86,11 @@ class ShortTermMemory:
             window_size=window_size
         )
 
+    @property
+    def memory(self) -> deque[MemoryItem]:
+        """Direct access to the underlying memory buffer (ordered oldest→newest)."""
+        return self._memory
+
     def add(
         self,
         waypoint_id: int,

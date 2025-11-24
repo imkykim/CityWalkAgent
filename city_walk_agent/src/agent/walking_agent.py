@@ -741,99 +741,45 @@ class WalkingAgent(BaseAgent):
         self.logger.info("Phase 3: Processing with short-term memory and thinking")
 
         thinking_results = []
-        last_trigger_gps = (waypoints[0].lat, waypoints[0].lon)
-        last_avg_score = 0.0
+        memory_manager = self.memory_manager
 
-        for i, analysis in enumerate(analysis_results):
-            # Calculate average score
-            avg_score = (
-                sum(analysis.scores.values()) / len(analysis.scores)
-                if analysis.scores
-                else 0.0
-            )
+        for analysis in analysis_results:
+            # Process waypoint through memory manager (handles attention + trigger)
+            context = memory_manager.process_waypoint(analysis)
 
-            # Add to short-term memory
-            self.short_term_memory.add(
-                waypoint_id=analysis.waypoint_id,
-                scores=analysis.scores,
-                summary=f"Waypoint {analysis.waypoint_id}: avg {avg_score:.1f}/10",
-                image_path=(
-                    analysis.image_path if analysis.visual_change_detected else None
-                ),
-                gps=analysis.gps,
-                timestamp=analysis.timestamp,
-            )
+            if context is None:
+                continue
 
-            # Check if thinking should trigger
-            if i > 0:
-                curr_gps = analysis.gps
+            # Ensure route metadata includes route info
+            route_meta = context.get("route_metadata", {}) or {}
+            route_meta.setdefault("route_id", route_id)
+            route_meta.setdefault("length_km", route_length_km)
 
-                # Calculate distance from last trigger
-                import math
-
-                lat1, lon1 = last_trigger_gps
-                lat2, lon2 = curr_gps
-                R = 6371000  # Earth radius in meters
-
-                lat1_rad = math.radians(lat1)
-                lat2_rad = math.radians(lat2)
-                delta_lat = math.radians(lat2 - lat1)
-                delta_lon = math.radians(lon2 - lon1)
-
-                a = (
-                    math.sin(delta_lat / 2) ** 2
-                    + math.cos(lat1_rad)
-                    * math.cos(lat2_rad)
-                    * math.sin(delta_lon / 2) ** 2
-                )
-                c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-                distance_from_last = R * c
-
-                score_delta = abs(avg_score - last_avg_score)
-
-                # Check trigger
-                trigger = self.thinking_module.should_trigger(
+            try:
+                thinking_result = self.thinking_module.think_waypoint(
                     waypoint_id=analysis.waypoint_id,
-                    visual_change=analysis.visual_change_detected,
-                    score_delta=score_delta,
-                    distance_from_last=distance_from_last,
-                    is_exceptional=False,
+                    trigger_reason=context["trigger_reason"],
+                    current_image_path=context["image_path"],
+                    system1_scores=analysis.scores,
+                    system1_reasoning=analysis.reasoning,
+                    stm_context=context["stm_context"],
+                    ltm_patterns=context.get("ltm_patterns"),
+                    personality=self.personality,
+                    route_metadata=route_meta,
                 )
 
-                if trigger:
-                    self.logger.debug(
-                        "Thinking triggered",
-                        waypoint_id=analysis.waypoint_id,
-                        trigger=trigger.value,
-                    )
+                thinking_results.append(thinking_result)
 
-                    # Get STM context
-                    stm_context = self.short_term_memory.get_context()
+                # Update STM with System 2 revisions for sequential context
+                memory_manager.update_with_system2_result(
+                    waypoint_id=analysis.waypoint_id,
+                    thinking_result=thinking_result,
+                )
 
-                    # Perform thinking
-                    try:
-                        result = self.thinking_module.think_waypoint(
-                            waypoint_id=analysis.waypoint_id,
-                            trigger_reason=trigger,
-                            stm_context=stm_context,
-                            current_scores=analysis.scores,
-                            current_reasoning=analysis.reasoning,
-                            current_image_path=analysis.image_path,
-                            route_metadata={
-                                "route_id": route_id,
-                                "length_km": route_length_km,
-                            },
-                        )
-
-                        thinking_results.append(result)
-                        last_trigger_gps = curr_gps
-
-                    except Exception as e:
-                        self.logger.warning(
-                            f"Thinking failed at waypoint {analysis.waypoint_id}: {e}"
-                        )
-
-            last_avg_score = avg_score
+            except Exception as e:
+                self.logger.warning(
+                    f"Thinking failed at waypoint {analysis.waypoint_id}: {e}"
+                )
 
         thinking_summary = self.thinking_module.get_thinking_summary()
 

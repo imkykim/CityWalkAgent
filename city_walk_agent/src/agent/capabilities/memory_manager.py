@@ -54,6 +54,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.agent.capabilities.long_term_memory import LongTermMemory, RouteSummary
 from src.agent.capabilities.short_term_memory import MemoryItem, ShortTermMemory
+from src.agent.capabilities.thinking import TriggerReason
 from src.agent.config import AgentPersonality
 from src.utils.logging import get_logger
 
@@ -112,6 +113,9 @@ class MemoryManager:
         self._waypoints_processed = 0
         self._attention_gate_passes = 0
         self._system2_triggers = 0
+
+        # Track System 2 results for sequential context
+        self._system2_results: Dict[int, Any] = {}
 
         self.logger = get_logger(f"{__name__}.{agent_id}")
         self.logger.info("MemoryManager initialized", agent_id=agent_id)
@@ -428,6 +432,41 @@ class MemoryManager:
         # No triggers
         return False
 
+    def _get_trigger_reason(self, waypoint_analysis: Any) -> TriggerReason:
+        """Best-effort trigger reason used for System 2 context."""
+        if getattr(waypoint_analysis, "visual_change_detected", False):
+            if getattr(waypoint_analysis, "phash_distance", 0) and waypoint_analysis.phash_distance > 20.0:
+                return TriggerReason.VISUAL_CHANGE
+
+        current_scores = getattr(waypoint_analysis, "scores", {}) or {}
+        current_avg = (
+            sum(current_scores.values()) / len(current_scores)
+            if current_scores else 0.0
+        )
+
+        stm_context = self.stm.get_context()
+        if stm_context and stm_context.get("recent_scores"):
+            stm_avgs = []
+            for score_dict in stm_context["recent_scores"]:
+                if score_dict:
+                    stm_avgs.append(sum(score_dict.values()) / len(score_dict))
+
+            if stm_avgs:
+                stm_mean = sum(stm_avgs) / len(stm_avgs)
+                score_delta = abs(current_avg - stm_mean)
+                if score_delta >= self._get_system2_delta_threshold():
+                    return TriggerReason.SCORE_VOLATILITY
+
+        if self._check_persistent_low_scores(current_avg):
+            return TriggerReason.SCORE_VOLATILITY
+
+        if stm_context:
+            trend = stm_context.get("trend")
+            if trend in ["volatile", "declining"]:
+                return TriggerReason.SCORE_VOLATILITY
+
+        return TriggerReason.EXCEPTIONAL_MOMENT
+
     def _get_system2_delta_threshold(self) -> float:
         """Get System 2 delta threshold based on personality.
 
@@ -495,84 +534,69 @@ class MemoryManager:
     ) -> Dict[str, Any]:
         """Package complete context for ThinkingModule reasoning.
 
-        Assembles all relevant information:
-        - Current waypoint observation
-        - Recent STM context (last 3-5 waypoints)
-        - Relevant LTM episodes (similar locations/conditions)
-        - Agent attributes (personality, profile, status)
-
-        Args:
-            waypoint_analysis: Current waypoint to reason about
-
-        Returns:
-            Dictionary with complete context package:
-            {
-                'current_waypoint': WaypointAnalysis,
-                'recent_context': List[MemoryItem],
-                'past_experience': List[KeyMoment],
-                'personality': Dict[str, Any],
-                'agent_profile': Dict[str, Any],
-                'current_status': Dict[str, Any]
-            }
+        Now includes System 2 results from previous waypoints in STM context.
         """
-        # Get STM recent context
         stm_context = self.stm.get_context()
-        recent_context = []
+        current_gps = waypoint_analysis.gps
+        past_experience = self._retrieve_relevant_ltm(current_gps)
 
+        recent_context: List[Dict[str, Any]] = []
         if stm_context and stm_context.get("recent_scores"):
-            # Convert STM context to list of items
+            waypoint_ids = stm_context.get("waypoint_ids", [])
             recent_scores = stm_context["recent_scores"]
             recent_summaries = stm_context.get("recent_summaries", [])
-            waypoint_ids = stm_context.get("waypoint_ids", [])
-            gps_coords = stm_context.get("gps_coordinates", [])
 
-            for i, scores in enumerate(recent_scores):
-                if i < len(recent_summaries):
-                    recent_context.append({
-                        "waypoint_id": waypoint_ids[i] if i < len(waypoint_ids) else i,
+            for wid, scores, summary in zip(waypoint_ids, recent_scores, recent_summaries):
+                system2_info = ""
+                if wid in self._system2_results:
+                    result = self._system2_results[wid]
+                    adjustments = getattr(result, "score_adjustments", {}) or {}
+                    avg_adjustment = (
+                        sum(adjustments.values()) / len(adjustments) if adjustments else 0.0
+                    )
+                    system2_info = (
+                        f" [System 2: {getattr(result, 'significance', 'medium')}, "
+                        f"adjusted by {avg_adjustment:+.1f}]"
+                    )
+
+                recent_context.append(
+                    {
+                        "waypoint_id": wid,
                         "scores": scores,
-                        "summary": recent_summaries[i],
-                        "gps": gps_coords[i] if i < len(gps_coords) else (0.0, 0.0)
-                    })
+                        "summary": summary + system2_info,
+                    }
+                )
 
-        # Get LTM relevant experiences (similar GPS locations)
-        past_experience = self._retrieve_relevant_ltm(waypoint_analysis.gps)
-
-        # Package personality info
-        personality_info = {}
+        personality_info: Dict[str, Any] = {}
         if self.personality:
             personality_info = {
                 "name": self.personality.name,
-                "type": self.personality.name.lower(),
-                "dimension_weights": self.personality.dimension_weights,
-                "decision_thresholds": self.personality.decision_thresholds,
-                "explanation_style": self.personality.explanation_style
+                "safety_priority": self.personality.safety_priority,
+                "risk_tolerance": self.personality.risk_tolerance,
             }
 
-        # Build complete context
         context = {
-            "current_waypoint": {
+            "trigger_reason": self._get_trigger_reason(waypoint_analysis),
+            "waypoint_analysis": {
                 "waypoint_id": waypoint_analysis.waypoint_id,
                 "scores": waypoint_analysis.scores,
                 "reasoning": waypoint_analysis.reasoning,
                 "gps": waypoint_analysis.gps,
                 "visual_change": waypoint_analysis.visual_change_detected,
-                "phash_distance": waypoint_analysis.phash_distance
+                "phash_distance": waypoint_analysis.phash_distance,
             },
+            "stm_context": stm_context,
             "recent_context": recent_context,
-            "past_experience": past_experience,
+            "ltm_patterns": past_experience,
             "personality": personality_info,
             "agent_profile": self.profile,
             "current_status": self.status,
-            "stm_trend": stm_context.get("trend", "unknown") if stm_context else "unknown"
+            "route_metadata": {
+                "waypoints_processed": self._waypoints_processed,
+                "system2_triggers": self._system2_triggers,
+            },
+            "image_path": waypoint_analysis.image_path,
         }
-
-        self.logger.debug(
-            "Context prepared for thinking",
-            waypoint_id=waypoint_analysis.waypoint_id,
-            recent_context_size=len(recent_context),
-            past_experience_size=len(past_experience)
-        )
 
         return context
 
@@ -671,6 +695,29 @@ class MemoryManager:
         )
 
         return context
+
+    def update_with_system2_result(
+        self,
+        waypoint_id: int,
+        thinking_result: Any  # ThinkingResult
+    ) -> None:
+        """Update STM with System 2 revised scores."""
+        self._system2_results[waypoint_id] = thinking_result
+
+        if getattr(thinking_result, "revised_scores", None):
+            for item in self.stm.memory:
+                if item.waypoint_id == waypoint_id:
+                    item.scores = thinking_result.revised_scores
+                    item.summary = (
+                        f"Waypoint {waypoint_id} (System 2: {thinking_result.significance})"
+                    )
+                    adjustments = getattr(thinking_result, "score_adjustments", {}) or {}
+                    self.logger.debug(
+                        "Updated STM with System 2 scores",
+                        waypoint_id=waypoint_id,
+                        adjustments={k: f"{v:+.1f}" for k, v in adjustments.items()},
+                    )
+                    break
 
     # ========================================================================
     # Route Consolidation: STM → LTM
