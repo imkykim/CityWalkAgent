@@ -26,6 +26,9 @@ env/
 # Adjust if you save them elsewhere.
 /city_walk_agent/data/
 
+.claude/settings.local.json
+city_walk_agent/.claude/settings.local.json
+city_walk_agent/cache/
 
 #Temporary gitignore
 /VIRL

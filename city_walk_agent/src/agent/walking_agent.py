@@ -24,6 +24,7 @@ from src.agent.capabilities import (
     ActionCapability,
     AnalysisCapability,
     LongTermMemory,
+    MemoryManager,
     ObservationCapability,
     ShortTermMemory,
     ThinkingCapability,
@@ -112,6 +113,7 @@ class WalkingAgent(BaseAgent):
         self._continuous_analyzer = None
         self._short_term_memory = None
         self._thinking_module = None
+        self._memory_manager = None
 
         self.logger.info(
             "WalkingAgent created",
@@ -386,6 +388,32 @@ class WalkingAgent(BaseAgent):
             )
             self.logger.debug("ThinkingModule initialized")
         return self._thinking_module
+
+    @property
+    def memory_manager(self) -> MemoryManager:
+        """Lazy-load memory manager for unified memory coordination.
+
+        Returns:
+            MemoryManager instance configured with agent attributes
+        """
+        if self._memory_manager is None:
+            self._memory_manager = MemoryManager(
+                agent_id=self.metadata.agent_id
+            )
+
+            # Set agent attributes
+            self._memory_manager.set_agent_attributes(
+                personality=self.personality,
+                profile={
+                    'agent_id': self.metadata.agent_id,
+                    'name': self.metadata.name,
+                    'goal': self.metadata.primary_goal
+                },
+                status={'mode': 'active'}
+            )
+
+            self.logger.debug("MemoryManager initialized")
+        return self._memory_manager
 
     # ========================================================================
     # Traditional Methods (Backward Compatible)
