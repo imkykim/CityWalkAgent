@@ -34,7 +34,6 @@ from src.agent.cognitive_controller import CognitiveController
 from src.agent.config import AgentPersonality, get_preset
 from src.pipeline import WalkingAgentPipeline
 from src.config import settings
-from src.utils.data_models import Route, Waypoint
 from src.utils.logging import get_logger
 
 
