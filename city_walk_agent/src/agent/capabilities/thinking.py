@@ -10,7 +10,7 @@ Design principle: REASON, don't perceive or act.
 import json
 import re
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -47,17 +47,35 @@ class TriggerReason(Enum):
 
 @dataclass
 class ThinkingResult:
-    """Result of waypoint-level thinking with LLM interpretation."""
+    """Result of System 2 waypoint-level reasoning with VLM-revised scores."""
 
     waypoint_id: int
     trigger_reason: TriggerReason
-    interpretation: str  # LLM's interpretation of what's happening
-    significance: str  # "high" | "medium" | "low"
-    pattern_detected: Optional[str]  # Pattern identified by LLM
-    prediction: Optional[str]  # LLM's prediction about upcoming waypoints
-    recommendation: Optional[str]  # LLM's recommendation
-    used_vlm: bool  # Whether VLM deep dive was used
-    confidence: float  # 0-1, LLM's confidence in interpretation
+
+    # === Interpretation (existing) ===
+    interpretation: str
+    significance: str
+    pattern_detected: Optional[str]
+    prediction: Optional[str]
+    recommendation: Optional[str]
+    confidence: float
+    used_vlm: bool  # Keep for backward compatibility
+
+    # === NEW: VLM-Revised Scores ===
+    revised_scores: Optional[Dict[str, float]] = None
+    score_adjustments: Optional[Dict[str, float]] = None
+    revision_reasoning: Optional[Dict[str, str]] = None
+
+    # === NEW: Memory Influence Tracking ===
+    memory_influence: Dict[str, Any] = field(default_factory=dict)
+    used_stm_context: bool = False
+    used_ltm_patterns: bool = False
+    personality_factor: str = "unknown"
+
+    # === NEW: Metadata ===
+    vlm_model_used: str = "none"
+    system1_scores: Dict[str, float] = field(default_factory=dict)
+    processing_time_seconds: float = 0.0
 
 
 class ThinkingModule:
@@ -108,6 +126,7 @@ class ThinkingModule:
         vlm_api_url: Optional[str] = None,
         vlm_api_key: Optional[str] = None,
         enable_vlm_deep_dive: bool = False,
+        enable_score_revision: bool = True,
         distance_trigger_meters: float = 600.0,
         score_delta_threshold: float = 1.5,
     ):
@@ -119,6 +138,7 @@ class ThinkingModule:
             vlm_api_url: API URL for VLM deep dives (optional).
             vlm_api_key: API key for VLM (optional).
             enable_vlm_deep_dive: Whether to enable VLM deep dives (expensive).
+            enable_score_revision: Enable System 2 score revision.
             distance_trigger_meters: Distance threshold for milestone triggers.
             score_delta_threshold: Score change threshold for volatility triggers.
         """
@@ -126,12 +146,12 @@ class ThinkingModule:
             llm_api_url or settings.qwen_vlm_api_url
         )
         self.llm_api_key = llm_api_key or settings.qwen_vlm_api_key
-        self.vlm_api_url = (
-            self._prepare_chat_endpoint(vlm_api_url)
-            if vlm_api_url else None
+        self.vlm_api_url = self._prepare_chat_endpoint(
+            vlm_api_url or settings.qwen_vlm_api_url
         )
-        self.vlm_api_key = vlm_api_key
+        self.vlm_api_key = vlm_api_key or settings.qwen_vlm_api_key
         self.enable_vlm_deep_dive = enable_vlm_deep_dive
+        self.enable_score_revision = enable_score_revision
 
         # Trigger thresholds
         self.distance_trigger_meters = distance_trigger_meters
@@ -149,6 +169,7 @@ class ThinkingModule:
             distance_trigger=distance_trigger_meters,
             score_delta_threshold=score_delta_threshold,
             vlm_enabled=enable_vlm_deep_dive,
+            score_revision=enable_score_revision,
         )
 
     def should_trigger(
@@ -211,243 +232,101 @@ class ThinkingModule:
         self,
         waypoint_id: int,
         trigger_reason: TriggerReason,
+        current_image_path: Path,
+        system1_scores: Dict[str, float],
+        system1_reasoning: Dict[str, str],
         stm_context: Dict[str, Any],
-        current_scores: Dict[str, float],
-        current_reasoning: Dict[str, str],
-        current_image_path: Optional[Path],
+        ltm_patterns: Optional[List[Dict[str, Any]]],
+        personality: Any,
         route_metadata: Dict[str, Any],
     ) -> ThinkingResult:
-        """Perform deep thinking about a waypoint using LLM.
+        """Perform System 2 reasoning with VLM-based score revision.
 
-        This is the main waypoint-level reasoning method. It:
-        1. Builds a rich context prompt from STM and current observation
-        2. Calls LLM for interpretation
-        3. Optionally performs VLM deep dive if enabled
-        4. Returns structured thinking result
-
-        Args:
-            waypoint_id: Current waypoint ID.
-            trigger_reason: Why thinking was triggered.
-            stm_context: Context from short-term memory (recent history).
-            current_scores: Current waypoint scores by dimension.
-            current_reasoning: Current waypoint reasoning by dimension.
-            current_image_path: Path to current waypoint image (for VLM).
-            route_metadata: Route-level metadata (route_id, length_km, etc.).
-
-        Returns:
-            ThinkingResult with LLM interpretation and analysis.
-        """
-        self.logger.info(
-            "Thinking about waypoint",
-            waypoint_id=waypoint_id,
-            trigger_reason=trigger_reason.value,
-        )
-
-        # Build thinking prompt
-        prompt = self._build_thinking_prompt(
-            waypoint_id=waypoint_id,
-            trigger_reason=trigger_reason,
-            stm_context=stm_context,
-            current_scores=current_scores,
-            current_reasoning=current_reasoning,
-            route_metadata=route_metadata,
-        )
-
-        # Call LLM for interpretation
-        result = self._think_with_llm(
-            prompt=prompt,
-            waypoint_id=waypoint_id,
-            trigger_reason=trigger_reason,
-        )
-
-        # Optional VLM deep dive
-        if (
-            self.enable_vlm_deep_dive
-            and current_image_path
-            and current_image_path.exists()
-        ):
-            vlm_insight = self._deep_dive_with_vlm(
-                image_path=current_image_path,
-                llm_interpretation=result.interpretation,
-                scores=current_scores,
-            )
-            # Enhance interpretation with VLM insight
-            result.interpretation += f"\n\nVLM Deep Dive: {vlm_insight}"
-            result.used_vlm = True
-            self.logger.debug("VLM deep dive completed", waypoint_id=waypoint_id)
-
-        # Update state
-        self.last_trigger_waypoint = waypoint_id
-        self.thinking_history.append(result)
-
-        self.logger.info(
-            "Thinking completed",
-            waypoint_id=waypoint_id,
-            significance=result.significance,
-            confidence=result.confidence,
-        )
-
-        return result
-
-    def _build_thinking_prompt(
-        self,
-        waypoint_id: int,
-        trigger_reason: TriggerReason,
-        stm_context: Dict[str, Any],
-        current_scores: Dict[str, float],
-        current_reasoning: Dict[str, str],
-        route_metadata: Dict[str, Any],
-    ) -> str:
-        """Build rich context prompt for LLM thinking.
-
-        Constructs a detailed prompt that includes:
-        - Current waypoint information
-        - Recent history from STM
-        - Trigger reason and context
-        - Route-level metadata
+        This is the main entry point for System 2 evaluation:
+        1. Build rich multi-modal prompt (image + context)
+        2. Call VLM API with image + text
+        3. Parse revised scores + interpretation
+        4. Calculate adjustments
+        5. Return ThinkingResult
 
         Args:
-            waypoint_id: Current waypoint ID.
-            trigger_reason: Why thinking was triggered.
-            stm_context: Short-term memory context.
-            current_scores: Current scores by dimension.
-            current_reasoning: Current reasoning by dimension.
-            route_metadata: Route metadata.
+            waypoint_id: Current waypoint ID
+            trigger_reason: Why System 2 was triggered
+            current_image_path: Path to waypoint image
+            system1_scores: Original VLM scores
+            system1_reasoning: Original reasoning
+            stm_context: Short-term memory context
+            ltm_patterns: Relevant long-term memory patterns
+            personality: Agent personality configuration
+            route_metadata: Route-level info
 
         Returns:
-            Formatted prompt string for LLM.
+            ThinkingResult with revised scores and reasoning
         """
-        # Build recent history summary
-        recent_summaries = stm_context.get("recent_summaries", [])
-        recent_scores = stm_context.get("recent_scores", [])
-        trend = stm_context.get("trend", "unknown")
+        import time
 
-        history_text = "Recent waypoint history:\n"
-        for i, (summary, scores) in enumerate(zip(recent_summaries, recent_scores)):
-            avg_score = sum(scores.values()) / len(scores) if scores else 0.0
-            history_text += f"- Waypoint {waypoint_id - len(recent_summaries) + i}: {summary} (avg: {avg_score:.1f}/10)\n"
+        start_time = time.time()
 
-        # Build current waypoint summary
-        current_text = f"\nCurrent waypoint {waypoint_id}:\n"
-        current_text += f"Trigger reason: {trigger_reason.value}\n"
-        current_text += f"Scores: {current_scores}\n"
-        current_text += "Reasoning:\n"
-        for dim, reason in current_reasoning.items():
-            current_text += f"  {dim}: {reason}\n"
-
-        # Build route context
-        route_text = f"\nRoute context:\n"
-        route_text += f"Route ID: {route_metadata.get('route_id', 'unknown')}\n"
-        route_text += f"Total length: {route_metadata.get('length_km', 0):.2f} km\n"
-        route_text += f"Current trend: {trend}\n"
-
-        # Construct full prompt
-        prompt = f"""You are an expert urban planning analyst evaluating walking routes.
-
-{history_text}
-
-{current_text}
-
-{route_text}
-
-Based on this information, provide your analysis in JSON format with the following fields:
-- interpretation: A 2-3 sentence interpretation of what's happening at this waypoint
-- significance: "high" | "medium" | "low" - how significant is this waypoint
-- pattern_detected: Any pattern you notice (e.g., "improving safety", "declining comfort", "transitioning to commercial area")
-- prediction: Your prediction about upcoming waypoints based on current trend
-- recommendation: Brief recommendation for the agent (e.g., "continue monitoring", "flag as key moment", "prepare for transition")
-- confidence: A number between 0 and 1 indicating your confidence in this analysis
-
-Respond with ONLY valid JSON, no additional text."""
-
-        return prompt
-
-    def _think_with_llm(
-        self,
-        prompt: str,
-        waypoint_id: int,
-        trigger_reason: TriggerReason,
-    ) -> ThinkingResult:
-        """Call LLM API and parse response into ThinkingResult.
-
-        Args:
-            prompt: The thinking prompt.
-            waypoint_id: Current waypoint ID.
-            trigger_reason: Trigger reason.
-
-        Returns:
-            ThinkingResult with parsed LLM response.
-        """
-        try:
-            # Prepare API request
-            headers = {
-                "Content-Type": "application/json",
-            }
-            if self.llm_api_key:
-                headers["Authorization"] = f"Bearer {self.llm_api_key}"
-
-            payload = {
-                "model": settings.qwen_vlm_model,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are an expert urban planning analyst. Respond with valid JSON only.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.7,
-                "max_tokens": 500,
-            }
-
-            # Call LLM API
-            self.logger.debug(
-                "Calling LLM API",
+        if not self.enable_score_revision:
+            return self._create_fallback_result(
                 waypoint_id=waypoint_id,
-                url=self.llm_api_url,
+                trigger_reason=trigger_reason,
+                system1_scores=system1_scores,
+                error="Score revision disabled",
             )
 
-            response = requests.post(
-                self.llm_api_url,
-                headers=headers,
-                json=payload,
-                timeout=30,
+        try:
+            prompt = self._build_vlm_revision_prompt(
+                waypoint_id=waypoint_id,
+                system1_scores=system1_scores,
+                system1_reasoning=system1_reasoning,
+                stm_context=stm_context,
+                ltm_patterns=ltm_patterns,
+                personality=personality,
+                trigger_reason=trigger_reason,
             )
-            response.raise_for_status()
 
-            # Parse response
-            response_data = response.json()
-            content = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            vlm_response = self._call_vlm_with_image(
+                image_path=current_image_path,
+                prompt=prompt,
+            )
 
-            # Extract JSON from response (handle markdown code blocks)
-            json_match = re.search(r"```json\s*(\{.*?\})\s*```", content, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                # Try to find JSON object directly
-                json_match = re.search(r"\{.*\}", content, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    raise ValueError("No JSON found in LLM response")
+            parsed = self._parse_vlm_response(vlm_response)
 
-            parsed = json.loads(json_str)
+            adjustments = {
+                dim: parsed["revised_scores"][dim] - system1_scores[dim]
+                for dim in system1_scores.keys()
+            }
 
-            # Build ThinkingResult
             result = ThinkingResult(
                 waypoint_id=waypoint_id,
                 trigger_reason=trigger_reason,
-                interpretation=parsed.get("interpretation", "No interpretation provided"),
+                interpretation=parsed.get("interpretation", "No interpretation"),
                 significance=parsed.get("significance", "medium"),
                 pattern_detected=parsed.get("pattern_detected"),
                 prediction=parsed.get("prediction"),
                 recommendation=parsed.get("recommendation"),
-                used_vlm=False,
-                confidence=float(parsed.get("confidence", 0.5)),
+                confidence=float(parsed.get("confidence", 0.7)),
+                used_vlm=True,
+                revised_scores=parsed["revised_scores"],
+                score_adjustments=adjustments,
+                revision_reasoning=parsed.get("revision_reasoning", {}),
+                memory_influence=parsed.get("memory_influence", {}),
+                used_stm_context=parsed.get("memory_influence", {}).get("stm_impact", "none") != "none",
+                used_ltm_patterns=parsed.get("memory_influence", {}).get("ltm_impact", "none") != "none",
+                personality_factor=parsed.get("memory_influence", {}).get("personality_impact", "unknown"),
+                vlm_model_used="qwen-vl-max",
+                system1_scores=system1_scores.copy(),
+                processing_time_seconds=time.time() - start_time,
             )
 
-            self.logger.debug(
-                "LLM thinking completed",
+            self.thinking_history.append(result)
+
+            self.logger.info(
+                "System 2 evaluation complete",
                 waypoint_id=waypoint_id,
+                trigger=trigger_reason.value,
+                adjustments={k: f"{v:+.1f}" for k, v in adjustments.items()},
                 significance=result.significance,
             )
 
@@ -455,23 +334,112 @@ Respond with ONLY valid JSON, no additional text."""
 
         except Exception as e:
             self.logger.error(
-                "LLM thinking failed",
+                "System 2 evaluation failed",
                 waypoint_id=waypoint_id,
                 error=str(e),
             )
 
-            # Return fallback result
-            return ThinkingResult(
+            return self._create_fallback_result(
                 waypoint_id=waypoint_id,
                 trigger_reason=trigger_reason,
-                interpretation=f"Error in LLM analysis: {str(e)}",
-                significance="low",
-                pattern_detected=None,
-                prediction=None,
-                recommendation="Continue without LLM insight",
-                used_vlm=False,
-                confidence=0.0,
+                system1_scores=system1_scores,
+                error=str(e),
             )
+
+    def _create_fallback_result(
+        self,
+        waypoint_id: int,
+        trigger_reason: TriggerReason,
+        system1_scores: Dict[str, float],
+        error: str,
+    ) -> ThinkingResult:
+        """Create fallback result when VLM call fails."""
+        return ThinkingResult(
+            waypoint_id=waypoint_id,
+            trigger_reason=trigger_reason,
+            interpretation=f"System 2 evaluation failed: {error}. Using System 1 scores.",
+            significance="low",
+            pattern_detected=None,
+            prediction=None,
+            recommendation="Continue with System 1 evaluation",
+            confidence=0.0,
+            used_vlm=False,
+            revised_scores=system1_scores.copy(),
+            score_adjustments={dim: 0.0 for dim in system1_scores.keys()},
+            revision_reasoning={dim: "Fallback - System 2 failed" for dim in system1_scores.keys()},
+            memory_influence={},
+            used_stm_context=False,
+            used_ltm_patterns=False,
+            personality_factor="none",
+            vlm_model_used="none",
+            system1_scores=system1_scores.copy(),
+            processing_time_seconds=0.0,
+        )
+
+    def _call_vlm_with_image(
+        self,
+        image_path: Path,
+        prompt: str,
+    ) -> Dict[str, Any]:
+        """Call VLM API with image and text prompt."""
+        import base64
+
+        with open(image_path, "rb") as f:
+            image_data = base64.b64encode(f.read()).decode("utf-8")
+
+        payload = {
+            "model": "qwen-vl-max",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/jpeg;base64,{image_data}"},
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+            "temperature": 0.3,
+            "max_tokens": 2000,
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.vlm_api_key}",
+        }
+
+        response = requests.post(
+            self.vlm_api_url,
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+
+        response.raise_for_status()
+        return response.json()
+
+    def _parse_vlm_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse VLM API response and extract structured data."""
+        content = response["choices"][0]["message"]["content"]
+        json_match = re.search(r"```json\s*(\{.*?\})\s*```", content, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                raise ValueError("No JSON found in VLM response")
+
+        parsed = json.loads(json_str)
+
+        for field in ["revised_scores", "adjustments", "revision_reasoning"]:
+            if field not in parsed:
+                raise ValueError(f"Missing required field: {field}")
+
+        return parsed
 
     def _deep_dive_with_vlm(
         self,
@@ -540,6 +508,185 @@ Provide 1-2 sentences of visual insight."""
         except Exception as e:
             self.logger.warning(f"VLM deep dive failed: {e}")
             return f"VLM analysis unavailable: {str(e)}"
+
+    def _build_vlm_revision_prompt(
+        self,
+        waypoint_id: int,
+        system1_scores: Dict[str, float],
+        system1_reasoning: Dict[str, str],
+        stm_context: Dict[str, Any],
+        ltm_patterns: Optional[List[Dict[str, Any]]],
+        personality: Any,
+        trigger_reason: TriggerReason,
+    ) -> str:
+        """Build multi-modal prompt for VLM to revise scores with memory context."""
+
+        # Format STM context
+        stm_summary = self._format_stm_context(stm_context)
+
+        # Format LTM patterns
+        ltm_summary = (
+            self._format_ltm_patterns(ltm_patterns)
+            if ltm_patterns
+            else "No relevant past patterns"
+        )
+
+        # Personality description
+        personality_desc = f"""
+**Agent Personality: {personality.name if personality else 'Default'}**
+- Safety Priority: {personality.safety_priority if personality else 5}/10
+- Risk Tolerance: {personality.risk_tolerance if personality else 'medium'}
+"""
+
+        prompt = f"""# TASK: Re-evaluate this street view waypoint with full context
+
+You are a walking experience evaluator analyzing **Waypoint #{waypoint_id}**.
+
+## SYSTEM 1 EVALUATION (Initial VLM Perception - Single Image Only)
+The initial evaluation saw ONLY this image without any context:
+
+**Scores (1-10 scale):**
+{json.dumps(system1_scores, indent=2)}
+
+**Initial Reasoning:**
+{json.dumps(system1_reasoning, indent=2)}
+
+---
+
+## YOUR TASK (System 2 - Image + Memory Context)
+Now re-evaluate this SAME image, but with FULL CONTEXT:
+
+### 1. SHORT-TERM MEMORY (What happened just before this)
+{stm_summary}
+
+**Key patterns in recent waypoints:**
+- Score trend: {stm_context.get('trend', 'unknown')}
+- Average of last 5 waypoints: {self._format_score_averages(stm_context.get('statistics', {}))}
+- Volatility: {stm_context.get('volatility', 'unknown')}
+
+### 2. LONG-TERM MEMORY (Similar situations from past routes)
+{ltm_summary}
+
+### 3. AGENT PERSPECTIVE
+{personality_desc}
+
+**This waypoint was triggered for System 2 reasoning because:**
+{self._explain_trigger(trigger_reason)}
+
+---
+
+## EVALUATION INSTRUCTIONS
+
+**Re-score the image considering:**
+1. **Sequential Context**: This is part of a walking journey, not an isolated moment
+2. **Cumulative Effects**: How do previous waypoints influence perception here?
+3. **Pattern Recognition**: Does this match known patterns from memory?
+4. **Agent Perspective**: How would this {personality.name if personality else 'agent'} specifically perceive this?
+5. **Predictive Factors**: What does this signal about upcoming sections?
+
+**Important Guidelines:**
+- You may KEEP System 1 scores if context doesn't change perception
+- ADJUST scores UP if context reveals hidden positives (e.g., transition to better area)
+- ADJUST scores DOWN if context reveals hidden risks (e.g., part of declining trend, cumulative stress)
+- Focus on dimensions most affected by memory/context (usually Safety and Comfort)
+- Interest and Aesthetics may be less influenced by sequential context
+
+---
+
+## OUTPUT FORMAT (JSON)
+
+```json
+{{
+  "revised_scores": {{
+    "safety": <float 1-10>,
+    "comfort": <float 1-10>,
+    "interest": <float 1-10>,
+    "aesthetics": <float 1-10>
+  }},
+
+  "adjustments": {{
+    "safety": <delta from System 1, can be 0>,
+    "comfort": <delta>,
+    "interest": <delta>,
+    "aesthetics": <delta>
+  }},
+
+  "revision_reasoning": {{
+    "safety": "<Explain: kept same / adjusted because...>",
+    "comfort": "<Why changed or stayed>",
+    "interest": "<Reasoning>",
+    "aesthetics": "<Reasoning>"
+  }},
+
+  "interpretation": "<Overall understanding of this waypoint in context>",
+
+  "memory_influence": {{
+    "stm_impact": "<How recent history affected scores: high/medium/low/none>",
+    "ltm_impact": "<How past patterns affected scores: high/medium/low/none>",
+    "personality_impact": "<How agent personality influenced perception: high/medium/low/none>",
+    "key_factors": ["<factor1>", "<factor2>"]
+  }},
+
+  "confidence": <float 0-1>,
+  "pattern_detected": "<pattern name or null>",
+  "prediction": "<What to expect in next waypoints>",
+  "significance": "<high/medium/low>"
+}
+```
+
+**CRITICAL**: Base your evaluation on what you SEE in the image, enriched by context. Don't hallucinate details not visible.
+"""
+
+        return prompt
+
+    def _format_stm_context(self, stm_context: Dict[str, Any]) -> str:
+        """Format short-term memory into human-readable summary."""
+        recent_scores = stm_context.get("recent_scores", [])
+        recent_summaries = stm_context.get("recent_summaries", [])
+        waypoint_ids = stm_context.get("waypoint_ids", [])
+
+        lines = ["**Recent waypoints (most recent last):**"]
+
+        for wid, scores, summary in zip(waypoint_ids, recent_scores, recent_summaries):
+            if scores:
+                avg = sum(scores.values()) / len(scores)
+                lines.append(f"- Waypoint {wid}: Avg={avg:.1f} | {summary}")
+
+        return "\n".join(lines)
+
+    def _format_score_averages(self, stats: Dict[str, Any]) -> str:
+        """Format score statistics into readable text."""
+        if not stats:
+            return "No statistics available"
+
+        avg = stats.get("average_scores", {})
+        return ", ".join([f"{dim}={score:.1f}" for dim, score in avg.items()])
+
+    def _format_ltm_patterns(self, patterns: Optional[List[Dict[str, Any]]]) -> str:
+        """Format long-term memory patterns into human-readable summary."""
+        if not patterns:
+            return "No relevant past patterns found"
+
+        lines = ["**Relevant patterns from past routes:**"]
+
+        for pattern in patterns[:3]:
+            pattern_name = pattern.get("pattern_type", "unknown")
+            description = pattern.get("description", "")
+            frequency = pattern.get("frequency", 0)
+
+            lines.append(f"- **{pattern_name}** (seen {frequency}x): {description}")
+
+        return "\n".join(lines)
+
+    def _explain_trigger(self, trigger_reason: TriggerReason) -> str:
+        """Explain why System 2 was triggered."""
+        explanations = {
+            TriggerReason.VISUAL_CHANGE: "Major visual change detected (pHash distance > 20)",
+            TriggerReason.SCORE_VOLATILITY: "Significant score change from previous waypoint",
+            TriggerReason.DISTANCE_MILESTONE: "Regular evaluation checkpoint (600m)",
+            TriggerReason.EXCEPTIONAL_MOMENT: "Manually flagged as exceptional",
+        }
+        return explanations.get(trigger_reason, "Unknown trigger")
 
     @staticmethod
     def _prepare_chat_endpoint(url: Optional[str]) -> Optional[str]:
