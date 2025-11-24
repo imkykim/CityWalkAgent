@@ -441,6 +441,188 @@ class ThinkingModule:
 
         return parsed
 
+    # ========================================================================
+    # Narrative generation
+    # ========================================================================
+
+    def generate_narrative_chapter(
+        self,
+        waypoint_id: int,
+        visual_description: str,
+        system1_scores: Dict[str, float],
+        system2_scores: Dict[str, float],
+        score_adjustments: Dict[str, float],
+        stm_context: Dict[str, Any],
+        narrative_context: Dict[str, Any],
+        personality: Any,
+        trigger_reason: TriggerReason,
+    ):
+        """Generate narrative chapter using LLM."""
+        from datetime import datetime
+        from src.agent.capabilities.long_term_memory import NarrativeChapter
+
+        prompt = self._build_narrative_prompt(
+            waypoint_id=waypoint_id,
+            visual_description=visual_description,
+            system1_scores=system1_scores,
+            system2_scores=system2_scores,
+            score_adjustments=score_adjustments,
+            stm_context=stm_context,
+            narrative_context=narrative_context,
+            personality=personality,
+            trigger_reason=trigger_reason,
+        )
+
+        try:
+            response = self._call_llm_api(prompt)
+            parsed = self._parse_narrative_response(response)
+
+            chapter = NarrativeChapter(
+                waypoint_id=waypoint_id,
+                chapter_number=narrative_context.get("total_chapters", 0) + 1,
+                timestamp=datetime.now().isoformat(),
+                image_path=Path(""),
+                visual_description=visual_description,
+                system1_scores=system1_scores,
+                system2_scores=system2_scores,
+                score_adjustments=score_adjustments,
+                narrative_text=parsed.get("narrative_text", ""),
+                key_observation=parsed.get("key_observation", ""),
+                emotional_tone=parsed.get("emotional_tone", "neutral"),
+                references_previous=parsed.get("references_previous", []),
+                patterns_mentioned=parsed.get("patterns_mentioned", []),
+                predictions_made=parsed.get("predictions_made"),
+            )
+
+            return chapter
+
+        except Exception as e:
+            self.logger.error(f"Narrative generation failed: {e}")
+            return NarrativeChapter(
+                waypoint_id=waypoint_id,
+                chapter_number=narrative_context.get("total_chapters", 0) + 1,
+                timestamp=datetime.now().isoformat(),
+                image_path=Path(""),
+                visual_description=visual_description,
+                system1_scores=system1_scores,
+                system2_scores=system2_scores,
+                score_adjustments=score_adjustments,
+                narrative_text="Failed to generate narrative.",
+                key_observation="Error",
+                emotional_tone="neutral",
+            )
+
+    def _build_narrative_prompt(
+        self,
+        waypoint_id: int,
+        visual_description: str,
+        system1_scores: Dict[str, float],
+        system2_scores: Dict[str, float],
+        score_adjustments: Dict[str, float],
+        stm_context: Dict[str, Any],
+        narrative_context: Dict[str, Any],
+        personality: Any,
+        trigger_reason: TriggerReason,
+    ) -> str:
+        """Build LLM prompt for narrative chapter generation."""
+
+        previous_narrative = self._format_previous_chapters(
+            narrative_context.get("recent_chapters", [])
+        )
+
+        prompt = f"""# TASK: Write the Next Chapter of a Walking Journey Narrative
+
+You are documenting a pedestrian's journey through an urban environment. You've been observing and analyzing the route, and now you need to write the next chapter of the narrative story.
+
+## Current Waypoint (ID: {waypoint_id})
+- Visual description: {visual_description}
+- Trigger reason: {self._explain_trigger(trigger_reason)}
+
+## Scores
+- System 1 (initial): {json.dumps(system1_scores)}
+- System 2 (context-aware): {json.dumps(system2_scores)}
+- Adjustments: {json.dumps(score_adjustments)}
+
+## Short-Term Memory (recent context)
+{self._format_stm_context(stm_context)}
+
+## Previous Narrative Chapters (most recent first)
+{previous_narrative}
+
+## Personality
+- Name: {personality.name if personality else 'Default'}
+- Tone preference: {getattr(personality, 'explanation_style', 'balanced')}
+
+### OUTPUT FORMAT (JSON)
+{{
+  "narrative_text": "<2-3 sentence story fragment in first person>",
+  "key_observation": "<main takeaway about this waypoint>",
+  "emotional_tone": "<optimistic|cautious|concerned|neutral>",
+  "references_previous": [<waypoint_ids you referenced>],
+  "patterns_mentioned": ["<patterns referenced>"],
+  "predictions_made": "<optional forward-looking note>"
+}}
+"""
+
+        return prompt
+
+    def _format_previous_chapters(self, chapters: List[Dict[str, Any]]) -> str:
+        """Format previous narrative chapters for the prompt."""
+        if not chapters:
+            return "No previous chapters."
+
+        lines = []
+        for ch in reversed(chapters):
+            lines.append(
+                f"- Chapter {ch.get('chapter_number')}, Waypoint {ch.get('waypoint_id')}: {ch.get('key_observation', '')}"
+            )
+        return "\n".join(lines)
+
+    def _parse_narrative_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse LLM response for narrative chapter."""
+        content = response["choices"][0]["message"]["content"]
+        json_match = re.search(r"```json\s*(\{.*?\})\s*```", content, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                raise ValueError("No JSON found in narrative response")
+
+        return json.loads(json_str)
+
+    def _call_llm_api(self, prompt: str) -> Dict[str, Any]:
+        """Lightweight helper to call LLM for narrative generation."""
+        headers = {
+            "Content-Type": "application/json",
+        }
+        if self.llm_api_key:
+            headers["Authorization"] = f"Bearer {self.llm_api_key}"
+
+        payload = {
+            "model": settings.qwen_vlm_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a vivid urban narrator. Respond with valid JSON only.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.7,
+            "max_tokens": 600,
+        }
+
+        response = requests.post(
+            self.llm_api_url,
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def _deep_dive_with_vlm(
         self,
         image_path: Path,

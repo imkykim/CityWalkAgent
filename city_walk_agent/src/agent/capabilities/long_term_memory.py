@@ -58,6 +58,30 @@ class RouteSummary:
     target_users: List[str]  # ["accessibility_focused", "scenic_priority", etc.]
 
 
+@dataclass
+class NarrativeChapter:
+    """One chapter in the progressive route narrative."""
+
+    waypoint_id: int
+    chapter_number: int
+    timestamp: str
+
+    image_path: Path
+    visual_description: str
+
+    system1_scores: Dict[str, float]
+    system2_scores: Dict[str, float]
+    score_adjustments: Dict[str, float]
+
+    narrative_text: str
+    key_observation: str
+    emotional_tone: str
+
+    references_previous: List[int] = field(default_factory=list)
+    patterns_mentioned: List[str] = field(default_factory=list)
+    predictions_made: Optional[str] = None
+
+
 class LongTermMemory:
     """Persist agent experiences with append-only JSONL storage.
 
@@ -98,6 +122,7 @@ class LongTermMemory:
         self.index_file = self.storage_dir / f"{agent_id}_index.json"
         self.moments_file = self.storage_dir / f"{agent_id}_moments.json"
         self.patterns_file = self.storage_dir / f"{agent_id}_patterns.json"
+        self.narrative_file = self.storage_dir / f"{agent_id}_narrative.jsonl"
 
         # Logger
         self.logger = get_logger(f"memory.{agent_id}")
@@ -108,6 +133,7 @@ class LongTermMemory:
         # In-memory storage for current session
         self._candidate_moments: List[KeyMoment] = []
         self._extracted_patterns: List[RoutePattern] = []
+        self.narrative_chapters: List[Dict[str, Any]] = []
 
         self.logger.info(
             "LongTermMemory initialized",
@@ -115,6 +141,9 @@ class LongTermMemory:
             storage_dir=str(self.storage_dir),
             total_experiences=self.index["total_experiences"]
         )
+
+        # Load any existing narrative
+        self._load_narrative()
 
     def store(self, experience: Dict[str, Any]) -> None:
         """Append an experience and update the index.
@@ -285,6 +314,96 @@ class LongTermMemory:
         )
 
         return statistics
+
+    # ========================================================================
+    # Narrative support
+    # ========================================================================
+
+    def add_narrative_chapter(self, chapter: NarrativeChapter) -> None:
+        """Add new chapter to progressive narrative."""
+        chapter_dict = {
+            "waypoint_id": chapter.waypoint_id,
+            "chapter_number": chapter.chapter_number,
+            "timestamp": chapter.timestamp,
+            "image_path": str(chapter.image_path),
+            "visual_description": chapter.visual_description,
+            "system1_scores": chapter.system1_scores,
+            "system2_scores": chapter.system2_scores,
+            "score_adjustments": chapter.score_adjustments,
+            "narrative_text": chapter.narrative_text,
+            "key_observation": chapter.key_observation,
+            "emotional_tone": chapter.emotional_tone,
+            "references_previous": chapter.references_previous,
+            "patterns_mentioned": chapter.patterns_mentioned,
+            "predictions_made": chapter.predictions_made,
+        }
+
+        self.narrative_chapters.append(chapter_dict)
+
+        try:
+            with open(self.narrative_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(chapter_dict) + "\n")
+
+            self.logger.debug(
+                "Narrative chapter added",
+                chapter=chapter.chapter_number,
+                waypoint=chapter.waypoint_id,
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to write narrative chapter: {e}")
+
+    def get_narrative_context(self, include_last_n: int = 3) -> Dict[str, Any]:
+        """Get recent narrative context for next chapter generation."""
+        recent_chapters = self.narrative_chapters[-include_last_n:]
+
+        return {
+            "total_chapters": len(self.narrative_chapters),
+            "recent_chapters": recent_chapters,
+            "all_waypoint_ids": [ch["waypoint_id"] for ch in self.narrative_chapters],
+            "patterns_so_far": list(
+                set(
+                    pattern
+                    for ch in self.narrative_chapters
+                    for pattern in ch.get("patterns_mentioned", [])
+                )
+            ),
+        }
+
+    def get_complete_narrative(self) -> str:
+        """Compile all chapters into complete narrative story."""
+        if not self.narrative_chapters:
+            return "No narrative chapters recorded."
+
+        lines = [
+            "# Walking Experience: A Progressive Journey",
+            "",
+            f"*Generated from {len(self.narrative_chapters)} observation points*",
+            "",
+            "---",
+            "",
+        ]
+
+        for chapter in self.narrative_chapters:
+            lines.append(
+                f"## Chapter {chapter['chapter_number']}: Waypoint {chapter['waypoint_id']}"
+            )
+            lines.append(f"*{chapter['emotional_tone'].capitalize()} tone*")
+            lines.append("")
+            lines.append(chapter["narrative_text"])
+            lines.append("")
+
+            if chapter.get("key_observation"):
+                lines.append(f"**Key Observation:** {chapter['key_observation']}")
+                lines.append("")
+
+            if chapter.get("predictions_made"):
+                lines.append(f"**Prediction:** {chapter['predictions_made']}")
+                lines.append("")
+
+            lines.append("---")
+            lines.append("")
+
+        return "\n".join(lines)
 
     # ========================================================================
     # New Methods: Key Moments and Route Summarization
@@ -1026,6 +1145,29 @@ class LongTermMemory:
                 error=str(e)
             )
             raise
+
+    # ========================================================================
+    # Narrative support
+    # ========================================================================
+
+    def _load_narrative(self) -> None:
+        """Load existing narrative chapters from disk."""
+        if not self.narrative_file.exists():
+            return
+
+        try:
+            with open(self.narrative_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        chapter_data = json.loads(line)
+                        self.narrative_chapters.append(chapter_data)
+
+            self.logger.info(
+                "Loaded existing narrative",
+                chapters=len(self.narrative_chapters)
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to load narrative: {e}")
 
     # ========================================================================
     # Future Interface Stubs (Not Yet Implemented)
