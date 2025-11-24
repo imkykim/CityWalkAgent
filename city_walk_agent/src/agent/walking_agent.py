@@ -663,7 +663,7 @@ class WalkingAgent(BaseAgent):
 
         Returns:
             Dictionary containing:
-            - analysis_results: List of WaypointAnalysis objects
+            - analysis_results: List of waypoint result dicts (System 1/2 scores)
             - thinking_results: List of ThinkingResult objects
             - long_term_memory: LongTermMemory instance
             - route_summary: RouteSummary object
@@ -752,6 +752,7 @@ class WalkingAgent(BaseAgent):
 
         thinking_results = []
         memory_manager = self.memory_manager
+        waypoint_results: List[Dict[str, Any]] = []
 
         for analysis in analysis_results:
             should_think, reason = self.cognitive.should_trigger_thinking(
@@ -769,61 +770,79 @@ class WalkingAgent(BaseAgent):
                 trigger_reason=trigger_reason,
             )
 
-            if context is None:
-                continue
+            thinking_result = None
 
-            # Ensure route metadata includes route info
-            route_meta = context.get("route_metadata", {}) or {}
-            route_meta.setdefault("route_id", route_id)
-            route_meta.setdefault("length_km", route_length_km)
+            if context is not None:
+                # Ensure route metadata includes route info
+                route_meta = context.get("route_metadata", {}) or {}
+                route_meta.setdefault("route_id", route_id)
+                route_meta.setdefault("length_km", route_length_km)
 
-            try:
-                thinking_result = self.thinking_module.think_waypoint(
-                    waypoint_id=analysis.waypoint_id,
-                    trigger_reason=context["trigger_reason"],
-                    current_image_path=context["image_path"],
-                    system1_scores=analysis.scores,
-                    system1_reasoning=analysis.reasoning,
-                    stm_context=context["stm_context"],
-                    ltm_patterns=context.get("ltm_patterns"),
-                    personality=self.personality,
-                    route_metadata=route_meta,
-                )
-
-                thinking_results.append(thinking_result)
-
-                # Update STM with System 2 revisions for sequential context
-                memory_manager.update_with_system2_result(
-                    waypoint_id=analysis.waypoint_id,
-                    thinking_result=thinking_result,
-                )
-
-                # Generate narrative chapter using updated context
                 try:
-                    narrative_context = memory_manager.episodic_ltm.get_narrative_context()
-                    visual_description = thinking_result.interpretation
-
-                    narrative_chapter = self.thinking_module.generate_narrative_chapter(
+                    thinking_result = self.thinking_module.think_waypoint(
                         waypoint_id=analysis.waypoint_id,
-                        visual_description=visual_description,
-                        system1_scores=analysis.scores,
-                        system2_scores=thinking_result.revised_scores,
-                        score_adjustments=thinking_result.score_adjustments,
-                        stm_context=context["stm_context"],
-                        narrative_context=narrative_context,
-                        personality=self.personality,
                         trigger_reason=context["trigger_reason"],
+                        current_image_path=context["image_path"],
+                        system1_scores=analysis.scores,
+                        system1_reasoning=analysis.reasoning,
+                        stm_context=context["stm_context"],
+                        ltm_patterns=context.get("ltm_patterns"),
+                        personality=self.personality,
+                        route_metadata=route_meta,
                     )
 
-                    narrative_chapter.image_path = analysis.image_path
-                    memory_manager.episodic_ltm.add_narrative_chapter(narrative_chapter)
-                except Exception as e:
-                    self.logger.warning(f"Narrative generation failed: {e}")
+                    thinking_results.append(thinking_result)
 
-            except Exception as e:
-                self.logger.warning(
-                    f"Thinking failed at waypoint {analysis.waypoint_id}: {e}"
-                )
+                    # Update STM with System 2 revisions for sequential context
+                    memory_manager.update_with_system2_result(
+                        waypoint_id=analysis.waypoint_id,
+                        thinking_result=thinking_result,
+                    )
+
+                    # Generate narrative chapter using updated context
+                    try:
+                        narrative_context = memory_manager.episodic_ltm.get_narrative_context()
+                        visual_description = thinking_result.interpretation
+
+                        narrative_chapter = self.thinking_module.generate_narrative_chapter(
+                            waypoint_id=analysis.waypoint_id,
+                            visual_description=visual_description,
+                            system1_scores=analysis.scores,
+                            system2_scores=thinking_result.revised_scores,
+                            score_adjustments=thinking_result.score_adjustments,
+                            stm_context=context["stm_context"],
+                            narrative_context=narrative_context,
+                            personality=self.personality,
+                            trigger_reason=context["trigger_reason"],
+                        )
+
+                        narrative_chapter.image_path = analysis.image_path
+                        memory_manager.episodic_ltm.add_narrative_chapter(narrative_chapter)
+                    except Exception as e:
+                        self.logger.warning(f"Narrative generation failed: {e}")
+
+                except Exception as e:
+                    self.logger.warning(
+                        f"Thinking failed at waypoint {analysis.waypoint_id}: {e}"
+                    )
+
+            waypoint_results.append(
+                {
+                    "waypoint_id": analysis.waypoint_id,
+                    "image_path": str(analysis.image_path),
+                    "gps": analysis.gps,
+                    "timestamp": analysis.timestamp,
+                    "system1_scores": analysis.scores,
+                    "system1_reasoning": analysis.reasoning,
+                    "system2_triggered": thinking_result is not None,
+                    "system2_scores": thinking_result.revised_scores if thinking_result else None,
+                    "system2_reasoning": thinking_result.revision_reasoning if thinking_result else None,
+                    "score_adjustments": thinking_result.score_adjustments if thinking_result else None,
+                    "thinking_interpretation": thinking_result.interpretation if thinking_result else None,
+                    "thinking_significance": thinking_result.significance if thinking_result else None,
+                    "memory_influence": thinking_result.memory_influence if thinking_result else None,
+                }
+            )
 
         thinking_summary = self.thinking_module.get_thinking_summary()
 
@@ -842,26 +861,29 @@ class WalkingAgent(BaseAgent):
         ltm = self.memory
 
         # Add candidate moments
-        for result in thinking_results:
-            # Find corresponding analysis
-            analysis = next(
-                (a for a in analysis_results if a.waypoint_id == result.waypoint_id),
+        for wp in waypoint_results:
+            if not wp.get("system2_triggered"):
+                continue
+
+            thinking_result = next(
+                (t for t in thinking_results if t.waypoint_id == wp["waypoint_id"]),
                 None,
             )
+            if not thinking_result:
+                continue
 
-            if analysis:
-                ltm.add_candidate_moment(
-                    waypoint_id=analysis.waypoint_id,
-                    image_path=analysis.image_path,
-                    scores=analysis.scores,
-                    summary=result.interpretation[:200],
-                    significance=result.significance,
-                    gps=analysis.gps,
-                    timestamp=analysis.timestamp,
-                    thinking_confidence=result.confidence,
-                    visual_change_detected=analysis.visual_change_detected,
-                    score_delta=None,
-                )
+            ltm.add_candidate_moment(
+                waypoint_id=wp["waypoint_id"],
+                image_path=Path(wp["image_path"]),
+                scores=wp.get("system2_scores") or wp["system1_scores"],
+                summary=thinking_result.interpretation[:200],
+                significance=thinking_result.significance,
+                gps=wp.get("gps", (0.0, 0.0)),
+                timestamp=wp.get("timestamp"),
+                thinking_confidence=thinking_result.confidence,
+                visual_change_detected=wp.get("system2_triggered", False),
+                score_delta=None,
+            )
 
         # Curate moments
         ltm.curate_moments(route_length_km=route_length_km)
@@ -869,11 +891,11 @@ class WalkingAgent(BaseAgent):
         # Extract patterns
         analysis_dicts = [
             {
-                "waypoint_id": a.waypoint_id,
-                "scores": a.scores,
+                "waypoint_id": w["waypoint_id"],
+                "scores": w.get("system2_scores") or w["system1_scores"],
                 "summary": "",
             }
-            for a in analysis_results
+            for w in waypoint_results
         ]
         thinking_history = [t.interpretation for t in thinking_results]
 
@@ -898,6 +920,9 @@ class WalkingAgent(BaseAgent):
         # ====================================================================
         # Phase 5: Save Outputs (if output_dir provided)
         # ====================================================================
+        complete_narrative = ltm.get_complete_narrative()
+        narrative_chapters = ltm.narrative_chapters
+
         if output_dir:
             import shutil
 
@@ -906,27 +931,14 @@ class WalkingAgent(BaseAgent):
 
             self.logger.info("Saving outputs", output_dir=str(output_dir))
 
-            # Save analysis results
+            # Save analysis results with dual scores when available
             analysis_file = output_dir / "analysis_results.json"
-            with open(analysis_file, "w") as f:
-                json.dump(
-                    [
-                        {
-                            "waypoint_id": a.waypoint_id,
-                            "scores": a.scores,
-                            "reasoning": a.reasoning,
-                            "visual_change": a.visual_change_detected,
-                            "phash_distance": a.phash_distance,
-                        }
-                        for a in analysis_results
-                    ],
-                    f,
-                    indent=2,
-                )
+            with open(analysis_file, "w", encoding="utf-8") as f:
+                json.dump(waypoint_results, f, indent=2)
 
             # Save thinking results
             thinking_file = output_dir / "thinking_results.json"
-            with open(thinking_file, "w") as f:
+            with open(thinking_file, "w", encoding="utf-8") as f:
                 json.dump(
                     [
                         {
@@ -944,8 +956,13 @@ class WalkingAgent(BaseAgent):
 
             # Save narrative
             narrative_file = output_dir / "narrative.md"
-            with open(narrative_file, "w") as f:
-                f.write(ltm.get_narrative())
+            with open(narrative_file, "w", encoding="utf-8") as f:
+                f.write(complete_narrative)
+
+            # Save complete narrative markdown
+            narrative_md = output_dir / "complete_narrative.md"
+            with open(narrative_md, "w", encoding="utf-8") as f:
+                f.write(complete_narrative)
 
             # Copy key images
             key_images_dir = output_dir / "key_images"
@@ -961,15 +978,18 @@ class WalkingAgent(BaseAgent):
         # Build final result
         # ====================================================================
         result = {
-            "analysis_results": analysis_results,
+            "analysis_results": waypoint_results,
             "thinking_results": thinking_results,
+            "narrative_chapters": narrative_chapters,
+            "complete_narrative": complete_narrative,
             "long_term_memory": ltm,
             "route_summary": route_summary,
             "statistics": {
                 "analysis": analysis_stats,
                 "thinking": thinking_summary,
+                "dual_system": self._compute_dual_system_statistics(waypoint_results),
                 "route_length_km": route_length_km,
-                "total_waypoints": len(analysis_results),
+                "total_waypoints": len(waypoint_results),
             },
             "route_data": {
                 "route_id": route_id,
@@ -986,3 +1006,35 @@ class WalkingAgent(BaseAgent):
         )
 
         return result
+
+    def _compute_dual_system_statistics(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Compute statistics comparing System 1 vs System 2."""
+        import statistics as stats
+
+        system2_results = [r for r in results if r.get("system2_triggered")]
+
+        if not system2_results:
+            return {
+                "total_waypoints": len(results),
+                "system2_triggered": 0,
+                "system2_trigger_rate": 0.0,
+            }
+
+        all_adjustments: List[float] = []
+        for r in system2_results:
+            adjustments = r.get("score_adjustments") or {}
+            if adjustments:
+                avg_adj = sum(adjustments.values()) / len(adjustments)
+                all_adjustments.append(avg_adj)
+
+        return {
+            "total_waypoints": len(results),
+            "system2_triggered": len(system2_results),
+            "system2_trigger_rate": len(system2_results) / len(results),
+            "avg_score_adjustment": stats.mean(all_adjustments) if all_adjustments else 0.0,
+            "max_adjustment": max(all_adjustments) if all_adjustments else 0.0,
+            "min_adjustment": min(all_adjustments) if all_adjustments else 0.0,
+            "negative_adjustments": sum(1 for adj in all_adjustments if adj < 0),
+            "positive_adjustments": sum(1 for adj in all_adjustments if adj > 0),
+            "no_change": sum(1 for adj in all_adjustments if abs(adj) < 0.1),
+        }
