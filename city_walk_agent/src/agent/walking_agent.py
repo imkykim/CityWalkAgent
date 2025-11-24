@@ -776,6 +776,28 @@ class WalkingAgent(BaseAgent):
                     thinking_result=thinking_result,
                 )
 
+                # Generate narrative chapter using updated context
+                try:
+                    narrative_context = memory_manager.episodic_ltm.get_narrative_context()
+                    visual_description = thinking_result.interpretation
+
+                    narrative_chapter = self.thinking_module.generate_narrative_chapter(
+                        waypoint_id=analysis.waypoint_id,
+                        visual_description=visual_description,
+                        system1_scores=analysis.scores,
+                        system2_scores=thinking_result.revised_scores,
+                        score_adjustments=thinking_result.score_adjustments,
+                        stm_context=context["stm_context"],
+                        narrative_context=narrative_context,
+                        personality=self.personality,
+                        trigger_reason=context["trigger_reason"],
+                    )
+
+                    narrative_chapter.image_path = analysis.image_path
+                    memory_manager.episodic_ltm.add_narrative_chapter(narrative_chapter)
+                except Exception as e:
+                    self.logger.warning(f"Narrative generation failed: {e}")
+
             except Exception as e:
                 self.logger.warning(
                     f"Thinking failed at waypoint {analysis.waypoint_id}: {e}"
