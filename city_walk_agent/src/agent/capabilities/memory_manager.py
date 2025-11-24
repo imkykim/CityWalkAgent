@@ -341,24 +341,6 @@ class MemoryManager:
         else:
             return 5.0  # Standard
 
-    def _get_system2_delta_threshold(self) -> float:
-        """Get System 2 delta threshold based on personality.
-
-        Returns:
-            Delta threshold for System 2 triggering (1.5-2.5)
-        """
-        if self.personality is None:
-            return 2.0  # Default
-
-        personality_name = self.personality.name.lower()
-
-        if "cautious" in personality_name or "safety" in personality_name:
-            return 1.5  # More aggressive triggering
-        elif "scenic" in personality_name or "explorer" in personality_name:
-            return 2.5  # Less aggressive
-        else:
-            return 2.0  # Standard
-
     # ========================================================================
     # Context Preparation for System 2
     # ========================================================================
@@ -407,8 +389,10 @@ class MemoryManager:
         if self.personality:
             personality_info = {
                 "name": self.personality.name,
-                "safety_priority": self.personality.safety_priority,
-                "risk_tolerance": self.personality.risk_tolerance,
+                "description": self.personality.description,
+                "dimension_weights": self.personality.dimension_weights,
+                "decision_thresholds": self.personality.decision_thresholds,
+                "explanation_style": self.personality.explanation_style,
             }
 
         context = {
@@ -539,11 +523,16 @@ class MemoryManager:
         waypoint_id: int,
         thinking_result: Any  # ThinkingResult
     ) -> None:
-        """Update STM with System 2 revised scores."""
+        """Update STM with System 2 revised scores.
+
+        Note: Accesses STM._memory directly as a temporary workaround.
+        TODO: Add public API to ShortTermMemory for updating items.
+        """
         self._system2_results[waypoint_id] = thinking_result
 
         if getattr(thinking_result, "revised_scores", None):
-            for item in self.stm.memory:
+            # Access internal deque (workaround - should use public API)
+            for item in self.stm._memory:
                 if item.waypoint_id == waypoint_id:
                     item.scores = thinking_result.revised_scores
                     item.summary = (
