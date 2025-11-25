@@ -65,7 +65,7 @@ class RouteVisualizer:
         self,
         figsize: Tuple[int, int] = (14, 6),
         dpi: int = 100,
-        framework_id: str = "sagai_2025",
+        framework_id: str = "streetagent_5d",
     ):
         """
         Initialize visualizer with framework-agnostic dimension support.
@@ -73,7 +73,7 @@ class RouteVisualizer:
         Args:
             figsize: Figure size in inches (width, height)
             dpi: Resolution for saved figures
-            framework_id: Evaluation framework ID to load dimensions from
+            framework_id: Evaluation framework ID to load dimensions from (default: streetagent_5d)
         """
         self.figsize = figsize
         self.dpi = dpi

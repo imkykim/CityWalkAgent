@@ -121,7 +121,7 @@ class ThinkingModule:
 
     def __init__(
         self,
-        framework_id: str = "sagai_2025",
+        framework_id: str = "streetagent_5d",
         llm_api_url: Optional[str] = None,
         llm_api_key: Optional[str] = None,
         vlm_api_url: Optional[str] = None,
@@ -134,7 +134,7 @@ class ThinkingModule:
         """Initialize thinking module with LLM/VLM configuration.
 
         Args:
-            framework_id: Evaluation framework to use (default: sagai_2025).
+            framework_id: Evaluation framework to use (default: streetagent_5d).
             llm_api_url: API URL for LLM calls (defaults to settings.qwen_vlm_api_url).
             llm_api_key: API key for LLM.
             vlm_api_url: API URL for VLM deep dives (optional).

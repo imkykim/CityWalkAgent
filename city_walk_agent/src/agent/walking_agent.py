@@ -96,7 +96,7 @@ class WalkingAgent(BaseAgent):
 
         # Store personality configuration
         self.personality = personality
-        self.framework_id = framework_id or "sagai_2025"
+        self.framework_id = framework_id or "streetagent_5d"
         self.enable_memory = enable_memory
         self._cognitive_controller: Optional[CognitiveController] = None
 

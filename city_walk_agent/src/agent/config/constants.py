@@ -99,8 +99,25 @@ FRAMEWORK_SPECIFIC_PERSONALITIES: Dict[str, Dict[str, Any]] = {
             },
             "explanation_style": "safety",
         },
-        # Add more frameworks as needed
-        # "custom_framework_6dim": {...},
+        "streetagent_5d": {
+            "name": "Safety Guardian",
+            "description": "Prioritizes pedestrian safety and functional quality",
+            "weights": {
+                "functional_quality": 2.2,    # Primary: sidewalk condition, hazards
+                "spatial_legibility": 1.5,    # Secondary: clear wayfinding = safety
+                "visual_coherence": 1.2,      # Tertiary: organized environment
+                "sensory_complexity": 0.7,    # Low: overstimulation can reduce safety awareness
+                "spatial_sequence": 0.6,      # Low: sequence less critical than function
+            },
+            "thresholds": {
+                "min_overall_score": 6.5,
+                "min_functional_quality": 7.5,  # High threshold for safety
+                "min_spatial_legibility": 7.0,
+                "max_volatility": 1.5,
+                "max_barriers": 1,
+            },
+            "explanation_style": "safety",
+        },
     },
     # Scenic-focused personalities by framework
     "scenic": {
@@ -122,6 +139,25 @@ FRAMEWORK_SPECIFIC_PERSONALITIES: Dict[str, Dict[str, Any]] = {
             },
             "explanation_style": "scenic",
         },
+        "streetagent_5d": {
+            "name": "Aesthetic Explorer",
+            "description": "Prioritizes visual beauty and sensory richness",
+            "weights": {
+                "sensory_complexity": 2.0,     # Primary: rich visual stimuli
+                "visual_coherence": 1.8,       # Secondary: harmonious composition
+                "spatial_sequence": 1.5,       # Tertiary: interesting unfolding
+                "spatial_legibility": 1.0,     # Moderate: some mystery is OK
+                "functional_quality": 1.2,     # Moderate: beauty with comfort
+            },
+            "thresholds": {
+                "min_overall_score": 6.0,
+                "min_sensory_complexity": 6.5,
+                "min_visual_coherence": 6.5,
+                "max_volatility": 2.5,
+                "max_barriers": 2,
+            },
+            "explanation_style": "scenic",
+        },
     },
     # Balanced personalities by framework
     "balanced": {
@@ -133,6 +169,23 @@ FRAMEWORK_SPECIFIC_PERSONALITIES: Dict[str, Dict[str, Any]] = {
                 "comfort": 1.0,
                 "interest": 1.0,
                 "aesthetics": 1.0,
+            },
+            "thresholds": {
+                "min_overall_score": 6.5,
+                "max_volatility": 2.0,
+                "max_barriers": 2,
+            },
+            "explanation_style": "balanced",
+        },
+        "streetagent_5d": {
+            "name": "Balanced Navigator",
+            "description": "Equal consideration across all dimensions",
+            "weights": {
+                "functional_quality": 1.0,
+                "spatial_legibility": 1.0,
+                "visual_coherence": 1.0,
+                "sensory_complexity": 1.0,
+                "spatial_sequence": 1.0,
             },
             "thresholds": {
                 "min_overall_score": 6.5,
@@ -161,6 +214,24 @@ FRAMEWORK_SPECIFIC_PERSONALITIES: Dict[str, Dict[str, Any]] = {
             },
             "explanation_style": "balanced",
         },
+        "streetagent_5d": {
+            "name": "Comfort Seeker",
+            "description": "Prioritizes ease, amenities, and smooth experience",
+            "weights": {
+                "functional_quality": 2.0,     # Primary: amenities, width, surface
+                "visual_coherence": 1.5,       # Secondary: calm, organized
+                "spatial_sequence": 1.2,       # Tertiary: gentle rhythm
+                "spatial_legibility": 1.3,     # Moderate: avoid confusion stress
+                "sensory_complexity": 0.8,     # Low: avoid overstimulation
+            },
+            "thresholds": {
+                "min_overall_score": 6.5,
+                "min_functional_quality": 7.0,
+                "max_volatility": 1.5,
+                "max_barriers": 1,
+            },
+            "explanation_style": "balanced",
+        },
     },
     # Explorer personalities by framework
     "explorer": {
@@ -181,6 +252,25 @@ FRAMEWORK_SPECIFIC_PERSONALITIES: Dict[str, Dict[str, Any]] = {
             },
             "explanation_style": "balanced",
         },
+        "streetagent_5d": {
+            "name": "Urban Explorer",
+            "description": "Seeks discovery, variety, and engaging sequences",
+            "weights": {
+                "spatial_sequence": 2.0,       # Primary: unfolding discovery
+                "sensory_complexity": 1.8,     # Secondary: richness and variety
+                "spatial_legibility": 1.0,     # Moderate: some mystery
+                "visual_coherence": 1.2,       # Moderate: too much order is boring
+                "functional_quality": 1.3,     # Moderate: needs to be walkable
+            },
+            "thresholds": {
+                "min_overall_score": 6.0,
+                "min_spatial_sequence": 6.5,
+                "min_sensory_complexity": 6.5,
+                "max_volatility": 3.0,
+                "max_barriers": 2,
+            },
+            "explanation_style": "balanced",
+        },
     },
     # Technical analysis personalities by framework
     "technical": {
@@ -192,6 +282,23 @@ FRAMEWORK_SPECIFIC_PERSONALITIES: Dict[str, Dict[str, Any]] = {
                 "comfort": 1.0,
                 "interest": 1.0,
                 "aesthetics": 1.0,
+            },
+            "thresholds": {
+                "min_overall_score": 6.5,
+                "max_volatility": 2.0,
+                "max_barriers": 2,
+            },
+            "explanation_style": "technical",
+        },
+        "streetagent_5d": {
+            "name": "Technical Analyst",
+            "description": "Comprehensive evaluation across all dimensions",
+            "weights": {
+                "functional_quality": 1.0,
+                "spatial_legibility": 1.0,
+                "visual_coherence": 1.0,
+                "sensory_complexity": 1.0,
+                "spatial_sequence": 1.0,
             },
             "thresholds": {
                 "min_overall_score": 6.5,
