@@ -53,6 +53,7 @@ DEFAULT_SCORE_ORDER: Tuple[str, ...] = tuple(DEFAULT_SCORE_COLORS.keys())
 class RouteVisualizer:
     """Visualizes evaluation scores along walking routes with trend analysis."""
 
+    # Legacy hardcoded dimensions (kept for backward compatibility)
     DIMENSIONS = {
         "safety": {"color": "#2E86AB", "label": "Safety"},
         "comfort": {"color": "#A23B72", "label": "Comfort"},
@@ -60,26 +61,71 @@ class RouteVisualizer:
         "aesthetics": {"color": "#C73E1D", "label": "Aesthetics"},
     }
 
-    def __init__(self, figsize: Tuple[int, int] = (14, 6), dpi: int = 100):
+    def __init__(
+        self,
+        figsize: Tuple[int, int] = (14, 6),
+        dpi: int = 100,
+        framework_id: str = "sagai_2025",
+    ):
         """
-        Initialize visualizer.
+        Initialize visualizer with framework-agnostic dimension support.
 
         Args:
             figsize: Figure size in inches (width, height)
             dpi: Resolution for saved figures
+            framework_id: Evaluation framework ID to load dimensions from
         """
         self.figsize = figsize
         self.dpi = dpi
+        self.framework_id = framework_id
         plt.style.use("seaborn-v0_8-darkgrid")
+
+        # Load framework and build dimension configuration
+        from src.config import load_framework
+
+        self.framework = load_framework(framework_id)
+        self.dimension_config = self._build_dimension_config_from_framework()
+
+    def _build_dimension_config_from_framework(self) -> Dict[str, Dict]:
+        """Build dimension configuration from loaded framework.
+
+        Returns:
+            Dict mapping dimension IDs to config dicts with 'color' and 'label' keys
+        """
+        config = {}
+        palette = plt.cm.tab10.colors + plt.cm.Set3.colors
+
+        for idx, dim in enumerate(self.framework["dimensions"]):
+            dim_id = dim["id"]
+
+            # Try to get color from DEFAULT_SCORE_COLORS, otherwise use palette
+            color = DEFAULT_SCORE_COLORS.get(dim_id, palette[idx % len(palette)])
+
+            config[dim_id] = {
+                "color": color,
+                "label": dim["name_en"],  # Use English name from framework
+            }
+
+        return config
 
     def _build_dim_config(
         self, dim_keys: Sequence[str], custom: Optional[Dict[str, Dict]] = None
     ) -> Dict[str, Dict]:
-        """Merge default config with dynamic dimensions."""
-        config = {
-            k: v.copy() for k, v in (custom or self.DIMENSIONS).items() if k in dim_keys
-        }
+        """Merge default config with dynamic dimensions.
 
+        Args:
+            dim_keys: Dimension IDs to include in config
+            custom: Optional custom dimension config to override defaults
+
+        Returns:
+            Dict mapping dimension IDs to config dicts with 'color' and 'label' keys
+        """
+        # Use custom config if provided, otherwise use instance dimension config
+        base_config = custom or self.dimension_config
+
+        config = {k: v.copy() for k, v in base_config.items() if k in dim_keys}
+
+        # Fill in missing dimensions with auto-generated colors
         palette = plt.cm.tab10.colors + plt.cm.Set3.colors
         for idx, dim in enumerate(dim_keys):
             if dim not in config:
@@ -87,7 +133,6 @@ class RouteVisualizer:
                 config[dim] = {"color": color, "label": dim}
             else:
                 # Ensure label and color exist
-                config.setdefault(dim, {})
                 config[dim].setdefault("color", palette[idx % len(palette)])
                 config[dim].setdefault("label", dim)
         return config

@@ -121,6 +121,7 @@ class ThinkingModule:
 
     def __init__(
         self,
+        framework_id: str = "sagai_2025",
         llm_api_url: Optional[str] = None,
         llm_api_key: Optional[str] = None,
         vlm_api_url: Optional[str] = None,
@@ -133,6 +134,7 @@ class ThinkingModule:
         """Initialize thinking module with LLM/VLM configuration.
 
         Args:
+            framework_id: Evaluation framework to use (default: sagai_2025).
             llm_api_url: API URL for LLM calls (defaults to settings.qwen_vlm_api_url).
             llm_api_key: API key for LLM.
             vlm_api_url: API URL for VLM deep dives (optional).
@@ -142,6 +144,13 @@ class ThinkingModule:
             distance_trigger_meters: Distance threshold for milestone triggers.
             score_delta_threshold: Score change threshold for volatility triggers.
         """
+        # Load framework to get dimensions
+        from src.config import load_framework
+        self.framework_id = framework_id
+        self.framework = load_framework(framework_id)
+        self.dimensions = {d["id"]: d["name_en"] for d in self.framework["dimensions"]}
+        self.dimension_ids = list(self.dimensions.keys())
+
         self.llm_api_url = self._prepare_chat_endpoint(
             llm_api_url or settings.qwen_vlm_api_url
         )
@@ -357,9 +366,16 @@ class ThinkingModule:
         waypoint_id: int,
         trigger_reason: TriggerReason,
         system1_scores: Dict[str, float],
-        error: str,
+        error: str = "VLM revision unavailable",
     ) -> ThinkingResult:
-        """Create fallback result when VLM call fails."""
+        """Create fallback result when VLM call fails - framework-agnostic."""
+
+        # Ensure all framework dimensions are present in fallback
+        fallback_scores = {
+            dim_id: system1_scores.get(dim_id, 5.0)
+            for dim_id in self.dimension_ids
+        }
+
         return ThinkingResult(
             waypoint_id=waypoint_id,
             trigger_reason=trigger_reason,
@@ -370,10 +386,11 @@ class ThinkingModule:
             recommendation="Continue with System 1 evaluation",
             confidence=0.0,
             used_vlm=False,
-            revised_scores=system1_scores.copy(),
-            score_adjustments={dim: 0.0 for dim in system1_scores.keys()},
+            revised_scores=fallback_scores,
+            score_adjustments={dim_id: 0.0 for dim_id in self.dimension_ids},
             revision_reasoning={
-                dim: "Fallback - System 2 failed" for dim in system1_scores.keys()
+                dim_id: f"{error} - kept System 1 score"
+                for dim_id in self.dimension_ids
             },
             memory_influence={},
             used_stm_context=False,
@@ -431,7 +448,10 @@ class ThinkingModule:
         return response.json()
 
     def _parse_vlm_response(self, response: Dict[str, Any]) -> Dict[str, Any]:
-        """Parse VLM API response and extract structured data."""
+        """Parse VLM API response and extract structured data.
+
+        Validates that all framework dimensions are present in the response.
+        """
         content = response["choices"][0]["message"]["content"]
         json_match = re.search(r"```json\s*(\{.*?\})\s*```", content, re.DOTALL)
         if json_match:
@@ -445,9 +465,17 @@ class ThinkingModule:
 
         parsed = json.loads(json_str)
 
+        # Validate required top-level fields
         for field in ["revised_scores", "adjustments", "revision_reasoning"]:
             if field not in parsed:
                 raise ValueError(f"Missing required field: {field}")
+
+        # Validate all framework dimensions are present
+        for dim_id in self.dimension_ids:
+            if dim_id not in parsed.get("revised_scores", {}):
+                self.logger.warning(f"Missing dimension {dim_id} in revised_scores")
+            if dim_id not in parsed.get("adjustments", {}):
+                self.logger.warning(f"Missing dimension {dim_id} in adjustments")
 
         return parsed
 
@@ -703,6 +731,60 @@ Provide 1-2 sentences of visual insight."""
             self.logger.warning(f"VLM deep dive failed: {e}")
             return f"VLM analysis unavailable: {str(e)}"
 
+    # ========================================================================
+    # Framework-Agnostic Helper Methods
+    # ========================================================================
+
+    def _generate_dimension_json_template(self) -> str:
+        """Generate JSON template for current framework dimensions.
+
+        Returns:
+            String like: {"safety": <float 1-10>, "comfort": <float 1-10>, ...}
+        """
+        fields = [f'"{dim_id}": <float 1-10>' for dim_id in self.dimension_ids]
+        return "{\n    " + ",\n    ".join(fields) + "\n  }"
+
+    def _generate_reasoning_fields(self) -> str:
+        """Generate reasoning fields for all dimensions.
+
+        Returns:
+            String like: "safety": "<Explain...>", "comfort": "<Why...>", ...
+        """
+        fields = [
+            f'"{dim_id}": "<Explain: kept same / adjusted because...>"'
+            for dim_id in self.dimension_ids
+        ]
+        return ",\n    ".join(fields)
+
+    def _format_dimension_descriptions(self) -> str:
+        """Format dimension descriptions from framework for prompt.
+
+        Returns:
+            Multi-line string with dimension descriptions
+        """
+        lines = []
+        for dim in self.framework["dimensions"]:
+            lines.append(
+                f"- **{dim['name_en']}** ({dim['id']}): {dim['description']}"
+            )
+        return "\n".join(lines)
+
+    def _get_dimension_count(self) -> int:
+        """Get number of dimensions in current framework."""
+        return len(self.dimension_ids)
+
+    def _format_system1_results(
+        self, scores: Dict[str, float], reasoning: Dict[str, str]
+    ) -> str:
+        """Format System 1 results for prompt."""
+        lines = []
+        for dim_id in self.dimension_ids:
+            score = scores.get(dim_id, 0.0)
+            reason = reasoning.get(dim_id, "No reasoning provided")
+            dim_name = self.dimensions[dim_id]
+            lines.append(f"- {dim_name}: {score:.1f}/10 - {reason}")
+        return "\n".join(lines)
+
     def _build_vlm_revision_prompt(
         self,
         waypoint_id: int,
@@ -713,7 +795,11 @@ Provide 1-2 sentences of visual insight."""
         personality: Any,
         trigger_reason: TriggerReason,
     ) -> str:
-        """Build multi-modal prompt for VLM to revise scores with memory context."""
+        """Build multi-modal prompt for VLM to revise scores with memory context.
+
+        This method dynamically generates prompts based on the framework's dimensions,
+        making it framework-agnostic.
+        """
 
         # Format STM context
         stm_summary = self._format_stm_context(stm_context)
@@ -725,32 +811,40 @@ Provide 1-2 sentences of visual insight."""
             else "No relevant past patterns"
         )
 
-        # Personality description
+        # Personality description with primary dimensions
+        from src.agent.config import get_primary_dimensions
+        primary_dims = get_primary_dimensions(personality.dimension_weights) if personality else []
         personality_desc = f"""
 **Agent Personality: {personality.name if personality else 'Default'}**
-- Safety Priority: {personality.safety_priority if personality else 5}/10
-- Risk Tolerance: {personality.risk_tolerance if personality else 'medium'}
+- Primary dimensions: {', '.join(primary_dims) if primary_dims else 'balanced across all'}
+- Decision thresholds: {personality.decision_thresholds if personality else 'default'}
 """
+
+        # NEW: Dynamic dimension info
+        dimension_descriptions = self._format_dimension_descriptions()
+        dimension_json = self._generate_dimension_json_template()
+        reasoning_fields = self._generate_reasoning_fields()
+        system1_formatted = self._format_system1_results(system1_scores, system1_reasoning)
 
         prompt = f"""# TASK: Re-evaluate this street view waypoint with full context
 
 You are a walking experience evaluator analyzing **Waypoint #{waypoint_id}**.
 
-## SYSTEM 1 EVALUATION (Initial VLM Perception - Single Image Only)
-The initial evaluation saw ONLY this image without any context:
+**Evaluation Framework: {self.framework['framework_name']}**
 
-**Scores (1-10 scale):**
-{json.dumps(system1_scores, indent=2)}
-
-**Initial Reasoning:**
-{json.dumps(system1_reasoning, indent=2)}
+This framework evaluates {self._get_dimension_count()} dimensions:
+{dimension_descriptions}
 
 ---
 
-## YOUR TASK (System 2 - Image + Memory Context)
-Now re-evaluate this SAME image, but with FULL CONTEXT:
+## CONTEXT
 
-### 1. SHORT-TERM MEMORY (What happened just before this)
+**Why System 2 was triggered**: {trigger_reason.value}
+
+**System 1 (Fast Perception) Results**:
+{system1_formatted}
+
+**Short-Term Memory (Recent Journey)**:
 {stm_summary}
 
 **Key patterns in recent waypoints:**
@@ -758,77 +852,65 @@ Now re-evaluate this SAME image, but with FULL CONTEXT:
 - Average of last 5 waypoints: {self._format_score_averages(stm_context.get('statistics', {}))}
 - Volatility: {stm_context.get('volatility', 'unknown')}
 
-### 2. LONG-TERM MEMORY (Similar situations from past routes)
+**Long-Term Memory (Past Patterns)**:
 {ltm_summary}
 
-### 3. AGENT PERSPECTIVE
 {personality_desc}
-
-**This waypoint was triggered for System 2 reasoning because:**
-{self._explain_trigger(trigger_reason)}
 
 ---
 
-## EVALUATION INSTRUCTIONS
+## YOUR TASK
 
-**Re-score the image considering:**
-1. **Sequential Context**: This is part of a walking journey, not an isolated moment
-2. **Cumulative Effects**: How do previous waypoints influence perception here?
-3. **Pattern Recognition**: Does this match known patterns from memory?
-4. **Agent Perspective**: How would this {personality.name if personality else 'agent'} specifically perceive this?
-5. **Predictive Factors**: What does this signal about upcoming sections?
+Re-evaluate this waypoint using:
+1. **System 1 baseline**: The VLM already provided initial scores
+2. **Sequential Context**: This is part of a walking journey, not an isolated moment
+3. **Cumulative Effects**: How do previous waypoints influence perception here?
+4. **Pattern Recognition**: Does this match known patterns from memory?
+5. **Agent Perspective**: How would this {personality.name if personality else 'agent'} specifically perceive this?
+6. **Predictive Factors**: What does this signal about upcoming sections?
 
 **Important Guidelines:**
 - You may KEEP System 1 scores if context doesn't change perception
 - ADJUST scores UP if context reveals hidden positives (e.g., transition to better area)
 - ADJUST scores DOWN if context reveals hidden risks (e.g., part of declining trend, cumulative stress)
-- Focus on dimensions most affected by memory/context (usually Safety and Comfort)
-- Interest and Aesthetics may be less influenced by sequential context
+- Focus on dimensions most affected by memory/context
+- Base evaluation on what you SEE in the image, enriched by context
 
 ---
 
 ## OUTPUT FORMAT (JSON)
 
 ```json
-{{
-  "revised_scores": {{
-    "safety": <float 1-10>,
-    "comfort": <float 1-10>,
-    "interest": <float 1-10>,
-    "aesthetics": <float 1-10>
-  }},
+{{{{
+  "revised_scores": {dimension_json},
 
-  "adjustments": {{
-    "safety": <delta from System 1, can be 0>,
-    "comfort": <delta>,
-    "interest": <delta>,
-    "aesthetics": <delta>
-  }},
+  "adjustments": {dimension_json},
 
-  "revision_reasoning": {{
-    "safety": "<Explain: kept same / adjusted because...>",
-    "comfort": "<Why changed or stayed>",
-    "interest": "<Reasoning>",
-    "aesthetics": "<Reasoning>"
-  }},
+  "revision_reasoning": {{{{
+    {reasoning_fields}
+  }}}},
 
   "interpretation": "<Overall understanding of this waypoint in context>",
 
-  "memory_influence": {{
+  "memory_influence": {{{{
     "stm_impact": "<How recent history affected scores: high/medium/low/none>",
     "ltm_impact": "<How past patterns affected scores: high/medium/low/none>",
     "personality_impact": "<How agent personality influenced perception: high/medium/low/none>",
     "key_factors": ["<factor1>", "<factor2>"]
-  }},
+  }}}},
 
   "confidence": <float 0-1>,
   "pattern_detected": "<pattern name or null>",
   "prediction": "<What to expect in next waypoints>",
   "significance": "<high/medium/low>"
-}}
+}}}}
 ```
 
-**CRITICAL**: Base your evaluation on what you SEE in the image, enriched by context. Don't hallucinate details not visible.
+**CRITICAL**:
+- Return ONLY valid JSON, no markdown code fences
+- Include ALL {self._get_dimension_count()} dimensions in revised_scores and adjustments
+- Adjustments can be 0 if no change needed
+- Base evaluation on what you SEE in the image, enriched by context
 """
 
         return prompt

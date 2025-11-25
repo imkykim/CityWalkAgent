@@ -383,11 +383,14 @@ class WalkingAgent(BaseAgent):
         """
         if self._thinking_module is None:
             self._thinking_module = ThinkingModule(
+                framework_id=self.framework_id,
                 distance_trigger_meters=600.0,
                 score_delta_threshold=1.5,
                 enable_vlm_deep_dive=False,
             )
-            self.logger.debug("ThinkingModule initialized")
+            self.logger.debug(
+                "ThinkingModule initialized", framework_id=self.framework_id
+            )
         return self._thinking_module
 
     @property
