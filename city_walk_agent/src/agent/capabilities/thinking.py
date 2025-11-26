@@ -330,7 +330,7 @@ class ThinkingModule:
                 personality_factor=parsed.get("memory_influence", {}).get(
                     "personality_impact", "unknown"
                 ),
-                vlm_model_used="qwen-vl-max",
+                vlm_model_used=settings.qwen_vlm_model,
                 system1_scores=system1_scores.copy(),
                 processing_time_seconds=time.time() - start_time,
             )
@@ -413,7 +413,7 @@ class ThinkingModule:
             image_data = base64.b64encode(f.read()).decode("utf-8")
 
         payload = {
-            "model": "qwen-vl-max",
+            "model": settings.qwen_vlm_model,
             "messages": [
                 {
                     "role": "user",
