@@ -1262,7 +1262,7 @@ class TestErrorHandling:
         # This should create the directory if it doesn't exist
         ltm = LongTermMemory(
             agent_id="test_agent",
-            storage_path=Path("/tmp/test_memory_nonexistent")
+            storage_dir=Path("/tmp/test_memory_nonexistent")
         )
 
         assert ltm.agent_id == "test_agent"
