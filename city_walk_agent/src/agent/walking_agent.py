@@ -19,6 +19,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from geopy.distance import geodesic
+
 from src.agent.base import AgentMetadata, AgentState, BaseAgent
 from src.agent.capabilities import (
     ActionCapability,
@@ -607,7 +609,7 @@ class WalkingAgent(BaseAgent):
                 use_route_direction=True,
                 all_around=False,
                 fov=90,
-                pitch=-5,
+                pitch=0,
                 lookahead_distance=2,
                 detect_corners=True,
                 corner_threshold=30.0,
@@ -640,6 +642,79 @@ class WalkingAgent(BaseAgent):
     # ========================================================================
     # New Memory System Method
     # ========================================================================
+
+    def _validate_and_reconstruct_waypoints(
+        self,
+        image_paths: List[Path],
+        waypoints: List[Any],
+        metadata: List[Dict[str, Any]]
+    ) -> Tuple[List[Path], List[Any], List[Dict[str, Any]]]:
+        """Validate waypoint images and reconstruct sequence for missing files.
+
+        This method checks if all waypoint image files exist. If any images are
+        missing (e.g., manually deleted for data curation), it reconstructs the
+        waypoint sequence using only valid images while preserving all GPS and
+        metadata information.
+
+        Args:
+            image_paths: List of Path objects pointing to waypoint images.
+            waypoints: List of Waypoint objects with GPS coordinates.
+            metadata: List of metadata dicts for each waypoint.
+
+        Returns:
+            Tuple of (valid_image_paths, valid_waypoints, valid_metadata)
+            containing only waypoints with existing image files.
+
+        Raises:
+            ValueError: If all waypoint images are missing.
+
+        Example:
+            Input: 100 waypoints, 2 images missing
+            Output: 98 waypoints with renumbered sequence
+            Logs: Warnings for missing files, reconstruction summary
+        """
+        total_count = len(image_paths)
+        self.logger.info("Validating waypoint images", total_waypoints=total_count)
+
+        valid_image_paths: List[Path] = []
+        valid_waypoints: List[Any] = []
+        valid_metadata: List[Dict[str, Any]] = []
+        missing_count = 0
+
+        for idx, (img_path, waypoint, meta) in enumerate(zip(image_paths, waypoints, metadata)):
+            if not img_path.exists():
+                self.logger.warning(
+                    f"Missing image file, skipping waypoint {idx}",
+                    path=str(img_path)
+                )
+                missing_count += 1
+            else:
+                valid_image_paths.append(img_path)
+                valid_waypoints.append(waypoint)
+                valid_metadata.append(meta)
+
+        # Check if all images are missing
+        if not valid_image_paths:
+            raise ValueError(
+                f"No valid waypoint images found. All {total_count} images are missing."
+            )
+
+        valid_count = len(valid_image_paths)
+
+        # Log summary if any images were missing
+        if missing_count > 0:
+            retention_rate = (valid_count / total_count) * 100
+            self.logger.warning(
+                "Waypoint sequence reconstructed",
+                original_count=total_count,
+                valid_count=valid_count,
+                missing_count=missing_count,
+                retention_rate=f"{retention_rate:.1f}%"
+            )
+        else:
+            self.logger.info("All waypoint images validated", total_count=total_count)
+
+        return valid_image_paths, valid_waypoints, valid_metadata
 
     def run_with_memory(
         self,
@@ -742,6 +817,34 @@ class WalkingAgent(BaseAgent):
             }
             for img_path, wp in zip(image_paths, waypoints)
         ]
+
+        # Validate images and reconstruct waypoint sequence
+        image_paths, waypoints, metadata = self._validate_and_reconstruct_waypoints(
+            image_paths, waypoints, metadata
+        )
+
+        # Update route data with validated waypoints
+        route_data["image_paths"] = [str(p) for p in image_paths]
+        route_data["waypoints"] = waypoints
+
+        # Recalculate route length if waypoints were removed
+        if len(waypoints) < len(route.waypoints):
+            new_distance = 0.0
+            for i in range(len(waypoints) - 1):
+                wp1 = waypoints[i]
+                wp2 = waypoints[i + 1]
+                new_distance += geodesic(
+                    (wp1.lat, wp1.lon),
+                    (wp2.lat, wp2.lon)
+                ).meters
+
+            route_length_km = new_distance / 1000.0
+
+            self.logger.info(
+                "Route metrics updated after validation",
+                valid_waypoints=len(waypoints),
+                length_km=route_length_km
+            )
 
         # ====================================================================
         # Phase 2: Continuous Analysis

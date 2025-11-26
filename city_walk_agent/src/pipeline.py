@@ -28,6 +28,7 @@ from src.utils.logging import get_logger
 @dataclass
 class PipelineResult:
     """Complete pipeline execution result"""
+
     route_id: str
     route_info: Dict[str, Any]
     evaluation_results: List[Dict[str, Any]]
@@ -57,7 +58,7 @@ class WalkingAgentPipeline:
         self,
         framework_id: str = DEFAULT_FRAMEWORK_ID,
         max_concurrent: int = DEFAULT_MAX_CONCURRENT,
-        output_dir: Optional[Path] = None
+        output_dir: Optional[Path] = None,
     ) -> None:
         """
         Initialize pipeline orchestrator.
@@ -76,14 +77,14 @@ class WalkingAgentPipeline:
             "Initializing pipeline",
             framework_id=self.framework_id,
             output_dir=str(self.output_dir),
-            max_concurrent=self.max_concurrent
+            max_concurrent=self.max_concurrent,
         )
 
         self.framework = load_framework(self.framework_id)
         self._vlm_config = VLMConfig(
             api_key=settings.qwen_vlm_api_key,
             model=settings.qwen_vlm_model,
-            api_url=settings.qwen_vlm_api_url
+            api_url=settings.qwen_vlm_api_url,
         )
 
         self._route_generator: Optional[RouteGenerator] = None
@@ -109,7 +110,7 @@ class WalkingAgentPipeline:
             self._evaluator = Evaluator(
                 vlm_config=self.vlm_config,
                 framework=self.framework,
-                max_concurrent=self.max_concurrent
+                max_concurrent=self.max_concurrent,
             )
         return self._evaluator
 
@@ -139,12 +140,12 @@ class WalkingAgentPipeline:
             self.logger.debug(
                 "Cache miss - directory exists but no route_data.json",
                 route_id=route_id,
-                cache_dir=str(cache_dir)
+                cache_dir=str(cache_dir),
             )
             return None
 
         try:
-            with open(cache_file, 'r', encoding='utf-8') as f:
+            with open(cache_file, "r", encoding="utf-8") as f:
                 cached_data = json.load(f)
 
             # Reconstruct route object from saved route file
@@ -154,7 +155,7 @@ class WalkingAgentPipeline:
                 self.logger.warning(
                     "Failed to load route object from cache",
                     route_id=route_id,
-                    error=str(e)
+                    error=str(e),
                 )
                 return None
 
@@ -172,7 +173,7 @@ class WalkingAgentPipeline:
                 "Cache hit - loaded cached route data",
                 route_id=route_id,
                 cache_file=str(cache_file),
-                num_images=len(route_data["image_paths"])
+                num_images=len(route_data["image_paths"]),
             )
 
             return route_data
@@ -182,10 +183,9 @@ class WalkingAgentPipeline:
                 "Cache read failed",
                 route_id=route_id,
                 cache_file=str(cache_file),
-                error=str(error)
+                error=str(error),
             )
             return None
-
 
     def analyze_route(
         self,
@@ -193,7 +193,7 @@ class WalkingAgentPipeline:
         end: Tuple[float, float],
         interval_meters: int = DEFAULT_SAMPLING_INTERVAL,
         route_name: Optional[str] = None,
-        collect_images: bool = True
+        collect_images: bool = True,
     ) -> PipelineResult:
         """
         Run complete analysis on a route
@@ -211,10 +211,7 @@ class WalkingAgentPipeline:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         self.logger.info(
-            "Starting route analysis",
-            start=start,
-            end=end,
-            interval=interval_meters
+            "Starting route analysis", start=start, end=end, interval=interval_meters
         )
 
         # Step 1: Generate route
@@ -234,32 +231,30 @@ class WalkingAgentPipeline:
         route_file.parent.mkdir(parents=True, exist_ok=True)
         self.route_generator.save_route(route, route_file)
 
-        self.logger.info("Route generated", route_id=route.route_id, waypoints=len(route.waypoints))
+        self.logger.info(
+            "Route generated", route_id=route.route_id, waypoints=len(route.waypoints)
+        )
 
         # Step 2: Collect images (if requested)
         if collect_images:
             self.logger.info("Collecting images")
             try:
-                image_collector = ImageCollector(
-                    api_key=settings.google_maps_api_key
-                )
+                image_collector = ImageCollector(api_key=settings.google_maps_api_key)
                 image_collector.collect_google_street_view_images_static(
                     route,
-                    use_route_direction=True,   # Walking-aligned perspectives
-                    all_around=False,           # Single forward view
+                    use_route_direction=True,  # Walking-aligned perspectives
+                    all_around=False,  # Single forward view
                     fov=90,
-                    pitch=-5,
-                    lookahead_distance=2,       # Natural corner handling
-                    detect_corners=True,        # Mark intersections
-                    corner_threshold=30.0
+                    pitch=0,
+                    lookahead_distance=2,  # Natural corner handling
+                    detect_corners=True,  # Mark intersections
+                    corner_threshold=30.0,
                 )
                 image_count = len([w for w in route.waypoints if w.image_path])
                 self.logger.info("Images collected", count=image_count)
             except Exception as error:
                 self.logger.error(
-                    "Image collection failed",
-                    route_id=route.route_id,
-                    error=str(error)
+                    "Image collection failed", route_id=route.route_id, error=str(error)
                 )
                 raise
         else:
@@ -269,10 +264,7 @@ class WalkingAgentPipeline:
         self.logger.info("Running VLM evaluation")
         evaluation_results = self.evaluator.evaluate_route(route)
 
-        self.logger.info(
-            "Evaluation complete",
-            evaluations=len(evaluation_results)
-        )
+        self.logger.info("Evaluation complete", evaluations=len(evaluation_results))
 
         # Step 4: Sequential analysis
         self.logger.info("Step 4: Running sequential analysis...")
@@ -282,7 +274,7 @@ class WalkingAgentPipeline:
         self.logger.info(
             "Sequential analysis complete",
             pattern=sequential_analysis.pattern_type,
-            barriers=len(sequential_analysis.hidden_barriers)
+            barriers=len(sequential_analysis.hidden_barriers),
         )
 
         # Step 5: Method comparison
@@ -291,18 +283,13 @@ class WalkingAgentPipeline:
         comparison = comparator.compare()
 
         self.logger.info(
-            "Method comparison complete",
-            better_method=comparison.which_method_better
+            "Method comparison complete", better_method=comparison.which_method_better
         )
 
         # Step 6: Export results
         self.logger.info("Step 6: Exporting results...")
         output_files = self._export_results(
-            route,
-            evaluation_results,
-            sequential_analysis,
-            comparison,
-            timestamp
+            route, evaluation_results, sequential_analysis, comparison, timestamp
         )
 
         # Gather statistics
@@ -310,7 +297,7 @@ class WalkingAgentPipeline:
             "vlm_stats": self.evaluator.get_statistics(),
             "route_waypoints": len(route.waypoints),
             "total_evaluations": len(evaluation_results),
-            "execution_time": timestamp
+            "execution_time": timestamp,
         }
 
         stats["cost"] = self.cost_tracker.get_summary()
@@ -321,24 +308,21 @@ class WalkingAgentPipeline:
                 "start": (route.start_lat, route.start_lon),
                 "end": (route.end_lat, route.end_lon),
                 "interval_meters": route.interval_meters,
-                "waypoints": len(route.waypoints)
+                "waypoints": len(route.waypoints),
             },
             evaluation_results=evaluation_results,
             sequential_analysis=asdict(sequential_analysis),
             method_comparison=asdict(comparison),
             statistics=stats,
             output_files=output_files,
-            timestamp=timestamp
+            timestamp=timestamp,
         )
 
         self.logger.info("Pipeline complete", route_id=route.route_id)
 
         return result
 
-    def analyze_existing_route(
-        self,
-        route_file: Path
-    ) -> PipelineResult:
+    def analyze_existing_route(self, route_file: Path) -> PipelineResult:
         """
         Analyze existing route from file
 
@@ -362,7 +346,7 @@ class WalkingAgentPipeline:
                 end=(route.end_lat, route.end_lon),
                 interval_meters=route.interval_meters,
                 route_name=route.route_name,
-                collect_images=True
+                collect_images=True,
             )
 
         # Continue with evaluation
@@ -371,7 +355,7 @@ class WalkingAgentPipeline:
             end=(route.end_lat, route.end_lon),
             interval_meters=route.interval_meters,
             route_name=route.route_name,
-            collect_images=False
+            collect_images=False,
         )
 
     def _export_results(
@@ -380,7 +364,7 @@ class WalkingAgentPipeline:
         evaluations: List[Dict[str, Any]],
         analysis: Any,
         comparison: Any,
-        timestamp: str
+        timestamp: str,
     ) -> Dict[str, Path]:
         """Export results to files"""
         output_dir = self.output_dir / f"{route.route_id}_{timestamp}"
@@ -400,7 +384,7 @@ class WalkingAgentPipeline:
             "image_paths": [w.image_path for w in route.waypoints if w.image_path],
             "timestamp": timestamp,
         }
-        with open(route_data_file, 'w', encoding='utf-8') as f:
+        with open(route_data_file, "w", encoding="utf-8") as f:
             json.dump(route_data_cache, f, indent=2, ensure_ascii=False)
         files["route_data_json"] = route_data_file
 
@@ -411,19 +395,19 @@ class WalkingAgentPipeline:
 
         # 2. Sequential analysis JSON
         analysis_file = output_dir / "sequential_analysis.json"
-        with open(analysis_file, 'w', encoding='utf-8') as f:
+        with open(analysis_file, "w", encoding="utf-8") as f:
             json.dump(asdict(analysis), f, indent=2, ensure_ascii=False)
         files["analysis_json"] = analysis_file
 
         # 3. Method comparison JSON
         comparison_file = output_dir / "method_comparison.json"
-        with open(comparison_file, 'w', encoding='utf-8') as f:
+        with open(comparison_file, "w", encoding="utf-8") as f:
             json.dump(asdict(comparison), f, indent=2, ensure_ascii=False)
         files["comparison_json"] = comparison_file
 
         # 4. Summary report
         report_file = output_dir / "summary_report.txt"
-        with open(report_file, 'w', encoding='utf-8') as f:
+        with open(report_file, "w", encoding="utf-8") as f:
             f.write(self._generate_summary_report(route, analysis, comparison))
         files["report_txt"] = report_file
 
@@ -432,10 +416,7 @@ class WalkingAgentPipeline:
         return files
 
     def _generate_summary_report(
-        self,
-        route: Any,
-        analysis: Any,
-        comparison: Any
+        self, route: Any, analysis: Any, comparison: Any
     ) -> str:
         """Generate human-readable summary report"""
         report = f"""
@@ -494,7 +475,7 @@ def quick_analyze(
     start: Tuple[float, float],
     end: Tuple[float, float],
     framework_id: str = DEFAULT_FRAMEWORK_ID,
-    interval_meters: int = DEFAULT_SAMPLING_INTERVAL
+    interval_meters: int = DEFAULT_SAMPLING_INTERVAL,
 ) -> PipelineResult:
     """
     Quick route analysis with minimal configuration

@@ -1,8 +1,32 @@
+import sys
+from pathlib import Path
+
+# When run as a script from src/utils, the script directory is sys.path[0].
+# That would shadow stdlib's logging with our src.utils.logging when matplotlib imports logging.
+if __name__ == "__main__":  # only adjust when invoked as a script
+    current_dir = Path(__file__).resolve().parent
+    if sys.path and sys.path[0] == str(current_dir):
+        sys.path.pop(0)
+        # Optionally add project root for convenience
+        project_root = current_dir.parent.parent
+        sys.path.insert(0, str(project_root))
+
 import json
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import argparse
+
+# --- Argument Parser ---
+parser = argparse.ArgumentParser(
+    description="Generate and display analysis charts for a given route."
+)
+parser.add_argument(
+    "-o", "--output", type=str, help="Path to save the output chart image."
+)
+args = parser.parse_args()
+
 
 # Load the data
 file_path = "outputs/dual_system_demo/analysis_results.json"
@@ -12,6 +36,7 @@ with open(file_path, "r") as f:
 # 2. 데이터 가공 (비교 분석용)
 records_long = []  # 박스플롯/라인차트용 (Long Format)
 records_delta = []  # 히트맵용 (변화량 계산)
+scatter_points = []  # Scatter plot 용
 
 metrics = [
     "spatial_sequence",
@@ -79,15 +104,25 @@ for item in data:
         delta_record[m] = change
     records_delta.append(delta_record)
 
+    # 2-3. Scatter plot 데이터 생성
+    if item.get("gps"):
+        scatter_points.append(
+            {
+                "lat": item["gps"][0],
+                "lon": item["gps"][1],
+                "average_score": s2_avg,
+            }
+        )
+
 # 데이터프레임 변환
 df_long = pd.DataFrame(records_long)
 df_delta = pd.DataFrame(records_delta).set_index("Waypoint ID")
 
 # 3. 시각화 설정
 sns.set_style("whitegrid")
-plt.rcParams["figure.figsize"] = (20, 12)
+plt.rcParams["figure.figsize"] = (20, 18)
 fig = plt.figure()
-gs = fig.add_gridspec(2, 2)  # 2x2 그리드 레이아웃
+gs = fig.add_gridspec(3, 2)  # 3x2 그리드 레이아웃
 
 # --- 차트 1: 평균 점수 트렌드 비교 (Line Chart) ---
 ax1 = fig.add_subplot(gs[0, 0])
@@ -159,5 +194,50 @@ ax3.set_title(
 )
 ax3.set_xlabel("Waypoint ID")
 
+# --- 차트 4: GPS 경로 스캐터 플롯 (Route Scatter Plot) ---
+ax4 = fig.add_subplot(gs[2, :])
+if scatter_points:
+    lats = [p["lat"] for p in scatter_points]
+    lons = [p["lon"] for p in scatter_points]
+    scores = [p["average_score"] for p in scatter_points]
+
+    scatter = ax4.scatter(
+        lons,
+        lats,
+        c=scores,
+        cmap="viridis",
+        s=50,
+        vmin=min(scores) if scores else 0,
+        vmax=max(scores) if scores else 10,
+        alpha=0.8,
+    )
+    cbar = plt.colorbar(scatter, ax=ax4, shrink=0.8)
+    cbar.set_label("Average Score", fontsize=11, fontweight="bold")
+    ax4.set_xlabel("Longitude", fontsize=11, fontweight="bold")
+    ax4.set_ylabel("Latitude", fontsize=11, fontweight="bold")
+    ax4.set_title(
+        "Route Scatter Plot with Average Score", fontsize=13, fontweight="bold", pad=15
+    )
+    ax4.set_aspect("equal", adjustable="box")
+    ax4.tick_params(axis="x", rotation=45)
+else:
+    ax4.text(
+        0.5,
+        0.5,
+        "No GPS data available for scatter plot",
+        ha="center",
+        va="center",
+        fontsize=12,
+    )
+    ax4.set_title(
+        "Route Scatter Plot with Average Score", fontsize=13, fontweight="bold", pad=15
+    )
+
 plt.tight_layout()
+
+# Save the figure if an output path is provided
+if args.output:
+    plt.savefig(args.output, dpi=300, bbox_inches="tight")
+    print(f"Chart saved to {args.output}")
+
 plt.show()
