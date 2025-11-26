@@ -978,6 +978,43 @@ class WalkingAgent(BaseAgent):
             with open(analysis_file, "w", encoding="utf-8") as f:
                 json.dump(waypoint_results, f, indent=2)
 
+            # Save System 1 only results
+            system1_results = [
+                {
+                    "waypoint_id": wp["waypoint_id"],
+                    "image_path": wp["image_path"],
+                    "gps": wp["gps"],
+                    "timestamp": wp["timestamp"],
+                    "scores": wp["system1_scores"],
+                    "reasoning": wp["system1_reasoning"],
+                }
+                for wp in waypoint_results
+            ]
+            system1_file = output_dir / "analysis_results_system1.json"
+            with open(system1_file, "w", encoding="utf-8") as f:
+                json.dump(system1_results, f, indent=2)
+
+            # Save System 2 only results (only waypoints where system2 was triggered)
+            system2_results = [
+                {
+                    "waypoint_id": wp["waypoint_id"],
+                    "image_path": wp["image_path"],
+                    "gps": wp["gps"],
+                    "timestamp": wp["timestamp"],
+                    "scores": wp["system2_scores"],
+                    "reasoning": wp["system2_reasoning"],
+                    "score_adjustments": wp["score_adjustments"],
+                    "interpretation": wp["thinking_interpretation"],
+                    "significance": wp["thinking_significance"],
+                    "memory_influence": wp["memory_influence"],
+                }
+                for wp in waypoint_results
+                if wp["system2_triggered"]
+            ]
+            system2_file = output_dir / "analysis_results_system2.json"
+            with open(system2_file, "w", encoding="utf-8") as f:
+                json.dump(system2_results, f, indent=2)
+
             # Save thinking results
             thinking_file = output_dir / "thinking_results.json"
             with open(thinking_file, "w", encoding="utf-8") as f:
@@ -1014,7 +1051,12 @@ class WalkingAgent(BaseAgent):
                 if img_path.exists():
                     shutil.copy2(img_path, key_images_dir / img_path.name)
 
-            self.logger.info("Outputs saved", output_dir=str(output_dir))
+            self.logger.info(
+                "Outputs saved",
+                output_dir=str(output_dir),
+                system1_waypoints=len(system1_results),
+                system2_waypoints=len(system2_results),
+            )
 
         # ====================================================================
         # Build final result

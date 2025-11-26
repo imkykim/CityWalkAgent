@@ -88,7 +88,21 @@ class RouteVisualizer:
         self.figsize = figsize
         self.dpi = dpi
         self.framework_id = framework_id
-        plt.style.use("seaborn-v0_8-darkgrid")
+
+        # Use clean white background style
+        plt.style.use("default")
+        plt.rcParams.update(
+            {
+                "figure.facecolor": "white",
+                "axes.facecolor": "white",
+                "axes.grid": True,
+                "grid.alpha": 0.3,
+                "grid.linewidth": 0.5,
+                "grid.linestyle": ":",
+                "axes.edgecolor": "#cccccc",
+                "axes.linewidth": 0.8,
+            }
+        )
 
         # Load framework and build dimension configuration
         from src.config import load_framework
@@ -240,10 +254,10 @@ class RouteVisualizer:
                 x,
                 score_list,
                 marker="o",
-                markersize=4,
-                linewidth=1.5,
+                markersize=3.5,
+                linewidth=1.2,
                 color=config["color"],
-                alpha=0.7,
+                alpha=0.8,
                 label=config["label"],
             )
 
@@ -257,9 +271,9 @@ class RouteVisualizer:
                 x,
                 overall_avg,
                 linestyle="--",
-                linewidth=2.5,
-                color="#000000",
-                alpha=0.8,
+                linewidth=1.8,
+                color="#333333",
+                alpha=0.9,
                 label="Overall Average",
                 zorder=10,
             )
@@ -269,7 +283,6 @@ class RouteVisualizer:
         ax.set_ylabel("Score", fontsize=11, fontweight="bold")
         ax.set_title(title, fontsize=13, fontweight="bold", pad=15)
         ax.set_ylim(0, 10.5)
-        ax.grid(True, alpha=0.3, linestyle=":", linewidth=0.5)
 
         # Set x-ticks with rotation for readability
         tick_step = max(1, n_points // 20)  # Show ~20 labels max
@@ -409,7 +422,6 @@ class RouteVisualizer:
             ax.set_xlabel("Waypoint ID", fontsize=10)
             ax.set_ylabel("Score", fontsize=10)
             ax.set_ylim(0, 10.5)
-            ax.grid(True, alpha=0.3)
             ax.legend(loc="best", fontsize=9)
 
             # Simplified x-ticks
@@ -491,6 +503,63 @@ class RouteVisualizer:
 
         return fig
 
+    def plot_route_scatter(
+        self,
+        data_points: List[Dict[str, float]],
+        title: str = "Route Scatter Plot with Average Score",
+        save_path: Optional[Path] = None,
+    ) -> plt.Figure:
+        """
+        Create a scatter plot of a route, with GPS path colored by average score.
+
+        Args:
+            data_points: List of dictionaries, each with 'lat', 'lon', and 'average_score'.
+            title: Plot title.
+            save_path: Optional path to save the figure.
+
+        Returns:
+            Matplotlib figure object.
+        """
+        if not data_points:
+            raise ValueError("No data points provided for scatter plot.")
+
+        lats = [p["lat"] for p in data_points]
+        lons = [p["lon"] for p in data_points]
+        scores = [p["average_score"] for p in data_points]
+
+        fig, ax = plt.subplots(figsize=(10, 10), dpi=self.dpi)
+
+        # Create scatter plot
+        scatter = ax.scatter(
+            lons,
+            lats,
+            c=scores,
+            cmap="viridis",
+            s=50,
+            vmin=0,
+            vmax=10,
+            alpha=0.8,
+        )
+
+        # Add a color bar
+        cbar = plt.colorbar(scatter, ax=ax, shrink=0.8)
+        cbar.set_label("Average Score", fontsize=11, fontweight="bold")
+
+        # Formatting
+        ax.set_xlabel("Longitude", fontsize=11, fontweight="bold")
+        ax.set_ylabel("Latitude", fontsize=11, fontweight="bold")
+        ax.set_title(title, fontsize=13, fontweight="bold", pad=15)
+        ax.set_aspect("equal", adjustable="box")
+        ax.tick_params(axis="x", rotation=45)
+
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
+            print(f"Saved scatter plot to {save_path}")
+
+        return fig
+
     def plot_dual_system_comparison(
         self,
         waypoint_results: List[Dict[str, Any]],
@@ -545,10 +614,10 @@ class RouteVisualizer:
                 x,
                 system1_scores[dim_key],
                 marker="o",
-                markersize=4,
-                linewidth=1.5,
+                markersize=3.5,
+                linewidth=1.2,
                 color=config["color"],
-                alpha=0.5,
+                alpha=0.6,
                 label="System 1 (Raw VLM)",
                 linestyle="--",
             )
@@ -557,8 +626,8 @@ class RouteVisualizer:
                 x,
                 system2_scores[dim_key],
                 marker="s",
-                markersize=5,
-                linewidth=2,
+                markersize=4,
+                linewidth=1.5,
                 color=config["color"],
                 alpha=0.9,
                 label="System 2 (Context)",
@@ -599,7 +668,6 @@ class RouteVisualizer:
             ax.set_xlabel("Waypoint ID", fontsize=10)
             ax.set_ylabel("Score", fontsize=10)
             ax.set_ylim(0, 10.5)
-            ax.grid(True, alpha=0.3)
             ax.legend(loc="best", fontsize=9)
 
             tick_step = max(1, len(waypoint_ids) // 10)
@@ -748,9 +816,11 @@ class RouteVisualizer:
                 waypoint_ids,
                 scores,
                 marker="o",
+                markersize=3.5,
                 label=config["label"],
-                linewidth=2,
+                linewidth=1.2,
                 color=config.get("color"),
+                alpha=0.8,
             )
 
         if narrative_chapters:
@@ -771,7 +841,6 @@ class RouteVisualizer:
         )
         ax_scores.set_ylabel("Score", fontsize=11)
         ax_scores.legend(loc="best")
-        ax_scores.grid(True, alpha=0.3)
         ax_scores.set_ylim(0, 10.5)
 
         ax_narrative.set_xlim(0, len(waypoint_ids))
@@ -791,7 +860,9 @@ class RouteVisualizer:
                     "cautious": "#F59E0B",
                     "concerned": "#EF4444",
                 }
-                color = tone_colors.get(chapter.get("emotional_tone", "neutral"), "#6B7280")
+                color = tone_colors.get(
+                    chapter.get("emotional_tone", "neutral"), "#6B7280"
+                )
 
                 ax_narrative.text(
                     x_pos + 1,
@@ -805,14 +876,15 @@ class RouteVisualizer:
             ax_narrative.set_ylim(0, 1)
             ax_narrative.axis("off")
             ax_narrative.text(
-                0.5, 0.5,
+                0.5,
+                0.5,
                 "No narrative chapters available",
                 transform=ax_narrative.transAxes,
                 fontsize=12,
                 ha="center",
                 va="center",
                 style="italic",
-                color="gray"
+                color="gray",
             )
 
         plt.tight_layout()
@@ -960,7 +1032,7 @@ class RouteVisualizer:
             ax.set_yticklabels(["2", "4", "6", "8", "10"], fontsize=8, alpha=0.7)
 
             # Add grid
-            ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.7)
+            ax.grid(True, linestyle=":", linewidth=0.4, alpha=0.3)
 
             # Add title
             phash_distance = get(analysis, "phash_distance", None)
@@ -1039,7 +1111,7 @@ class RouteVisualizer:
             ax.set_ylim(0, 10)
             ax.set_yticks([2, 4, 6, 8, 10])
             ax.set_yticklabels(["2", "4", "6", "8", "10"], fontsize=8, alpha=0.7)
-            ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.7)
+            ax.grid(True, linestyle=":", linewidth=0.4, alpha=0.3)
             ax.set_title(label, fontsize=13, fontweight="bold", pad=20)
             fig.savefig(path, dpi=self.dpi, bbox_inches="tight")
             plt.close(fig)
@@ -1073,7 +1145,7 @@ class RouteVisualizer:
             ax.set_ylim(0, 10)
             ax.set_yticks([2, 4, 6, 8, 10])
             ax.set_yticklabels(["2", "4", "6", "8", "10"], fontsize=8, alpha=0.7)
-            ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.7)
+            ax.grid(True, linestyle=":", linewidth=0.4, alpha=0.3)
             ax.set_title("System 1 vs System 2", fontsize=13, fontweight="bold", pad=20)
             ax.legend(loc="upper right", bbox_to_anchor=(1.25, 1.05))
             fig.savefig(path, dpi=self.dpi, bbox_inches="tight")
@@ -1233,12 +1305,9 @@ def plot_dual_system_analysis(
 
     # Get indices where System 2 was triggered
     system2_triggered_indices = [
-        i for i, r in enumerate(waypoint_results)
-        if r.get("system2_triggered", False)
+        i for i, r in enumerate(waypoint_results) if r.get("system2_triggered", False)
     ]
-    system2_triggered_waypoints = [
-        waypoint_ids[i] for i in system2_triggered_indices
-    ]
+    system2_triggered_waypoints = [waypoint_ids[i] for i in system2_triggered_indices]
 
     system1_scores: Dict[str, List[float]] = {}
     for dim in dim_keys:
@@ -1448,7 +1517,6 @@ def plot_analysis_results(
     ax.set_ylim(0, 10.5)
     ax.set_yticks(range(0, 11, 1))
     ax.set_axisbelow(True)
-    ax.grid(True, linewidth=0.3, alpha=0.25, color="#CFCFCF")
     for spine in ("left", "bottom"):
         ax.spines[spine].set_linewidth(1.2)
         ax.spines[spine].set_color("#1F2933")
