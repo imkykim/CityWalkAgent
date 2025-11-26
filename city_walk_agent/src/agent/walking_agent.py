@@ -29,6 +29,7 @@ from src.agent.capabilities import (
     ShortTermMemory,
     ThinkingCapability,
     ThinkingModule,
+    TriggerReason,
 )
 from src.agent.cognitive_controller import CognitiveController
 from src.agent.config import AgentPersonality, get_preset
@@ -172,12 +173,14 @@ class WalkingAgent(BaseAgent):
         *,
         route_folder: Optional[Union[str, Path]] = None,
         metadata_filename: str = "collection_metadata.json",
-        **kwargs
+        **kwargs,
     ) -> Dict[str, Any]:
         """Run the agent either by generating a route or from a pre-collected folder."""
         if route_folder is not None:
             if (start is not None) or (end is not None):
-                raise ValueError("Provide either start/end or route_folder, but not both.")
+                raise ValueError(
+                    "Provide either start/end or route_folder, but not both."
+                )
 
             return self.run_from_folder(
                 route_folder=route_folder,
@@ -186,7 +189,9 @@ class WalkingAgent(BaseAgent):
             )
 
         if start is None or end is None:
-            raise ValueError("Both start and end must be provided when route_folder is not supplied.")
+            raise ValueError(
+                "Both start and end must be provided when route_folder is not supplied."
+            )
 
         return super().run(start=start, end=end, **kwargs)
 
@@ -357,7 +362,9 @@ class WalkingAgent(BaseAgent):
             from src.analysis import ContinuousAnalyzer
 
             self._continuous_analyzer = ContinuousAnalyzer(
-                framework_id=self.framework_id, context_window=3, adaptive_threshold=True
+                framework_id=self.framework_id,
+                context_window=3,
+                adaptive_threshold=True,
             )
             self.logger.debug("ContinuousAnalyzer initialized")
         return self._continuous_analyzer
@@ -401,19 +408,17 @@ class WalkingAgent(BaseAgent):
             MemoryManager instance configured with agent attributes
         """
         if self._memory_manager is None:
-            self._memory_manager = MemoryManager(
-                agent_id=self.metadata.agent_id
-            )
+            self._memory_manager = MemoryManager(agent_id=self.metadata.agent_id)
 
             # Set agent attributes
             self._memory_manager.set_agent_attributes(
                 personality=self.personality,
                 profile={
-                    'agent_id': self.metadata.agent_id,
-                    'name': self.metadata.name,
-                    'goal': self.metadata.primary_goal
+                    "agent_id": self.metadata.agent_id,
+                    "name": self.metadata.name,
+                    "goal": self.metadata.primary_goal,
                 },
-                status={'mode': 'active'}
+                status={"mode": "active"},
             )
 
             self.logger.debug("MemoryManager initialized")
@@ -458,14 +463,14 @@ class WalkingAgent(BaseAgent):
                     "Processing waypoint",
                     waypoint_index=idx,
                     total=len(waypoints),
-                    location=(waypoint.lat, waypoint.lon)
+                    location=(waypoint.lat, waypoint.lon),
                 )
 
             # Final position is the last waypoint
             self.logger.debug(
                 "Position tracking complete",
                 final_waypoint=self.state.waypoint_index,
-                total_waypoints=len(waypoints)
+                total_waypoints=len(waypoints),
             )
 
         # Use ObservationCapability to evaluate route
@@ -533,10 +538,7 @@ class WalkingAgent(BaseAgent):
         return self.actor.execute(decision)
 
     def _get_route_data(
-        self,
-        start: Tuple[float, float],
-        end: Tuple[float, float],
-        **kwargs
+        self, start: Tuple[float, float], end: Tuple[float, float], **kwargs
     ) -> Dict[str, Any]:
         """Get route data using the pipeline.
 
@@ -608,7 +610,7 @@ class WalkingAgent(BaseAgent):
                 pitch=-5,
                 lookahead_distance=2,
                 detect_corners=True,
-                corner_threshold=30.0
+                corner_threshold=30.0,
             )
             image_paths = [
                 Path(result["image_path"])
@@ -701,11 +703,23 @@ class WalkingAgent(BaseAgent):
         # ====================================================================
         self.logger.debug("Phase 1: Collecting route data")
 
-        route_data = self.get_route_data(start, end, interval=interval)
+        route_data = self._get_route_data(start, end, interval=interval)
         route_id = route_data["route_id"]
         route = route_data["route"]
         image_paths = [Path(p) for p in route_data["image_paths"]]
         waypoints = route_data["waypoints"]
+
+        # Ensure images and metadata align
+        if len(image_paths) != len(waypoints):
+            min_len = min(len(image_paths), len(waypoints))
+            self.logger.warning(
+                "Image/metadata count mismatch; trimming to align",
+                images=len(image_paths),
+                waypoints=len(waypoints),
+                used=min_len,
+            )
+            image_paths = image_paths[:min_len]
+            waypoints = waypoints[:min_len]
 
         # Calculate route length
         route_length_km = route.total_distance / 1000.0
@@ -763,7 +777,11 @@ class WalkingAgent(BaseAgent):
                 force=analysis.waypoint_id == 0,
             )
 
-            trigger_reason = TriggerReason.VISUAL_CHANGE if reason == "visual_change" else TriggerReason.EXCEPTIONAL_MOMENT
+            trigger_reason = (
+                TriggerReason.VISUAL_CHANGE
+                if reason == "visual_change"
+                else TriggerReason.EXCEPTIONAL_MOMENT
+            )
 
             # Process waypoint through memory manager (attention gate + STM)
             context = memory_manager.process_waypoint(
@@ -803,23 +821,29 @@ class WalkingAgent(BaseAgent):
 
                     # Generate narrative chapter using updated context
                     try:
-                        narrative_context = memory_manager.episodic_ltm.get_narrative_context()
+                        narrative_context = (
+                            memory_manager.episodic_ltm.get_narrative_context()
+                        )
                         visual_description = thinking_result.interpretation
 
-                        narrative_chapter = self.thinking_module.generate_narrative_chapter(
-                            waypoint_id=analysis.waypoint_id,
-                            visual_description=visual_description,
-                            system1_scores=analysis.scores,
-                            system2_scores=thinking_result.revised_scores,
-                            score_adjustments=thinking_result.score_adjustments,
-                            stm_context=context["stm_context"],
-                            narrative_context=narrative_context,
-                            personality=self.personality,
-                            trigger_reason=context["trigger_reason"],
+                        narrative_chapter = (
+                            self.thinking_module.generate_narrative_chapter(
+                                waypoint_id=analysis.waypoint_id,
+                                visual_description=visual_description,
+                                system1_scores=analysis.scores,
+                                system2_scores=thinking_result.revised_scores,
+                                score_adjustments=thinking_result.score_adjustments,
+                                stm_context=context["stm_context"],
+                                narrative_context=narrative_context,
+                                personality=self.personality,
+                                trigger_reason=context["trigger_reason"],
+                            )
                         )
 
                         narrative_chapter.image_path = analysis.image_path
-                        memory_manager.episodic_ltm.add_narrative_chapter(narrative_chapter)
+                        memory_manager.episodic_ltm.add_narrative_chapter(
+                            narrative_chapter
+                        )
                     except Exception as e:
                         self.logger.warning(f"Narrative generation failed: {e}")
 
@@ -828,21 +852,37 @@ class WalkingAgent(BaseAgent):
                         f"Thinking failed at waypoint {analysis.waypoint_id}: {e}"
                     )
 
+            ts_value = analysis.timestamp
+            if hasattr(ts_value, "isoformat"):
+                ts_value = ts_value.isoformat()
+
             waypoint_results.append(
                 {
                     "waypoint_id": analysis.waypoint_id,
                     "image_path": str(analysis.image_path),
                     "gps": analysis.gps,
-                    "timestamp": analysis.timestamp,
+                    "timestamp": ts_value,
                     "system1_scores": analysis.scores,
                     "system1_reasoning": analysis.reasoning,
                     "system2_triggered": thinking_result is not None,
-                    "system2_scores": thinking_result.revised_scores if thinking_result else None,
-                    "system2_reasoning": thinking_result.revision_reasoning if thinking_result else None,
-                    "score_adjustments": thinking_result.score_adjustments if thinking_result else None,
-                    "thinking_interpretation": thinking_result.interpretation if thinking_result else None,
-                    "thinking_significance": thinking_result.significance if thinking_result else None,
-                    "memory_influence": thinking_result.memory_influence if thinking_result else None,
+                    "system2_scores": (
+                        thinking_result.revised_scores if thinking_result else None
+                    ),
+                    "system2_reasoning": (
+                        thinking_result.revision_reasoning if thinking_result else None
+                    ),
+                    "score_adjustments": (
+                        thinking_result.score_adjustments if thinking_result else None
+                    ),
+                    "thinking_interpretation": (
+                        thinking_result.interpretation if thinking_result else None
+                    ),
+                    "thinking_significance": (
+                        thinking_result.significance if thinking_result else None
+                    ),
+                    "memory_influence": (
+                        thinking_result.memory_influence if thinking_result else None
+                    ),
                 }
             )
 
@@ -1009,7 +1049,9 @@ class WalkingAgent(BaseAgent):
 
         return result
 
-    def _compute_dual_system_statistics(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _compute_dual_system_statistics(
+        self, results: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """Compute statistics comparing System 1 vs System 2."""
         import statistics as stats
 
@@ -1033,7 +1075,9 @@ class WalkingAgent(BaseAgent):
             "total_waypoints": len(results),
             "system2_triggered": len(system2_results),
             "system2_trigger_rate": len(system2_results) / len(results),
-            "avg_score_adjustment": stats.mean(all_adjustments) if all_adjustments else 0.0,
+            "avg_score_adjustment": (
+                stats.mean(all_adjustments) if all_adjustments else 0.0
+            ),
             "max_adjustment": max(all_adjustments) if all_adjustments else 0.0,
             "min_adjustment": min(all_adjustments) if all_adjustments else 0.0,
             "negative_adjustments": sum(1 for adj in all_adjustments if adj < 0),
