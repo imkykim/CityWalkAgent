@@ -109,6 +109,12 @@ def main() -> None:
         default="streetagent_5d",
         help="Framework id to use for agent (when running) and visualization labels/colors.",
     )
+    parser.add_argument(
+        "--route-folder",
+        type=Path,
+        help="Path to existing route images folder (e.g., data/images/singapore/). "
+        "If provided, the agent will analyze these images instead of generating new ones.",
+    )
     args = parser.parse_args()
 
     # Configuration
@@ -117,6 +123,7 @@ def main() -> None:
     interval = 12  # meters
     output_dir = args.output_dir
     framework_id = args.framework_id
+    route_folder = args.route_folder
 
     if args.visualize_only:
         logger.info(
@@ -125,10 +132,6 @@ def main() -> None:
         )
         result = _load_existing_results(output_dir)
     else:
-        logger.info("Starting dual-system demo")
-        logger.info(f"Route: {start} → {end}")
-        logger.info(f"Interval: {interval}m")
-
         # Initialize agent
         agent = WalkingAgent.from_preset(
             preset_name="safety",  # personality
@@ -137,13 +140,29 @@ def main() -> None:
         agent.cognitive.phash_threshold = 30
         agent.continuous_analyzer.multi_image_threshold = 30
         agent.continuous_analyzer.enable_multi_image = True
-        # Run analysis with memory
-        result = agent.run_with_memory(
-            start=start,
-            end=end,
-            interval=interval,
-            output_dir=output_dir,
-        )
+
+        if route_folder:
+            # Run with existing route images
+            logger.info("Starting dual-system demo with existing route images")
+            logger.info(f"Route folder: {route_folder}")
+
+            result = agent.run_with_memory_from_folder(
+                route_folder=route_folder,
+                output_dir=output_dir,
+            )
+        else:
+            # Generate new route
+            logger.info("Starting dual-system demo")
+            logger.info(f"Route: {start} → {end}")
+            logger.info(f"Interval: {interval}m")
+
+            # Run analysis with memory
+            result = agent.run_with_memory(
+                start=start,
+                end=end,
+                interval=interval,
+                output_dir=output_dir,
+            )
 
         # Print statistics
         stats = result.get("statistics", {})

@@ -37,6 +37,7 @@ from src.agent.cognitive_controller import CognitiveController
 from src.agent.config import AgentPersonality, get_preset
 from src.pipeline import WalkingAgentPipeline
 from src.config import settings
+from src.utils.data_models import Route, Waypoint
 from src.utils.logging import get_logger
 
 
@@ -232,22 +233,46 @@ class WalkingAgent(BaseAgent):
         for entry in waypoint_entries:
             sequence_id = entry.get("waypoint_id", len(resolved_waypoints))
 
+            # Resolve image path - try multiple strategies
             image_path = entry.get("image_path")
-            image_candidate: Optional[Path]
+            image_candidate: Optional[Path] = None
+
+            # Strategy 1: If metadata provides a path, try it
             if image_path:
-                image_candidate = Path(image_path)
-                if not image_candidate.is_absolute():
-                    image_candidate = folder_path / image_candidate
-            else:
+                candidate = Path(image_path)
+
+                # If it's absolute, check if it exists
+                if candidate.is_absolute():
+                    if candidate.exists():
+                        image_candidate = candidate
+                    else:
+                        # Absolute path doesn't exist, try using just the filename
+                        # in the current folder (images may have been moved)
+                        image_candidate = folder_path / candidate.name
+                else:
+                    # Relative path - resolve relative to folder_path
+                    image_candidate = folder_path / candidate
+
+            # Strategy 2: If still not found, look for waypoint pattern in folder
+            if image_candidate is None or not image_candidate.exists():
+                # Try pattern: waypoint_NNN_*.jpg
+                pattern_candidates = list(folder_path.glob(f"waypoint_{sequence_id:03d}_*.jpg"))
+                if pattern_candidates:
+                    image_candidate = pattern_candidates[0]
+
+            # Strategy 3: Look in waypoint subdirectory
+            if image_candidate is None or not image_candidate.exists():
                 waypoint_dir = folder_path / f"waypoint_{sequence_id:03d}"
                 if waypoint_dir.is_dir():
-                    image_candidate = next(waypoint_dir.glob("*.jpg"), None)
-                else:
-                    image_candidate = None
+                    jpg_files = list(waypoint_dir.glob("*.jpg"))
+                    if jpg_files:
+                        image_candidate = jpg_files[0]
 
+            # Final check
             if image_candidate is None or not image_candidate.exists():
                 raise FileNotFoundError(
-                    f"Could not locate image for waypoint {sequence_id} in {folder_path}"
+                    f"Could not locate image for waypoint {sequence_id} in {folder_path}. "
+                    f"Expected pattern: waypoint_{sequence_id:03d}_*.jpg"
                 )
 
             image_str = str(image_candidate.resolve())
@@ -1182,6 +1207,533 @@ class WalkingAgent(BaseAgent):
                 "route_id": route_id,
                 "start": start,
                 "end": end,
+                "interval": interval,
+            },
+        }
+
+        self.logger.info(
+            "Memory pipeline complete",
+            route_id=route_id,
+            recommendation=route_summary.overall_recommendation,
+        )
+
+        return result
+
+    def run_with_memory_from_folder(
+        self,
+        route_folder: Union[str, Path],
+        *,
+        metadata_filename: str = "collection_metadata.json",
+        output_dir: Optional[Path] = None,
+    ) -> Dict[str, Any]:
+        """Run memory pipeline using pre-existing folder of route imagery.
+
+        This method loads waypoint images and metadata from an existing route folder
+        and processes them through the full memory system (continuous analysis,
+        short-term memory, thinking module, and long-term memory).
+
+        Args:
+            route_folder: Path to folder containing waypoint images and metadata.
+            metadata_filename: Name of the JSON metadata file (default: "collection_metadata.json").
+            output_dir: Optional directory to save memory artifacts.
+
+        Returns:
+            Dictionary containing analysis results, thinking results, narrative, etc.
+            Same format as run_with_memory().
+
+        Example:
+            ```python
+            agent = WalkingAgent.from_preset("safety", "streetagent_5d")
+            result = agent.run_with_memory_from_folder(
+                route_folder="data/images/singapore/",
+                output_dir=Path("outputs/singapore_analysis")
+            )
+            ```
+        """
+        folder_path = Path(route_folder).expanduser().resolve()
+        if not folder_path.is_dir():
+            raise FileNotFoundError(f"Route folder does not exist: {folder_path}")
+
+        metadata_path = folder_path / metadata_filename
+        if not metadata_path.exists():
+            raise FileNotFoundError(
+                f"Route folder is missing metadata file '{metadata_filename}' in {folder_path}"
+            )
+
+        self.logger.info(
+            "Loading route from folder for memory pipeline",
+            folder_path=str(folder_path)
+        )
+
+        # Load metadata
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        waypoint_entries: List[Dict[str, Any]] = metadata.get("results") or []
+        if not waypoint_entries:
+            raise ValueError(f"No waypoint entries found in {metadata_path}")
+
+        # Sort by waypoint_id
+        waypoint_entries = sorted(
+            waypoint_entries,
+            key=lambda entry: entry.get("waypoint_id", 0),
+        )
+
+        # Build waypoint list and image paths
+        resolved_waypoints: List[Waypoint] = []
+        resolved_image_paths: List[Path] = []
+
+        for entry in waypoint_entries:
+            sequence_id = entry.get("waypoint_id", len(resolved_waypoints))
+
+            # Resolve image path - try multiple strategies
+            image_path = entry.get("image_path")
+            image_candidate: Optional[Path] = None
+
+            # Strategy 1: If metadata provides a path, try it
+            if image_path:
+                candidate = Path(image_path)
+
+                # If it's absolute, check if it exists
+                if candidate.is_absolute():
+                    if candidate.exists():
+                        image_candidate = candidate
+                    else:
+                        # Absolute path doesn't exist, try using just the filename
+                        # in the current folder (images may have been moved)
+                        image_candidate = folder_path / candidate.name
+                else:
+                    # Relative path - resolve relative to folder_path
+                    image_candidate = folder_path / candidate
+
+            # Strategy 2: If still not found, look for waypoint pattern in folder
+            if image_candidate is None or not image_candidate.exists():
+                # Try pattern: waypoint_NNN_*.jpg
+                pattern_candidates = list(folder_path.glob(f"waypoint_{sequence_id:03d}_*.jpg"))
+                if pattern_candidates:
+                    image_candidate = pattern_candidates[0]
+
+            # Strategy 3: Look in waypoint subdirectory
+            if image_candidate is None or not image_candidate.exists():
+                waypoint_dir = folder_path / f"waypoint_{sequence_id:03d}"
+                if waypoint_dir.is_dir():
+                    jpg_files = list(waypoint_dir.glob("*.jpg"))
+                    if jpg_files:
+                        image_candidate = jpg_files[0]
+
+            # Final check
+            if image_candidate is None or not image_candidate.exists():
+                raise FileNotFoundError(
+                    f"Could not locate image for waypoint {sequence_id} in {folder_path}. "
+                    f"Expected pattern: waypoint_{sequence_id:03d}_*.jpg"
+                )
+
+            resolved_image_paths.append(image_candidate)
+
+            waypoint = Waypoint(
+                lat=entry["lat"],
+                lon=entry["lon"],
+                sequence_id=sequence_id,
+                heading=entry.get("heading"),
+                timestamp=None,
+                image_path=str(image_candidate.resolve()),
+            )
+            resolved_waypoints.append(waypoint)
+
+        if not resolved_waypoints:
+            raise ValueError(f"Failed to build waypoints from metadata {metadata_path}")
+
+        route_id = metadata.get("route_id") or folder_path.name
+        interval = (
+            metadata.get("interval")
+            or metadata.get("interval_meters")
+            or settings.default_sampling_interval
+        )
+
+        # Build route object
+        route = Route(
+            route_id=route_id,
+            start_lat=resolved_waypoints[0].lat,
+            start_lon=resolved_waypoints[0].lon,
+            end_lat=resolved_waypoints[-1].lat,
+            end_lon=resolved_waypoints[-1].lon,
+            waypoints=resolved_waypoints,
+            route_name=metadata.get("route_name"),
+            interval_meters=int(interval),
+        )
+
+        self.logger.info(
+            "Route loaded from folder",
+            route_id=route_id,
+            waypoints=len(resolved_waypoints),
+            interval=interval,
+        )
+
+        # Prepare metadata for continuous analyzer
+        waypoint_metadata = [
+            {
+                "filename": img_path.name,
+                "lat": wp.lat,
+                "lon": wp.lon,
+                "heading": wp.heading or 0.0,
+                "timestamp": wp.timestamp or "",
+            }
+            for img_path, wp in zip(resolved_image_paths, resolved_waypoints)
+        ]
+
+        # Validate images and reconstruct waypoint sequence
+        resolved_image_paths, resolved_waypoints, waypoint_metadata = (
+            self._validate_and_reconstruct_waypoints(
+                resolved_image_paths, resolved_waypoints, waypoint_metadata
+            )
+        )
+
+        # Calculate route length
+        route_length_km = 0.0
+        for i in range(len(resolved_waypoints) - 1):
+            wp1 = resolved_waypoints[i]
+            wp2 = resolved_waypoints[i + 1]
+            route_length_km += geodesic(
+                (wp1.lat, wp1.lon),
+                (wp2.lat, wp2.lon)
+            ).meters
+        route_length_km /= 1000.0
+
+        self.logger.info(
+            "Starting memory pipeline analysis",
+            route_id=route_id,
+            waypoints=len(resolved_waypoints),
+            route_length_km=route_length_km,
+        )
+
+        # ====================================================================
+        # Run the memory pipeline (same as run_with_memory)
+        # ====================================================================
+
+        # Phase 2: Continuous Analysis
+        self.logger.info("Phase 2: Running continuous analysis")
+
+        analysis_results = self.continuous_analyzer.analyze_route(
+            image_paths=resolved_image_paths, waypoint_metadata=waypoint_metadata
+        )
+
+        # Get analysis statistics
+        analysis_stats = self.continuous_analyzer.get_statistics()
+
+        self.logger.info(
+            "Continuous analysis complete",
+            total_waypoints=analysis_stats["total_waypoints"],
+            visual_changes=analysis_stats["visual_changes_detected"],
+        )
+
+        # Phase 3: Thinking with Short-Term Memory
+        self.logger.info("Phase 3: Processing with short-term memory and thinking")
+
+        thinking_results = []
+        memory_manager = self.memory_manager
+        waypoint_results: List[Dict[str, Any]] = []
+
+        for analysis in analysis_results:
+            should_think, reason = self.cognitive.should_trigger_thinking(
+                current_image=analysis.image_path,
+                waypoint=analysis,
+                force=analysis.waypoint_id == 0,
+            )
+
+            trigger_reason = (
+                TriggerReason.VISUAL_CHANGE
+                if reason == "visual_change"
+                else TriggerReason.EXCEPTIONAL_MOMENT
+            )
+
+            # Process waypoint through memory manager (attention gate + STM)
+            context = memory_manager.process_waypoint(
+                analysis,
+                triggered=should_think,
+                trigger_reason=trigger_reason,
+            )
+
+            thinking_result = None
+
+            if context is not None:
+                # Ensure route metadata includes route info
+                route_meta = context.get("route_metadata", {}) or {}
+                route_meta.setdefault("route_id", route_id)
+                route_meta.setdefault("length_km", route_length_km)
+
+                try:
+                    thinking_result = self.thinking_module.think_waypoint(
+                        waypoint_id=analysis.waypoint_id,
+                        trigger_reason=context["trigger_reason"],
+                        current_image_path=context["image_path"],
+                        system1_scores=analysis.scores,
+                        system1_reasoning=analysis.reasoning,
+                        stm_context=context["stm_context"],
+                        ltm_patterns=context.get("ltm_patterns"),
+                        personality=self.personality,
+                        route_metadata=route_meta,
+                    )
+
+                    thinking_results.append(thinking_result)
+
+                    # Update STM with System 2 revisions for sequential context
+                    memory_manager.update_with_system2_result(
+                        waypoint_id=analysis.waypoint_id,
+                        thinking_result=thinking_result,
+                    )
+
+                    # Generate narrative chapter using updated context
+                    try:
+                        narrative_context = (
+                            memory_manager.episodic_ltm.get_narrative_context()
+                        )
+                        visual_description = thinking_result.interpretation
+
+                        narrative_chapter = (
+                            self.thinking_module.generate_narrative_chapter(
+                                waypoint_id=analysis.waypoint_id,
+                                visual_description=visual_description,
+                                system1_scores=analysis.scores,
+                                system2_scores=thinking_result.revised_scores,
+                                score_adjustments=thinking_result.score_adjustments,
+                                stm_context=context["stm_context"],
+                                narrative_context=narrative_context,
+                                personality=self.personality,
+                                trigger_reason=context["trigger_reason"],
+                            )
+                        )
+
+                        narrative_chapter.image_path = analysis.image_path
+                        memory_manager.episodic_ltm.add_narrative_chapter(
+                            narrative_chapter
+                        )
+                    except Exception as e:
+                        self.logger.warning(f"Narrative generation failed: {e}")
+
+                except Exception as e:
+                    self.logger.warning(
+                        f"Thinking failed at waypoint {analysis.waypoint_id}: {e}"
+                    )
+
+            ts_value = analysis.timestamp
+            if hasattr(ts_value, "isoformat"):
+                ts_value = ts_value.isoformat()
+
+            waypoint_results.append(
+                {
+                    "waypoint_id": analysis.waypoint_id,
+                    "image_path": str(analysis.image_path),
+                    "gps": analysis.gps,
+                    "timestamp": ts_value,
+                    "system1_scores": analysis.scores,
+                    "system1_reasoning": analysis.reasoning,
+                    "system2_triggered": thinking_result is not None,
+                    "system2_scores": (
+                        thinking_result.revised_scores if thinking_result else None
+                    ),
+                    "system2_reasoning": (
+                        thinking_result.revision_reasoning if thinking_result else None
+                    ),
+                    "score_adjustments": (
+                        thinking_result.score_adjustments if thinking_result else None
+                    ),
+                    "thinking_interpretation": (
+                        thinking_result.interpretation if thinking_result else None
+                    ),
+                    "thinking_significance": (
+                        thinking_result.significance if thinking_result else None
+                    ),
+                    "memory_influence": (
+                        thinking_result.memory_influence if thinking_result else None
+                    ),
+                }
+            )
+
+        thinking_summary = self.thinking_module.get_thinking_summary()
+
+        self.logger.info(
+            "Thinking complete",
+            episodes=len(thinking_results),
+            avg_confidence=thinking_summary.get("avg_confidence", 0),
+        )
+
+        # Phase 4: Long-Term Memory Formation
+        self.logger.info("Phase 4: Forming long-term memory")
+
+        # Use agent's long-term memory
+        ltm = self.memory
+
+        # Add candidate moments
+        for wp in waypoint_results:
+            if not wp.get("system2_triggered"):
+                continue
+
+            thinking_result = next(
+                (t for t in thinking_results if t.waypoint_id == wp["waypoint_id"]),
+                None,
+            )
+            if not thinking_result:
+                continue
+
+            ltm.add_candidate_moment(
+                waypoint_id=wp["waypoint_id"],
+                image_path=Path(wp["image_path"]),
+                scores=wp.get("system2_scores") or wp["system1_scores"],
+                summary=thinking_result.interpretation[:200],
+                significance=thinking_result.significance,
+                gps=wp.get("gps", (0.0, 0.0)),
+                timestamp=wp.get("timestamp"),
+                thinking_confidence=thinking_result.confidence,
+                visual_change_detected=wp.get("system2_triggered", False),
+                score_delta=None,
+            )
+
+        # Curate moments
+        ltm.curate_moments(route_length_km=route_length_km)
+
+        # Extract patterns
+        analysis_dicts = [
+            {
+                "waypoint_id": w["waypoint_id"],
+                "scores": w.get("system2_scores") or w["system1_scores"],
+                "summary": "",
+            }
+            for w in waypoint_results
+        ]
+        thinking_history = [t.interpretation for t in thinking_results]
+
+        ltm.extract_patterns(
+            all_analyses=analysis_dicts, thinking_history=thinking_history
+        )
+
+        # Generate route summary
+        route_summary = ltm.generate_route_summary(
+            route_id=route_id,
+            total_waypoints=len(analysis_results),
+            length_km=route_length_km,
+            all_analyses=analysis_dicts,
+        )
+
+        self.logger.info(
+            "Long-term memory formed",
+            key_moments=len(ltm.get_key_images()),
+            patterns=len(route_summary.patterns),
+        )
+
+        # Phase 5: Save Outputs (if output_dir provided)
+        complete_narrative = ltm.get_complete_narrative()
+        narrative_chapters = ltm.narrative_chapters
+
+        if output_dir:
+            import shutil
+
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            self.logger.info("Saving outputs", output_dir=str(output_dir))
+
+            # Save analysis results with dual scores when available
+            analysis_file = output_dir / "analysis_results.json"
+            with open(analysis_file, "w", encoding="utf-8") as f:
+                json.dump(waypoint_results, f, indent=2)
+
+            # Save System 1 only results
+            system1_results = [
+                {
+                    "waypoint_id": wp["waypoint_id"],
+                    "image_path": wp["image_path"],
+                    "gps": wp["gps"],
+                    "timestamp": wp["timestamp"],
+                    "scores": wp["system1_scores"],
+                    "reasoning": wp["system1_reasoning"],
+                }
+                for wp in waypoint_results
+            ]
+            system1_file = output_dir / "analysis_results_system1.json"
+            with open(system1_file, "w", encoding="utf-8") as f:
+                json.dump(system1_results, f, indent=2)
+
+            # Save System 2 only results (only waypoints where system2 was triggered)
+            system2_results = [
+                {
+                    "waypoint_id": wp["waypoint_id"],
+                    "image_path": wp["image_path"],
+                    "gps": wp["gps"],
+                    "timestamp": wp["timestamp"],
+                    "scores": wp["system2_scores"],
+                    "reasoning": wp["system2_reasoning"],
+                    "score_adjustments": wp["score_adjustments"],
+                    "interpretation": wp["thinking_interpretation"],
+                    "significance": wp["thinking_significance"],
+                    "memory_influence": wp["memory_influence"],
+                }
+                for wp in waypoint_results
+                if wp["system2_triggered"]
+            ]
+            system2_file = output_dir / "analysis_results_system2.json"
+            with open(system2_file, "w", encoding="utf-8") as f:
+                json.dump(system2_results, f, indent=2)
+
+            # Save thinking results
+            thinking_file = output_dir / "thinking_results.json"
+            with open(thinking_file, "w", encoding="utf-8") as f:
+                json.dump(
+                    [
+                        {
+                            "waypoint_id": t.waypoint_id,
+                            "trigger_reason": t.trigger_reason.value,
+                            "interpretation": t.interpretation,
+                            "significance": t.significance,
+                            "confidence": t.confidence,
+                        }
+                        for t in thinking_results
+                    ],
+                    f,
+                    indent=2,
+                )
+
+            # Save narrative
+            narrative_file = output_dir / "narrative.md"
+            with open(narrative_file, "w", encoding="utf-8") as f:
+                f.write(complete_narrative)
+
+            # Save complete narrative markdown
+            narrative_md = output_dir / "complete_narrative.md"
+            with open(narrative_md, "w", encoding="utf-8") as f:
+                f.write(complete_narrative)
+
+            # Copy key images
+            key_images_dir = output_dir / "key_images"
+            key_images_dir.mkdir(exist_ok=True)
+
+            for img_path in ltm.get_key_images():
+                if img_path.exists():
+                    shutil.copy2(img_path, key_images_dir / img_path.name)
+
+            self.logger.info(
+                "Outputs saved",
+                output_dir=str(output_dir),
+                system1_waypoints=len(system1_results),
+                system2_waypoints=len(system2_results),
+            )
+
+        # Build final result
+        result = {
+            "analysis_results": waypoint_results,
+            "thinking_results": thinking_results,
+            "narrative_chapters": narrative_chapters,
+            "complete_narrative": complete_narrative,
+            "long_term_memory": ltm,
+            "route_summary": route_summary,
+            "statistics": {
+                "analysis": analysis_stats,
+                "thinking": thinking_summary,
+                "dual_system": self._compute_dual_system_statistics(waypoint_results),
+                "route_length_km": route_length_km,
+                "total_waypoints": len(waypoint_results),
+            },
+            "route_data": {
+                "route_id": route_id,
+                "start": (route.start_lat, route.start_lon),
+                "end": (route.end_lat, route.end_lon),
                 "interval": interval,
             },
         }
