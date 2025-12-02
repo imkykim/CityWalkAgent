@@ -416,11 +416,16 @@ class WalkingAgent(BaseAgent):
             ThinkingModule instance configured for triggered LLM reasoning.
         """
         if self._thinking_module is None:
+            # Load framework to pass dimensions for enhanced personality system
+            from src.config import load_framework
+            framework = load_framework(self.framework_id)
+
             self._thinking_module = ThinkingModule(
                 framework_id=self.framework_id,
                 distance_trigger_meters=600.0,
                 score_delta_threshold=1.5,
                 enable_vlm_deep_dive=False,
+                framework_dimensions=framework.get("dimensions", []),
             )
             self.logger.debug(
                 "ThinkingModule initialized", framework_id=self.framework_id

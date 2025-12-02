@@ -479,6 +479,23 @@ SEMANTIC_PERSONALITIES: Dict[str, Dict[str, Any]] = {
 
 
 # ============================================================================
+# PERSONALITY ENHANCEMENT MAP
+# ============================================================================
+
+# Mapping from basic personality presets to enhanced personalities
+# Enhanced personalities have detailed scoring rules and persona prompts
+# that strengthen personality impact on System 2 scores
+PERSONALITY_ENHANCEMENT_MAP = {
+    "safety": "parent_with_kids",
+    "scenic": "photographer",
+    "balanced": "homebuyer",
+    "comfort": "elderly_walker",
+    "explorer": "photographer",
+    "technical": None,  # No enhancement - technical uses neutral evaluation
+}
+
+
+# ============================================================================
 # EXPLANATION STYLES
 # ============================================================================
 
