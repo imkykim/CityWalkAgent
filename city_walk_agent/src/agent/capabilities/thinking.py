@@ -24,6 +24,15 @@ from src.agent.config.constants import (
     EXCELLENT_SCORE_THRESHOLD,
     LOW_VOLATILITY_THRESHOLD,
 )
+from src.agent.config.enhanced_personalities import (
+    ENHANCED_PERSONALITIES,
+    get_enhanced_personality,
+    EnhancedPersonalityConfig,
+)
+from src.agent.capabilities.score_transformer import (
+    ScoreTransformer,
+    create_dimension_mapping,
+)
 from src.config import settings
 from src.utils.logging import get_logger
 
@@ -130,6 +139,7 @@ class ThinkingModule:
         enable_score_revision: bool = True,
         distance_trigger_meters: float = 600.0,
         score_delta_threshold: float = 1.5,
+        framework_dimensions: Optional[List[Dict[str, Any]]] = None,
     ):
         """Initialize thinking module with LLM/VLM configuration.
 
@@ -143,6 +153,7 @@ class ThinkingModule:
             enable_score_revision: Enable System 2 score revision.
             distance_trigger_meters: Distance threshold for milestone triggers.
             score_delta_threshold: Score change threshold for volatility triggers.
+            framework_dimensions: Framework dimension definitions for semantic mapping.
         """
         # Load framework to get dimensions
         from src.config import load_framework
@@ -150,6 +161,10 @@ class ThinkingModule:
         self.framework = load_framework(framework_id)
         self.dimensions = {d["id"]: d["name_en"] for d in self.framework["dimensions"]}
         self.dimension_ids = list(self.dimensions.keys())
+
+        # Create dimension mapping for score transformation
+        self.framework_dimensions = framework_dimensions or self.framework.get("dimensions", [])
+        self.dimension_mapping = create_dimension_mapping(self.framework_dimensions)
 
         self.llm_api_url = self._prepare_chat_endpoint(
             llm_api_url or settings.qwen_vlm_api_url
@@ -180,6 +195,40 @@ class ThinkingModule:
             vlm_enabled=enable_vlm_deep_dive,
             score_revision=enable_score_revision,
         )
+
+    def _get_enhanced_config(
+        self,
+        personality: Any,
+    ) -> Optional[EnhancedPersonalityConfig]:
+        """Get enhanced personality config if available.
+
+        Falls back to None for basic personalities, enabling graceful degradation.
+        """
+        if personality is None:
+            return None
+
+        # Try to find enhanced config by matching name
+        personality_name = personality.name.lower().replace(" ", "_")
+
+        # Common mappings
+        name_mappings = {
+            "safety_guardian": "parent_with_kids",  # Map safety to parent
+            "scenic_explorer": "photographer",
+            "balanced_navigator": "homebuyer",
+            "comfort_seeker": "elderly_walker",
+            "urban_explorer": "photographer",
+        }
+
+        # Check direct match or mapped match
+        try:
+            if personality_name in ENHANCED_PERSONALITIES:
+                return get_enhanced_personality(personality_name)
+            elif personality_name in name_mappings:
+                return get_enhanced_personality(name_mappings[personality_name])
+        except ValueError:
+            pass
+
+        return None
 
     def should_trigger(
         self,
@@ -299,11 +348,48 @@ class ThinkingModule:
             )
 
             parsed = self._parse_vlm_response(vlm_response)
+            vlm_scores = parsed.get("revised_scores", system1_scores)
+            vlm_reasoning = parsed.get("revision_reasoning", {})
 
+            # =====================================================
+            # NEW: Apply personality score transformation
+            # =====================================================
+            enhanced_config = self._get_enhanced_config(personality)
+            transformation_metadata = {}
+
+            if enhanced_config and self.dimension_mapping:
+                transformer = ScoreTransformer(
+                    scoring_rules=enhanced_config.scoring_rules,
+                    dimension_mapping=self.dimension_mapping,
+                )
+
+                final_scores, transformation_metadata = transformer.transform(
+                    scores=vlm_scores,
+                    vlm_reasoning=vlm_reasoning,
+                )
+
+                self.logger.debug(
+                    "Applied personality transformation",
+                    waypoint_id=waypoint_id,
+                    personality=enhanced_config.personality_id,
+                    adjustments=transformation_metadata.get("total_adjustment_per_dim", {}),
+                )
+            else:
+                final_scores = vlm_scores
+
+            # Calculate total adjustments from System 1
             adjustments = {
-                dim: parsed["revised_scores"][dim] - system1_scores[dim]
+                dim: final_scores[dim] - system1_scores[dim]
                 for dim in system1_scores.keys()
             }
+
+            # Build memory influence with transformation info
+            memory_influence = parsed.get("memory_influence", {})
+            memory_influence["transformation_applied"] = bool(enhanced_config)
+            memory_influence["detected_features"] = (
+                transformation_metadata.get("detected_features", []) +
+                parsed.get("detected_features", [])
+            )
 
             result = ThinkingResult(
                 waypoint_id=waypoint_id,
@@ -315,21 +401,13 @@ class ThinkingModule:
                 recommendation=parsed.get("recommendation"),
                 confidence=float(parsed.get("confidence", 0.7)),
                 used_vlm=True,
-                revised_scores=parsed["revised_scores"],
+                revised_scores=final_scores,  # Use transformed scores
                 score_adjustments=adjustments,
-                revision_reasoning=parsed.get("revision_reasoning", {}),
-                memory_influence=parsed.get("memory_influence", {}),
-                used_stm_context=parsed.get("memory_influence", {}).get(
-                    "stm_impact", "none"
-                )
-                != "none",
-                used_ltm_patterns=parsed.get("memory_influence", {}).get(
-                    "ltm_impact", "none"
-                )
-                != "none",
-                personality_factor=parsed.get("memory_influence", {}).get(
-                    "personality_impact", "unknown"
-                ),
+                revision_reasoning=vlm_reasoning,
+                memory_influence=memory_influence,
+                used_stm_context=memory_influence.get("stm_impact", "none") != "none",
+                used_ltm_patterns=memory_influence.get("ltm_impact", "none") != "none",
+                personality_factor=memory_influence.get("personality_impact", "unknown"),
                 vlm_model_used=settings.qwen_vlm_model,
                 system1_scores=system1_scores.copy(),
                 processing_time_seconds=time.time() - start_time,
@@ -342,6 +420,7 @@ class ThinkingModule:
                 waypoint_id=waypoint_id,
                 trigger=trigger_reason.value,
                 adjustments={k: f"{v:+.1f}" for k, v in adjustments.items()},
+                personality=enhanced_config.personality_id if enhanced_config else "basic",
                 significance=result.significance,
             )
 
@@ -795,11 +874,7 @@ Provide 1-2 sentences of visual insight."""
         personality: Any,
         trigger_reason: TriggerReason,
     ) -> str:
-        """Build multi-modal prompt for VLM to revise scores with memory context.
-
-        This method dynamically generates prompts based on the framework's dimensions,
-        making it framework-agnostic.
-        """
+        """Build multi-modal prompt for VLM to revise scores with STRONG personality-specific guidance."""
 
         # Format STM context
         stm_summary = self._format_stm_context(stm_context)
@@ -811,14 +886,48 @@ Provide 1-2 sentences of visual insight."""
             else "No relevant past patterns"
         )
 
-        # Personality description with primary dimensions
-        from src.agent.config import get_primary_dimensions
-        primary_dims = get_primary_dimensions(personality.dimension_weights) if personality else []
-        personality_desc = f"""
-**Agent Personality: {personality.name if personality else 'Default'}**
-- Primary dimensions: {', '.join(primary_dims) if primary_dims else 'balanced across all'}
-- Decision thresholds: {personality.decision_thresholds if personality else 'default'}
+        # Get enhanced personality config
+        enhanced_config = self._get_enhanced_config(personality)
+
+        # Build personality section
+        if enhanced_config:
+            persona_prompt = enhanced_config.vlm_persona_prompt
+
+            # Add scoring rule examples
+            feature_examples = []
+            for feature, mods in list(enhanced_config.scoring_rules.feature_modifiers.items())[:6]:
+                mod_str = ", ".join(f"{k}: {v:+.1f}" for k, v in mods.items())
+                feature_examples.append(f"  - {feature.replace('_', ' ')}: {mod_str}")
+
+            scoring_guidance = "\n".join(feature_examples) if feature_examples else "N/A"
+
+            personality_section = f"""
+## YOUR PERSONA
+{persona_prompt}
+
+## EXPLICIT SCORING ADJUSTMENTS TO APPLY
+When you observe these features, apply these adjustments:
+{scoring_guidance}
+
+## KEYWORDS THAT SHOULD TRIGGER CONCERNS
+{', '.join(enhanced_config.scoring_rules.concern_keywords[:10])}
+
+## KEYWORDS THAT SHOULD TRIGGER BONUSES
+{', '.join(enhanced_config.scoring_rules.boost_keywords[:10])}
 """
+        else:
+            # Fallback for basic personalities
+            personality_desc = ""
+            if personality:
+                personality_desc = f"You are a {personality.name}. {personality.description}"
+
+            personality_section = f"""
+## AGENT PERSPECTIVE
+{personality_desc if personality_desc else "Balanced evaluation across all dimensions."}
+"""
+
+        # Build trigger explanation
+        trigger_explanation = self._explain_trigger(trigger_reason)
 
         # NEW: Dynamic dimension info
         dimension_descriptions = self._format_dimension_descriptions()
@@ -826,93 +935,88 @@ Provide 1-2 sentences of visual insight."""
         reasoning_fields = self._generate_reasoning_fields()
         system1_formatted = self._format_system1_results(system1_scores, system1_reasoning)
 
-        prompt = f"""# TASK: Re-evaluate this street view waypoint with full context
+        prompt = f"""# SYSTEM 2 RE-EVALUATION WITH PERSONALITY CONTEXT
 
-You are a walking experience evaluator analyzing **Waypoint #{waypoint_id}**.
-
-**Evaluation Framework: {self.framework['framework_name']}**
-
-This framework evaluates {self._get_dimension_count()} dimensions:
-{dimension_descriptions}
+{personality_section}
 
 ---
 
-## CONTEXT
+## SYSTEM 1 EVALUATION (Initial VLM Perception)
+The initial evaluation saw ONLY this image without context:
 
-**Why System 2 was triggered**: {trigger_reason.value}
+**Scores (1-10 scale):**
+{json.dumps(system1_scores, indent=2)}
 
-**System 1 (Fast Perception) Results**:
-{system1_formatted}
+**Initial Reasoning:**
+{json.dumps(system1_reasoning, indent=2)}
 
-**Short-Term Memory (Recent Journey)**:
+---
+
+## CONTEXT FROM MEMORY
+
+### SHORT-TERM MEMORY (Recent waypoints)
 {stm_summary}
 
-**Key patterns in recent waypoints:**
-- Score trend: {stm_context.get('trend', 'unknown')}
-- Average of last 5 waypoints: {self._format_score_averages(stm_context.get('statistics', {}))}
-- Volatility: {stm_context.get('volatility', 'unknown')}
-
-**Long-Term Memory (Past Patterns)**:
+### LONG-TERM MEMORY (Similar situations)
 {ltm_summary}
-
-{personality_desc}
 
 ---
 
 ## YOUR TASK
 
-Re-evaluate this waypoint using:
-1. **System 1 baseline**: The VLM already provided initial scores
-2. **Sequential Context**: This is part of a walking journey, not an isolated moment
-3. **Cumulative Effects**: How do previous waypoints influence perception here?
-4. **Pattern Recognition**: Does this match known patterns from memory?
-5. **Agent Perspective**: How would this {personality.name if personality else 'agent'} specifically perceive this?
-6. **Predictive Factors**: What does this signal about upcoming sections?
+Re-evaluate this image with your persona's priorities.
 
-**Important Guidelines:**
-- You may KEEP System 1 scores if context doesn't change perception
-- ADJUST scores UP if context reveals hidden positives (e.g., transition to better area)
-- ADJUST scores DOWN if context reveals hidden risks (e.g., part of declining trend, cumulative stress)
-- Focus on dimensions most affected by memory/context
-- Base evaluation on what you SEE in the image, enriched by context
+**This waypoint was triggered for deeper analysis because:**
+{trigger_explanation}
+
+**IMPORTANT INSTRUCTIONS:**
+1. Your scores SHOULD DIFFER from System 1 based on your persona's priorities
+2. Apply the specific adjustments listed above when you detect relevant features
+3. Be MORE EXTREME than System 1 for dimensions you care about
+4. Be LESS DETAILED about dimensions you don't prioritize
+5. Expected adjustment range: ±0.5 to ±3.0 points per dimension
 
 ---
 
 ## OUTPUT FORMAT (JSON)
 
 ```json
-{{{{
-  "revised_scores": {dimension_json},
+{{
+  "revised_scores": {{
+    <dimension_id>: <float 1-10>,
+    ...
+  }},
 
-  "adjustments": {dimension_json},
+  "adjustments": {{
+    <dimension_id>: <delta from System 1>,
+    ...
+  }},
 
-  "revision_reasoning": {{{{
-    {reasoning_fields}
-  }}}},
+  "revision_reasoning": {{
+    <dimension_id>: "<Why changed or kept same - reference your persona>",
+    ...
+  }},
 
-  "interpretation": "<Overall understanding of this waypoint in context>",
+  "detected_features": ["<feature1>", "<feature2>", ...],
 
-  "memory_influence": {{{{
-    "stm_impact": "<How recent history affected scores: high/medium/low/none>",
-    "ltm_impact": "<How past patterns affected scores: high/medium/low/none>",
-    "personality_impact": "<How agent personality influenced perception: high/medium/low/none>",
+  "interpretation": "<Overall understanding from your persona's perspective>",
+
+  "memory_influence": {{
+    "stm_impact": "<high/medium/low/none>",
+    "ltm_impact": "<high/medium/low/none>",
+    "personality_impact": "<high/medium/low> - SHOULD BE HIGH",
     "key_factors": ["<factor1>", "<factor2>"]
-  }}}},
+  }},
 
   "confidence": <float 0-1>,
-  "pattern_detected": "<pattern name or null>",
-  "prediction": "<What to expect in next waypoints>",
+  "pattern_detected": "<pattern or null>",
+  "prediction": "<What to expect ahead>",
   "significance": "<high/medium/low>"
-}}}}
+}}
 ```
 
-**CRITICAL**:
-- Return ONLY valid JSON, no markdown code fences
-- Include ALL {self._get_dimension_count()} dimensions in revised_scores and adjustments
-- Adjustments can be 0 if no change needed
-- Base evaluation on what you SEE in the image, enriched by context
+**CRITICAL**: Your personality_impact should almost always be "high" - you are NOT a neutral observer.
 """
-
         return prompt
 
     def _format_stm_context(self, stm_context: Dict[str, Any]) -> str:
