@@ -18,8 +18,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.agent.config.scoring_rules import PersonalityScoringRules
 from src.utils.logging import get_logger
 
-logger = get_logger(__name__)
-
 # Neutral score - deviations from this are amplified
 NEUTRAL_SCORE = 5.5
 
@@ -49,7 +47,7 @@ class ScoreTransformer:
         """
         self.rules = scoring_rules
         self.dimension_mapping = dimension_mapping
-        self.logger = logger.bind(component="ScoreTransformer")
+        self.logger = get_logger(f"{__name__}.ScoreTransformer")
 
         # Build reverse mapping: keyword -> dimension_id
         self._keyword_to_dim = self._build_keyword_mapping(dimension_mapping)

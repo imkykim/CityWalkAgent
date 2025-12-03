@@ -9,6 +9,7 @@ Observe-Analyze-Think-Act pattern:
 - Analysis: Sequential pattern analysis and barrier detection
 - Thinking: Reasoning and decision-making logic
 - Action: Route execution and navigation capabilities
+- ScoreTransformer: Personality-driven score transformation for enhanced System 2
 - (Future: Planning, Communication, etc.)
 
 Each capability is designed to be:
@@ -34,6 +35,10 @@ from src.agent.capabilities.thinking import (
     TriggerReason,
     ThinkingResult
 )
+from src.agent.capabilities.score_transformer import (
+    ScoreTransformer,
+    create_dimension_mapping,
+)
 
 __all__ = [
     # Core capabilities
@@ -55,4 +60,7 @@ __all__ = [
     "ThinkingModule",
     "TriggerReason",
     "ThinkingResult",
+    # Score transformation
+    "ScoreTransformer",
+    "create_dimension_mapping",
 ]
