@@ -29,7 +29,7 @@ args = parser.parse_args()
 
 
 # Load the data
-file_path = "outputs/dual_system_demo/analysis_results.json"
+file_path = "outputs/hongkong_parent/analysis_results.json"
 with open(file_path, "r") as f:
     data = json.load(f)
 
@@ -143,7 +143,7 @@ ax1.set_title(
     fontsize=14,
     fontweight="bold",
 )
-ax1.set_ylim(2, 8)
+ax1.set_ylim(0, 10)
 ax1.set_ylabel("Average Score")
 ax1.fill_between(
     df_long[df_long["Metric"] == "Average"]["Waypoint ID"].unique(),

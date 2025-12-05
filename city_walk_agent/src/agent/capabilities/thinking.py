@@ -157,13 +157,16 @@ class ThinkingModule:
         """
         # Load framework to get dimensions
         from src.config import load_framework
+
         self.framework_id = framework_id
         self.framework = load_framework(framework_id)
         self.dimensions = {d["id"]: d["name_en"] for d in self.framework["dimensions"]}
         self.dimension_ids = list(self.dimensions.keys())
 
         # Create dimension mapping for score transformation
-        self.framework_dimensions = framework_dimensions or self.framework.get("dimensions", [])
+        self.framework_dimensions = framework_dimensions or self.framework.get(
+            "dimensions", []
+        )
         self.dimension_mapping = create_dimension_mapping(self.framework_dimensions)
 
         self.llm_api_url = self._prepare_chat_endpoint(
@@ -372,7 +375,9 @@ class ThinkingModule:
                     "Applied personality transformation",
                     waypoint_id=waypoint_id,
                     personality=enhanced_config.personality_id,
-                    adjustments=transformation_metadata.get("total_adjustment_per_dim", {}),
+                    adjustments=transformation_metadata.get(
+                        "total_adjustment_per_dim", {}
+                    ),
                 )
             else:
                 final_scores = vlm_scores
@@ -386,10 +391,9 @@ class ThinkingModule:
             # Build memory influence with transformation info
             memory_influence = parsed.get("memory_influence", {})
             memory_influence["transformation_applied"] = bool(enhanced_config)
-            memory_influence["detected_features"] = (
-                transformation_metadata.get("detected_features", []) +
-                parsed.get("detected_features", [])
-            )
+            memory_influence["detected_features"] = transformation_metadata.get(
+                "detected_features", []
+            ) + parsed.get("detected_features", [])
 
             result = ThinkingResult(
                 waypoint_id=waypoint_id,
@@ -407,7 +411,9 @@ class ThinkingModule:
                 memory_influence=memory_influence,
                 used_stm_context=memory_influence.get("stm_impact", "none") != "none",
                 used_ltm_patterns=memory_influence.get("ltm_impact", "none") != "none",
-                personality_factor=memory_influence.get("personality_impact", "unknown"),
+                personality_factor=memory_influence.get(
+                    "personality_impact", "unknown"
+                ),
                 vlm_model_used=settings.qwen_vlm_model,
                 system1_scores=system1_scores.copy(),
                 processing_time_seconds=time.time() - start_time,
@@ -420,7 +426,9 @@ class ThinkingModule:
                 waypoint_id=waypoint_id,
                 trigger=trigger_reason.value,
                 adjustments={k: f"{v:+.1f}" for k, v in adjustments.items()},
-                personality=enhanced_config.personality_id if enhanced_config else "basic",
+                personality=(
+                    enhanced_config.personality_id if enhanced_config else "basic"
+                ),
                 significance=result.significance,
             )
 
@@ -451,8 +459,7 @@ class ThinkingModule:
 
         # Ensure all framework dimensions are present in fallback
         fallback_scores = {
-            dim_id: system1_scores.get(dim_id, 5.0)
-            for dim_id in self.dimension_ids
+            dim_id: system1_scores.get(dim_id, 5.0) for dim_id in self.dimension_ids
         }
 
         return ThinkingResult(
@@ -520,7 +527,7 @@ class ThinkingModule:
             self.vlm_api_url,
             headers=headers,
             json=payload,
-            timeout=30,
+            timeout=60,
         )
 
         response.raise_for_status()
@@ -792,7 +799,7 @@ Provide 1-2 sentences of visual insight."""
                 self.vlm_api_url,
                 headers=headers,
                 json=payload,
-                timeout=30,
+                timeout=60,
             )
             response.raise_for_status()
 
@@ -843,9 +850,7 @@ Provide 1-2 sentences of visual insight."""
         """
         lines = []
         for dim in self.framework["dimensions"]:
-            lines.append(
-                f"- **{dim['name_en']}** ({dim['id']}): {dim['description']}"
-            )
+            lines.append(f"- **{dim['name_en']}** ({dim['id']}): {dim['description']}")
         return "\n".join(lines)
 
     def _get_dimension_count(self) -> int:
@@ -893,33 +898,25 @@ Provide 1-2 sentences of visual insight."""
         if enhanced_config:
             persona_prompt = enhanced_config.vlm_persona_prompt
 
-            # Add scoring rule examples
-            feature_examples = []
-            for feature, mods in list(enhanced_config.scoring_rules.feature_modifiers.items())[:6]:
-                mod_str = ", ".join(f"{k}: {v:+.1f}" for k, v in mods.items())
-                feature_examples.append(f"  - {feature.replace('_', ' ')}: {mod_str}")
-
-            scoring_guidance = "\n".join(feature_examples) if feature_examples else "N/A"
-
             personality_section = f"""
 ## YOUR PERSONA
 {persona_prompt}
 
-## EXPLICIT SCORING ADJUSTMENTS TO APPLY
-When you observe these features, apply these adjustments:
-{scoring_guidance}
+## CONTEXT FOR YOUR EVALUATION
+Based on your persona priorities, certain features should naturally influence your assessment:
 
-## KEYWORDS THAT SHOULD TRIGGER CONCERNS
-{', '.join(enhanced_config.scoring_rules.concern_keywords[:10])}
+Features that align with your values: {', '.join(enhanced_config.scoring_rules.boost_keywords[:8])}
+Features that concern you: {', '.join(enhanced_config.scoring_rules.concern_keywords[:8])}
 
-## KEYWORDS THAT SHOULD TRIGGER BONUSES
-{', '.join(enhanced_config.scoring_rules.boost_keywords[:10])}
+Evaluate honestly from your perspective. Don't force changes - let your priorities naturally guide your assessment.
 """
         else:
             # Fallback for basic personalities
             personality_desc = ""
             if personality:
-                personality_desc = f"You are a {personality.name}. {personality.description}"
+                personality_desc = (
+                    f"You are a {personality.name}. {personality.description}"
+                )
 
             personality_section = f"""
 ## AGENT PERSPECTIVE
@@ -933,7 +930,9 @@ When you observe these features, apply these adjustments:
         dimension_descriptions = self._format_dimension_descriptions()
         dimension_json = self._generate_dimension_json_template()
         reasoning_fields = self._generate_reasoning_fields()
-        system1_formatted = self._format_system1_results(system1_scores, system1_reasoning)
+        system1_formatted = self._format_system1_results(
+            system1_scores, system1_reasoning
+        )
 
         prompt = f"""# SYSTEM 2 RE-EVALUATION WITH PERSONALITY CONTEXT
 
@@ -964,17 +963,17 @@ The initial evaluation saw ONLY this image without context:
 
 ## YOUR TASK
 
-Re-evaluate this image with your persona's priorities.
+Re-evaluate this image through your persona's lens.
 
 **This waypoint was triggered for deeper analysis because:**
 {trigger_explanation}
 
-**IMPORTANT INSTRUCTIONS:**
-1. Your scores SHOULD DIFFER from System 1 based on your persona's priorities
-2. Apply the specific adjustments listed above when you detect relevant features
-3. Be MORE EXTREME than System 1 for dimensions you care about
-4. Be LESS DETAILED about dimensions you don't prioritize
-5. Expected adjustment range: ±0.5 to ±3.0 points per dimension
+**EVALUATION APPROACH:**
+1. Consider what you would notice and care about in this scene
+2. Your scores may differ from System 1 if your priorities lead to different judgments
+3. Focus more on dimensions that matter to your persona
+4. Be honest about dimensions that are less relevant to you
+5. Let your perspective naturally guide your assessment - no need to force changes
 
 ---
 
@@ -1004,7 +1003,7 @@ Re-evaluate this image with your persona's priorities.
   "memory_influence": {{
     "stm_impact": "<high/medium/low/none>",
     "ltm_impact": "<high/medium/low/none>",
-    "personality_impact": "<high/medium/low> - SHOULD BE HIGH",
+    "personality_impact": "<high/medium/low/none>",
     "key_factors": ["<factor1>", "<factor2>"]
   }},
 
@@ -1014,8 +1013,6 @@ Re-evaluate this image with your persona's priorities.
   "significance": "<high/medium/low>"
 }}
 ```
-
-**CRITICAL**: Your personality_impact should almost always be "high" - you are NOT a neutral observer.
 """
         return prompt
 

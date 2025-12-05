@@ -82,71 +82,56 @@ class ScoreTransformer:
         scores: Dict[str, float],
         vlm_reasoning: Dict[str, str],
     ) -> Tuple[Dict[str, float], Dict[str, Any]]:
-        """Apply full transformation pipeline to scores.
+        """Extract features for logging but don't modify scores.
+
+        The VLM handles all scoring adjustments through persona prompts.
+        This method only provides metadata for debugging and analysis.
 
         Args:
-            scores: Original VLM scores {dimension_id: score}
+            scores: VLM scores {dimension_id: score}
             vlm_reasoning: VLM reasoning per dimension {dimension_id: reasoning_text}
 
         Returns:
             Tuple of:
-                - Transformed scores {dimension_id: transformed_score}
-                - Transformation metadata for logging/debugging
+                - Original scores (unchanged)
+                - Metadata with detected features for logging
         """
-        transformed = scores.copy()
-        metadata = {
-            "original_scores": scores.copy(),
-            "detected_features": [],
-            "feature_adjustments": {},
-            "sensitivity_adjustments": {},
-            "floor_penalties": {},
-            "keyword_adjustments": {},
-            "total_adjustment_per_dim": {},
-        }
-
-        # Combine all reasoning text for feature detection
         all_reasoning = " ".join(vlm_reasoning.values()).lower()
 
-        # Step 1: Detect features from reasoning
+        # Feature detection for logging and analysis only
         detected_features = self._detect_features(all_reasoning)
-        metadata["detected_features"] = detected_features
 
-        # Step 2: Apply feature modifiers
-        transformed, feature_adj = self._apply_feature_modifiers(
-            transformed, detected_features
-        )
-        metadata["feature_adjustments"] = feature_adj
+        # Detect concern keywords
+        detected_concerns = [
+            kw for kw in self.rules.concern_keywords
+            if kw.lower() in all_reasoning
+        ]
 
-        # Step 3: Apply sensitivity multipliers
-        transformed, sens_adj = self._apply_sensitivity_multipliers(transformed)
-        metadata["sensitivity_adjustments"] = sens_adj
+        # Detect boost keywords
+        detected_boosts = [
+            kw for kw in self.rules.boost_keywords
+            if kw.lower() in all_reasoning
+        ]
 
-        # Step 4: Apply attention floor penalties
-        transformed, floor_pen = self._apply_attention_floors(transformed)
-        metadata["floor_penalties"] = floor_pen
-
-        # Step 5: Apply keyword modifiers
-        transformed, kw_adj = self._apply_keyword_modifiers(
-            transformed, all_reasoning
-        )
-        metadata["keyword_adjustments"] = kw_adj
-
-        # Calculate total adjustments
-        for dim_id in scores:
-            original = scores[dim_id]
-            final = transformed[dim_id]
-            metadata["total_adjustment_per_dim"][dim_id] = round(final - original, 2)
+        metadata = {
+            "original_scores": scores.copy(),
+            "detected_features": detected_features,
+            "detected_concerns": detected_concerns,
+            "detected_boosts": detected_boosts,
+            "transformation_applied": False,  # No longer modifying scores
+            "total_adjustment_per_dim": {dim: 0.0 for dim in scores},
+            "note": "VLM handles all scoring through persona prompts"
+        }
 
         self.logger.debug(
-            "Score transformation complete",
-            features_detected=len(detected_features),
-            dimensions_adjusted=sum(
-                1 for adj in metadata["total_adjustment_per_dim"].values()
-                if abs(adj) > 0.1
-            ),
+            "Feature detection complete (no score modification)",
+            features=len(detected_features),
+            concerns=len(detected_concerns),
+            boosts=len(detected_boosts),
         )
 
-        return transformed, metadata
+        # Return scores unchanged - VLM already applied persona perspective
+        return scores.copy(), metadata
 
     def _detect_features(self, reasoning_text: str) -> List[str]:
         """Detect features from VLM reasoning text."""

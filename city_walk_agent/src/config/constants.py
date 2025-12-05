@@ -3,7 +3,7 @@
 from typing import Final
 
 # API Configuration
-DEFAULT_VLM_TIMEOUT: Final[int] = 30  # seconds
+DEFAULT_VLM_TIMEOUT: Final[int] = 60  # seconds
 DEFAULT_MAX_CONCURRENT: Final[int] = 5
 DEFAULT_RETRY_ATTEMPTS: Final[int] = 3
 
