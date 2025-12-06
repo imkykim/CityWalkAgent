@@ -391,7 +391,8 @@ class WalkingAgent(BaseAgent):
             self._continuous_analyzer = ContinuousAnalyzer(
                 framework_id=self.framework_id,
                 context_window=3,
-                adaptive_threshold=True,
+                multi_image_threshold=15.0,
+                enable_multi_image=True,
             )
             self.logger.debug("ContinuousAnalyzer initialized")
         return self._continuous_analyzer
@@ -877,13 +878,44 @@ class WalkingAgent(BaseAgent):
             )
 
         # ====================================================================
-        # Phase 2: Continuous Analysis
+        # Phase 2: Continuous Analysis with CognitiveController
         # ====================================================================
-        self.logger.info("Phase 2: Running continuous analysis")
+        self.logger.info("Phase 2: Running continuous analysis with visual change detection")
 
-        analysis_results = self.continuous_analyzer.analyze_route(
-            image_paths=image_paths, waypoint_metadata=metadata
-        )
+        # Reset state for new route analysis
+        self.cognitive.reset()
+        self.continuous_analyzer.reset()
+        self.logger.debug("CognitiveController and ContinuousAnalyzer state reset for new route")
+
+        analysis_results = []
+
+        for i, (img_path, meta) in enumerate(zip(image_paths, metadata)):
+            # Step A: CognitiveController detects visual change
+            is_first_waypoint = i == 0
+            visual_change_result = self.cognitive.detect_visual_change(
+                image_path=img_path,
+                force=is_first_waypoint
+            )
+
+            self.logger.debug(
+                f"Visual change detection for waypoint {i}",
+                changed=visual_change_result.changed,
+                distance=visual_change_result.phash_distance,
+                reason=visual_change_result.reason
+            )
+
+            # Step B: ContinuousAnalyzer analyzes waypoint with pre-computed visual change
+            analysis = self.continuous_analyzer.analyze_waypoint(
+                waypoint_id=i,
+                image_path=img_path,
+                metadata=meta,
+                visual_change_detected=visual_change_result.changed,
+                phash_distance=visual_change_result.phash_distance
+            )
+
+            # Update analysis history (same as analyze_route does)
+            self.continuous_analyzer.analysis_history.append(analysis)
+            analysis_results.append(analysis)
 
         # Get analysis statistics
         analysis_stats = self.continuous_analyzer.get_statistics()
@@ -904,17 +936,23 @@ class WalkingAgent(BaseAgent):
         waypoint_results: List[Dict[str, Any]] = []
 
         for analysis in analysis_results:
-            should_think, reason = self.cognitive.should_trigger_thinking(
-                current_image=analysis.image_path,
-                waypoint=analysis,
-                force=analysis.waypoint_id == 0,
-            )
+            # Phase 2 Consolidation: Use ContinuousAnalyzer's pre-computed visual change detection
+            # This eliminates redundant pHash computation from CognitiveController
+            # ContinuousAnalyzer already computed pHash and stored result in analysis.visual_change_detected
+            is_first_waypoint = analysis.waypoint_id == 0
+            should_think = analysis.visual_change_detected or is_first_waypoint
 
-            trigger_reason = (
-                TriggerReason.VISUAL_CHANGE
-                if reason == "visual_change"
-                else TriggerReason.EXCEPTIONAL_MOMENT
-            )
+            # Determine trigger reason based on what caused the trigger
+            if is_first_waypoint:
+                reason = "force"
+                trigger_reason = TriggerReason.EXCEPTIONAL_MOMENT
+            elif analysis.visual_change_detected:
+                reason = "visual_change"
+                trigger_reason = TriggerReason.VISUAL_CHANGE
+            else:
+                # Should not reach here if should_think is False, but keep for safety
+                reason = "no_trigger"
+                trigger_reason = TriggerReason.EXCEPTIONAL_MOMENT
 
             # Process waypoint through memory manager (attention gate + STM)
             context = memory_manager.process_waypoint(
@@ -1413,12 +1451,43 @@ class WalkingAgent(BaseAgent):
         # Run the memory pipeline (same as run_with_memory)
         # ====================================================================
 
-        # Phase 2: Continuous Analysis
-        self.logger.info("Phase 2: Running continuous analysis")
+        # Phase 2: Continuous Analysis with CognitiveController
+        self.logger.info("Phase 2: Running continuous analysis with visual change detection")
 
-        analysis_results = self.continuous_analyzer.analyze_route(
-            image_paths=resolved_image_paths, waypoint_metadata=waypoint_metadata
-        )
+        # Reset state for new route analysis
+        self.cognitive.reset()
+        self.continuous_analyzer.reset()
+        self.logger.debug("CognitiveController and ContinuousAnalyzer state reset for new route")
+
+        analysis_results = []
+
+        for i, (img_path, meta) in enumerate(zip(resolved_image_paths, waypoint_metadata)):
+            # Step A: CognitiveController detects visual change
+            is_first_waypoint = i == 0
+            visual_change_result = self.cognitive.detect_visual_change(
+                image_path=img_path,
+                force=is_first_waypoint
+            )
+
+            self.logger.debug(
+                f"Visual change detection for waypoint {i}",
+                changed=visual_change_result.changed,
+                distance=visual_change_result.phash_distance,
+                reason=visual_change_result.reason
+            )
+
+            # Step B: ContinuousAnalyzer analyzes waypoint with pre-computed visual change
+            analysis = self.continuous_analyzer.analyze_waypoint(
+                waypoint_id=i,
+                image_path=img_path,
+                metadata=meta,
+                visual_change_detected=visual_change_result.changed,
+                phash_distance=visual_change_result.phash_distance
+            )
+
+            # Update analysis history (same as analyze_route does)
+            self.continuous_analyzer.analysis_history.append(analysis)
+            analysis_results.append(analysis)
 
         # Get analysis statistics
         analysis_stats = self.continuous_analyzer.get_statistics()
@@ -1437,17 +1506,23 @@ class WalkingAgent(BaseAgent):
         waypoint_results: List[Dict[str, Any]] = []
 
         for analysis in analysis_results:
-            should_think, reason = self.cognitive.should_trigger_thinking(
-                current_image=analysis.image_path,
-                waypoint=analysis,
-                force=analysis.waypoint_id == 0,
-            )
+            # Phase 2 Consolidation: Use ContinuousAnalyzer's pre-computed visual change detection
+            # This eliminates redundant pHash computation from CognitiveController
+            # ContinuousAnalyzer already computed pHash and stored result in analysis.visual_change_detected
+            is_first_waypoint = analysis.waypoint_id == 0
+            should_think = analysis.visual_change_detected or is_first_waypoint
 
-            trigger_reason = (
-                TriggerReason.VISUAL_CHANGE
-                if reason == "visual_change"
-                else TriggerReason.EXCEPTIONAL_MOMENT
-            )
+            # Determine trigger reason based on what caused the trigger
+            if is_first_waypoint:
+                reason = "force"
+                trigger_reason = TriggerReason.EXCEPTIONAL_MOMENT
+            elif analysis.visual_change_detected:
+                reason = "visual_change"
+                trigger_reason = TriggerReason.VISUAL_CHANGE
+            else:
+                # Should not reach here if should_think is False, but keep for safety
+                reason = "no_trigger"
+                trigger_reason = TriggerReason.EXCEPTIONAL_MOMENT
 
             # Process waypoint through memory manager (attention gate + STM)
             context = memory_manager.process_waypoint(

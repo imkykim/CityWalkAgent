@@ -890,21 +890,21 @@ class TestContinuousAnalyzer:
         analyzer = ContinuousAnalyzer(
             framework_id="sagai_2025",
             context_window=3,
-            phash_threshold=15.0,
-            adaptive_threshold=True
+            multi_image_threshold=15.0
         )
 
-        assert analyzer.framework_id == "sagai_2025"
         assert analyzer.context_window == 3
-        assert analyzer.phash_threshold == 15.0
-        assert analyzer.adaptive_threshold is True
-        assert analyzer.last_phash is None
+        assert analyzer.multi_image_threshold == 15.0
+        assert analyzer.enable_multi_image is True
         assert len(analyzer.analysis_history) == 0
+        assert len(analyzer.phash_distances) == 0
 
     @patch('src.analysis.continuous_analyzer.load_framework')
     @patch('src.analysis.continuous_analyzer.Evaluator')
     @patch('imagehash.phash')
     @patch('PIL.Image.open')
+    @pytest.mark.skip(reason="Deprecated: CognitiveController now handles pHash detection")
+
     def test_detect_visual_change_first_image(
         self, mock_image_open, mock_phash, mock_evaluator, mock_load_framework
     ):
@@ -929,6 +929,8 @@ class TestContinuousAnalyzer:
 
     @patch('src.analysis.continuous_analyzer.load_framework')
     @patch('src.analysis.continuous_analyzer.Evaluator')
+    @pytest.mark.skip(reason="Deprecated: CognitiveController now handles pHash detection")
+
     def test_detect_visual_change_threshold_exceeded(self, mock_evaluator, mock_load_framework):
         """Test visual change detection when threshold is exceeded."""
         mock_framework = Mock()
@@ -957,6 +959,8 @@ class TestContinuousAnalyzer:
 
     @patch('src.analysis.continuous_analyzer.load_framework')
     @patch('src.analysis.continuous_analyzer.Evaluator')
+    @pytest.mark.skip(reason="Deprecated: CognitiveController now handles pHash detection")
+
     def test_detect_visual_change_threshold_not_exceeded(
         self, mock_evaluator, mock_load_framework
     ):
@@ -986,6 +990,8 @@ class TestContinuousAnalyzer:
 
     @patch('src.analysis.continuous_analyzer.load_framework')
     @patch('src.analysis.continuous_analyzer.Evaluator')
+    @pytest.mark.skip(reason="Deprecated: CognitiveController now handles pHash detection")
+
     def test_adaptive_threshold_computation(self, mock_evaluator, mock_load_framework):
         """Test adaptive threshold uses statistical approach."""
         mock_framework = Mock()
@@ -1033,11 +1039,11 @@ class TestContinuousAnalyzer:
 
         # Mock evaluator
         mock_evaluator = Mock()
-        mock_eval_result = {
-            "safety": {"score": 8.5, "reasoning": "Safe conditions"},
-            "comfort": {"score": 7.2, "reasoning": "Comfortable path"}
-        }
-        mock_evaluator.evaluate_single_image.return_value = mock_eval_result
+        mock_eval_result = [
+            {"dimension_id": "safety", "score": 8.5, "reasoning": "Safe conditions"},
+            {"dimension_id": "comfort", "score": 7.2, "reasoning": "Comfortable path"}
+        ]
+        mock_evaluator.evaluate_image.return_value = mock_eval_result
         mock_evaluator_class.return_value = mock_evaluator
 
         # Mock pHash
@@ -1048,14 +1054,18 @@ class TestContinuousAnalyzer:
 
         analyzer = ContinuousAnalyzer(framework_id="sagai_2025")
 
+        # New architecture: visual change info comes from CognitiveController
         result = analyzer.analyze_waypoint(
             waypoint_id=0,
             image_path=Path("/test/waypoint_0.jpg"),
             metadata={
-                "gps": (37.7749, -122.4194),
+                "lat": 37.7749,
+                "lon": -122.4194,
                 "heading": 90.0,
                 "timestamp": "2025-01-01T12:00:00"
-            }
+            },
+            visual_change_detected=False,
+            phash_distance=5.0
         )
 
         assert isinstance(result, WaypointAnalysis)
@@ -1063,6 +1073,8 @@ class TestContinuousAnalyzer:
         assert result.scores["safety"] == 8.5
         assert result.scores["comfort"] == 7.2
         assert "safety" in result.reasoning
+        assert result.visual_change_detected is False
+        assert result.phash_distance == 5.0
 
     @patch('src.analysis.continuous_analyzer.load_framework')
     @patch('src.analysis.continuous_analyzer.Evaluator')

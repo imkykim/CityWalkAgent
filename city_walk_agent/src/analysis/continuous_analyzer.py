@@ -5,16 +5,14 @@ This is a companion to SequentialAnalyzer:
 - SequentialAnalyzer: Post-hoc batch analysis of completed routes
 - ContinuousAnalyzer: Real-time sequential analysis during route traversal
 
-Both wrap the existing Evaluator (N VLM calls per image), but ContinuousAnalyzer
-adds pHash-based visual change detection, temporal context tracking, and
-short-term memory integration for adaptive route analysis.
+ContinuousAnalyzer receives visual change detection results from CognitiveController
+and focuses on VLM evaluation with temporal context tracking and short-term memory
+integration for adaptive route analysis.
 """
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-import imagehash
-from PIL import Image
 
 from src.evaluation.evaluator import Evaluator
 from src.evaluation.vlm_client import VLMConfig
@@ -40,27 +38,27 @@ class WaypointAnalysis:
 
 class ContinuousAnalyzer:
     """
-    Real-time waypoint analyzer with visual change detection
+    Real-time waypoint analyzer that receives visual change detection from CognitiveController
 
     Key differences from SequentialAnalyzer:
     - Processes waypoints sequentially as they arrive (simulates real-time)
-    - Adds pHash-based visual change detection to identify significant transitions
+    - Receives visual change detection results from CognitiveController
     - Maintains sliding context window of recent waypoints for temporal reasoning
-    - Uses adaptive threshold learning from observed pHash variance
+    - Performs VLM evaluation with temporal context
 
-    The Evaluator still performs N VLM calls per image (1 per dimension),
-    but we enrich this with:
-    - Visual similarity tracking (pHash distance)
-    - Change point detection (adaptive thresholding)
+    The Evaluator performs N VLM calls per image (1 per dimension),
+    enriched with:
+    - Pre-computed visual change detection (from CognitiveController)
+    - Change point detection for multi-image evaluation
     - Short-term memory (analysis history)
 
     Usage:
         ```python
         analyzer = ContinuousAnalyzer(
             framework_id="walkability_v1",
-            context_window=3,
-            adaptive_threshold=True
+            context_window=3
         )
+        # Visual change info comes from CognitiveController
         results = analyzer.analyze_route(image_paths, metadata_list)
         stats = analyzer.get_statistics()
         change_points = analyzer.get_change_points()
@@ -71,19 +69,15 @@ class ContinuousAnalyzer:
         self,
         framework_id: str,
         context_window: int = 3,
-        phash_threshold: float = 15.0,
-        adaptive_threshold: bool = True,
         multi_image_threshold: float = 15.0,
         enable_multi_image: bool = True
     ):
         """
-        Initialize continuous analyzer with VLM evaluator and change detection
+        Initialize continuous analyzer with VLM evaluator
 
         Args:
             framework_id: ID of evaluation framework to use
             context_window: Number of previous waypoints to maintain in memory
-            phash_threshold: Fixed threshold for pHash distance (if not adaptive)
-            adaptive_threshold: Use adaptive threshold based on running statistics
             multi_image_threshold: pHash threshold to trigger multi-image evaluation
             enable_multi_image: Enable/disable multi-image comparison feature
         """
@@ -98,12 +92,6 @@ class ContinuousAnalyzer:
         )
         self.evaluator = Evaluator(vlm_config, framework, max_concurrent=5)
 
-        # pHash tracking for visual change detection
-        self.last_phash: Optional[imagehash.ImageHash] = None
-        self.phash_distances: List[float] = []
-        self.phash_threshold = phash_threshold
-        self.adaptive_threshold = adaptive_threshold
-
         # Multi-image evaluation configuration
         self.multi_image_threshold = multi_image_threshold
         self.enable_multi_image = enable_multi_image
@@ -113,9 +101,11 @@ class ContinuousAnalyzer:
         self.analysis_history: List[WaypointAnalysis] = []
         self.context_window = context_window
 
+        # Statistics tracking
+        self.phash_distances: List[float] = []  # Track distances for statistics
+
         logger.info(
             f"Analyzer initialized - context_window={context_window}, "
-            f"phash_threshold={phash_threshold}, adaptive={adaptive_threshold}, "
             f"multi_image: {'enabled' if enable_multi_image else 'disabled'}, "
             f"multi_image_threshold={multi_image_threshold}"
         )
@@ -124,13 +114,15 @@ class ContinuousAnalyzer:
         self,
         waypoint_id: int,
         image_path: Path,
-        metadata: Dict
+        metadata: Dict,
+        visual_change_detected: bool = False,
+        phash_distance: Optional[float] = None
     ) -> WaypointAnalysis:
         """
-        Analyze single waypoint with optional multi-image comparison
+        Analyze single waypoint with visual change info from CognitiveController
 
         This method:
-        1. Computes pHash for visual change detection
+        1. Receives pre-computed visual change detection from CognitiveController
         2. Determines whether to use multi-image or single-image evaluation
         3. Calls appropriate evaluator method
         4. Returns WaypointAnalysis object
@@ -139,20 +131,22 @@ class ContinuousAnalyzer:
             waypoint_id: Sequential ID of this waypoint
             image_path: Path to waypoint image
             metadata: Metadata dict with timestamp, lat, lon, heading
+            visual_change_detected: Whether visual change was detected (from CognitiveController)
+            phash_distance: pHash distance from previous waypoint (from CognitiveController)
 
         Returns:
             WaypointAnalysis object with scores, reasoning, and metadata
         """
         logger.debug(f"Analyzing waypoint {waypoint_id}: {image_path}")
 
-        # 1. Compute pHash for visual change detection
-        current_phash = self._compute_phash(image_path)
-        visual_change, phash_dist = self._detect_visual_change(current_phash)
+        # Track pHash distance for statistics
+        if phash_distance is not None:
+            self.phash_distances.append(phash_distance)
 
-        if visual_change:
+        if visual_change_detected:
             logger.info(
                 f"Visual change detected at waypoint {waypoint_id} "
-                f"(phash_distance={phash_dist:.2f})"
+                f"(phash_distance={phash_distance:.2f if phash_distance else 'N/A'})"
             )
 
         # 2. Build previous context if available
@@ -166,16 +160,16 @@ class ContinuousAnalyzer:
                 "scores": prev_analysis.scores,
                 "reasoning": prev_analysis.reasoning,
                 "summary": self._summarize_analysis(prev_analysis),
-                "phash_distance": phash_dist,
-                "visual_change_detected": visual_change
+                "phash_distance": phash_distance,
+                "visual_change_detected": visual_change_detected
             }
 
         # 3. Determine evaluation mode
         use_multi_image = (
             self.enable_multi_image
-            and visual_change
-            and phash_dist is not None
-            and phash_dist >= self.multi_image_threshold
+            and visual_change_detected
+            and phash_distance is not None
+            and phash_distance >= self.multi_image_threshold
             and prev_img_path is not None  # Need previous waypoint
         )
 
@@ -183,7 +177,7 @@ class ContinuousAnalyzer:
         if use_multi_image:
             logger.info(
                 f"Using multi-image evaluation for waypoint {waypoint_id} "
-                f"(pHash distance: {phash_dist:.1f})"
+                f"(pHash distance: {phash_distance:.1f})"
             )
 
             comparison_results = self.evaluator.evaluate_with_comparison(
@@ -221,17 +215,14 @@ class ContinuousAnalyzer:
             timestamp=metadata.get('timestamp', ''),
             gps=(metadata.get('lat', 0.0), metadata.get('lon', 0.0)),
             heading=metadata.get('heading', 0.0),
-            visual_change_detected=visual_change,
-            phash_distance=phash_dist
+            visual_change_detected=visual_change_detected,
+            phash_distance=phash_distance
         )
-
-        # 6. Update state for next iteration
-        self.last_phash = current_phash
 
         logger.debug(
             f"Waypoint {waypoint_id} analyzed - "
             f"avg_score={sum(scores.values()) / len(scores):.2f}, "
-            f"visual_change={visual_change}, "
+            f"visual_change={visual_change_detected}, "
             f"mode={'multi-image' if use_multi_image else 'single-image'}"
         )
 
@@ -288,80 +279,6 @@ class ContinuousAnalyzer:
 
         logger.info(f"Route analysis complete: {len(results)} waypoints processed")
         return results
-
-    def _compute_phash(self, image_path: Path) -> imagehash.ImageHash:
-        """
-        Compute perceptual hash (pHash) for an image
-
-        pHash provides a robust fingerprint that's resilient to minor
-        variations but sensitive to significant visual changes.
-
-        Args:
-            image_path: Path to the image file
-
-        Returns:
-            ImageHash object representing the perceptual hash
-
-        Raises:
-            Exception: If image cannot be loaded or processed
-        """
-        try:
-            img = Image.open(image_path)
-            return imagehash.phash(img)
-        except Exception as e:
-            logger.error(f"Failed to compute pHash for {image_path}: {e}")
-            raise
-
-    def _detect_visual_change(
-        self,
-        current_phash: imagehash.ImageHash
-    ) -> Tuple[bool, Optional[float]]:
-        """
-        Detect visual change based on pHash distance
-
-        Uses either fixed or adaptive threshold:
-        - Fixed: Use phash_threshold directly
-        - Adaptive: Use mean + 1.5 * std of observed distances (after 5+ samples)
-
-        The Hamming distance between pHashes indicates visual dissimilarity.
-        Higher values = more different images.
-
-        Args:
-            current_phash: pHash of the current image
-
-        Returns:
-            Tuple of (change_detected, phash_distance)
-            - change_detected: True if distance exceeds threshold
-            - phash_distance: Hamming distance, or None for first image
-        """
-        # First image has no reference
-        if self.last_phash is None:
-            return False, None
-
-        # Compute Hamming distance between hashes
-        distance = float(current_phash - self.last_phash)
-        self.phash_distances.append(distance)
-
-        # Determine threshold
-        if self.adaptive_threshold and len(self.phash_distances) >= 5:
-            # Adaptive: Statistical approach using mean + 1.5 * std
-            mean = sum(self.phash_distances) / len(self.phash_distances)
-            variance = sum(
-                (x - mean) ** 2 for x in self.phash_distances
-            ) / len(self.phash_distances)
-            std = variance ** 0.5
-            threshold = mean + 1.5 * std
-
-            logger.debug(
-                f"Adaptive threshold: {threshold:.2f} "
-                f"(mean={mean:.2f}, std={std:.2f})"
-            )
-        else:
-            # Fixed threshold
-            threshold = self.phash_threshold
-
-        change_detected = distance > threshold
-        return change_detected, distance
 
     def get_statistics(self) -> Dict:
         """
@@ -463,3 +380,19 @@ class ContinuousAnalyzer:
         )
 
         return summary
+
+    def reset(self) -> None:
+        """Reset analyzer state for new route analysis.
+
+        Clears:
+        - Analysis history
+        - pHash distance statistics
+        - Multi-image evaluation counter
+
+        This ensures each route is analyzed independently without
+        cross-contamination from previous routes.
+        """
+        self.analysis_history.clear()
+        self.phash_distances.clear()
+        self.multi_image_evaluations = 0
+        logger.debug("ContinuousAnalyzer state reset for new route")
