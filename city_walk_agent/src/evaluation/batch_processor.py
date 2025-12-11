@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 try:
     from tqdm import tqdm
+
     HAS_TQDM = True
 except ImportError:
     HAS_TQDM = False
@@ -22,6 +23,7 @@ from src.utils.logging import get_logger
 @dataclass
 class EvaluationTask:
     """Single evaluation task"""
+
     image_path: str
     image_id: str
     dimension_id: str
@@ -32,6 +34,7 @@ class EvaluationTask:
 @dataclass
 class BatchResult:
     """Results from batch processing"""
+
     results: List[Dict[str, Any]]
     total_tasks: int
     successful: int
@@ -52,11 +55,7 @@ class BatchProcessor:
     - Result aggregation
     """
 
-    def __init__(
-        self,
-        max_concurrent: int = 5,
-        show_progress: bool = True
-    ) -> None:
+    def __init__(self, max_concurrent: int = 10, show_progress: bool = True) -> None:
         """
         Initialize batch processor
 
@@ -69,10 +68,7 @@ class BatchProcessor:
         self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
 
     async def process_batch_async(
-        self,
-        tasks: List[EvaluationTask],
-        vlm_call_func: Callable,
-        response_parser: Any
+        self, tasks: List[EvaluationTask], vlm_call_func: Callable, response_parser: Any
     ) -> BatchResult:
         """
         Process batch of evaluation tasks asynchronously
@@ -101,8 +97,7 @@ class BatchProcessor:
                     if response and "content" in response:
                         # Parse response
                         parsed = response_parser.parse_response(
-                            response["content"],
-                            task.dimension_id
+                            response["content"], task.dimension_id
                         )
 
                         if parsed:
@@ -113,7 +108,7 @@ class BatchProcessor:
                                 "score": parsed["score"],
                                 "reasoning": parsed["reasoning"],
                                 "success": True,
-                                "usage": response.get("usage", {})
+                                "usage": response.get("usage", {}),
                             }
 
                 except Exception as error:
@@ -121,7 +116,7 @@ class BatchProcessor:
                         "Batch task failed",
                         image_id=task.image_id,
                         dimension_id=task.dimension_id,
-                        error=str(error)
+                        error=str(error),
                     )
                     error_message = str(error)
 
@@ -133,7 +128,7 @@ class BatchProcessor:
                     "score": 5.0,
                     "reasoning": "Evaluation failed",
                     "success": False,
-                    "error": error_message or "Unknown error"
+                    "error": error_message or "Unknown error",
                 }
 
         # Execute all tasks
@@ -162,14 +157,11 @@ class BatchProcessor:
             successful=successful,
             failed=failed,
             total_time=total_time,
-            avg_time_per_task=total_time / len(tasks) if tasks else 0
+            avg_time_per_task=total_time / len(tasks) if tasks else 0,
         )
 
     def process_batch(
-        self,
-        tasks: List[EvaluationTask],
-        vlm_call_func: Callable,
-        response_parser: Any
+        self, tasks: List[EvaluationTask], vlm_call_func: Callable, response_parser: Any
     ) -> BatchResult:
         """
         Synchronous wrapper for batch processing
@@ -188,9 +180,7 @@ class BatchProcessor:
 
     @staticmethod
     def create_tasks_for_images(
-        image_paths: List[str],
-        framework: Dict[str, Any],
-        prompts: Dict[str, str]
+        image_paths: List[str], framework: Dict[str, Any], prompts: Dict[str, str]
     ) -> List[EvaluationTask]:
         """
         Create evaluation tasks for multiple images
@@ -215,7 +205,7 @@ class BatchProcessor:
                     image_id=image_id,
                     dimension_id=dimension_id,
                     prompt=prompt,
-                    framework_id=framework_id
+                    framework_id=framework_id,
                 )
                 tasks.append(task)
 
@@ -223,7 +213,7 @@ class BatchProcessor:
 
     @staticmethod
     def group_results_by_image(
-        results: List[Dict[str, Any]]
+        results: List[Dict[str, Any]],
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
         Group results by image ID
@@ -246,7 +236,7 @@ class BatchProcessor:
 
     @staticmethod
     def group_results_by_framework(
-        results: List[Dict[str, Any]]
+        results: List[Dict[str, Any]],
     ) -> Dict[str, List[Dict[str, Any]]]:
         """
         Group results by framework ID
@@ -269,7 +259,7 @@ class BatchProcessor:
 
     @staticmethod
     def calculate_overall_scores(
-        grouped_results: Dict[str, List[Dict[str, Any]]]
+        grouped_results: Dict[str, List[Dict[str, Any]]],
     ) -> Dict[str, float]:
         """
         Calculate overall scores for grouped results

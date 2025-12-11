@@ -19,19 +19,21 @@ from src.utils.logging import get_logger
 @dataclass
 class VLMConfig:
     """Configuration for Qwen VLM"""
+
     api_key: str
     model: str
     api_url: str
     max_tokens: int = 300
     temperature: float = 0.7
-    rate_limit_delay: float = 1.0  # seconds between requests
+    rate_limit_delay: float = 0.5  # seconds between requests
     max_retries: int = DEFAULT_RETRY_ATTEMPTS
-    retry_delay: float = 2.0
+    retry_delay: float = 1.0
 
 
 @dataclass
 class VLMStats:
     """API usage statistics"""
+
     total_calls: int = 0
     successful_calls: int = 0
     failed_calls: int = 0
@@ -80,14 +82,11 @@ class VLMClient:
         Returns:
             Base64-encoded image string
         """
-        with open(image_path, 'rb') as f:
-            return base64.b64encode(f.read()).decode('utf-8')
+        with open(image_path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
 
     async def call_vlm_async(
-        self,
-        prompt: str,
-        image_path: str,
-        **kwargs
+        self, prompt: str, image_path: str, **kwargs
     ) -> Optional[Dict[str, Any]]:
         """
         Async call to VLM API
@@ -125,7 +124,7 @@ class VLMClient:
                     "VLM call attempt failed",
                     attempt=attempt + 1,
                     max_retries=self.config.max_retries,
-                    error=str(error)
+                    error=str(error),
                 )
 
                 if attempt == self.config.max_retries - 1:
@@ -134,19 +133,16 @@ class VLMClient:
                     self.logger.error(
                         "VLM call exhausted retries",
                         max_retries=self.config.max_retries,
-                        error=str(error)
+                        error=str(error),
                     )
                     return None
 
-                await asyncio.sleep(self.config.retry_delay * (2 ** attempt))
+                await asyncio.sleep(self.config.retry_delay * (2**attempt))
 
         return None
 
     def call_vlm(
-        self,
-        prompt: str,
-        image_path: str,
-        **kwargs
+        self, prompt: str, image_path: str, **kwargs
     ) -> Optional[Dict[str, Any]]:
         """
         Synchronous wrapper for VLM call
@@ -162,33 +158,34 @@ class VLMClient:
         return asyncio.run(self.call_vlm_async(prompt, image_path, **kwargs))
 
     async def _call_qwen(
-        self,
-        prompt: str,
-        image_path: str,
-        **kwargs
+        self, prompt: str, image_path: str, **kwargs
     ) -> Dict[str, Any]:
         """Call Qwen VLM API"""
         image_base64 = self.encode_image(image_path)
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.config.api_key}"
+            "Authorization": f"Bearer {self.config.api_key}",
         }
 
         payload = {
             "model": self.config.model,
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
-                    }
-                ]
-            }],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_base64}"
+                            },
+                        },
+                    ],
+                }
+            ],
             "max_tokens": self.config.max_tokens,
-            "temperature": self.config.temperature
+            "temperature": self.config.temperature,
         }
 
         # Use asyncio to run requests in thread pool
@@ -199,23 +196,22 @@ class VLMClient:
                 f"{self.config.api_url}/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=DEFAULT_VLM_TIMEOUT
-            )
+                timeout=DEFAULT_VLM_TIMEOUT,
+            ),
         )
 
         response.raise_for_status()
         result = response.json()
 
         return {
-            "content": result.get("choices", [{}])[0].get("message", {}).get("content", ""),
-            "usage": result.get("usage", {})
+            "content": result.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", ""),
+            "usage": result.get("usage", {}),
         }
 
     async def call_vlm_multi_image_async(
-        self,
-        prompt: str,
-        image_paths: List[str],
-        **kwargs
+        self, prompt: str, image_paths: List[str], **kwargs
     ) -> Optional[Dict[str, Any]]:
         """
         Call VLM with multiple images for comparison.
@@ -231,7 +227,7 @@ class VLMClient:
         if not image_paths or len(image_paths) > 3:
             self.logger.error(
                 "Invalid image count for multi-image",
-                count=len(image_paths) if image_paths else 0
+                count=len(image_paths) if image_paths else 0,
             )
             return None
 
@@ -245,7 +241,9 @@ class VLMClient:
         for attempt in range(self.config.max_retries):
             try:
                 start_time = time.time()
-                response = await self._call_qwen_multi_image(prompt, image_paths, **kwargs)
+                response = await self._call_qwen_multi_image(
+                    prompt, image_paths, **kwargs
+                )
 
                 elapsed = time.time() - start_time
                 self.stats.last_call_time = time.time()
@@ -260,7 +258,7 @@ class VLMClient:
                     "Multi-image VLM call attempt failed",
                     attempt=attempt + 1,
                     max_retries=self.config.max_retries,
-                    error=str(error)
+                    error=str(error),
                 )
 
                 if attempt == self.config.max_retries - 1:
@@ -269,19 +267,16 @@ class VLMClient:
                     self.logger.error(
                         "Multi-image VLM call exhausted retries",
                         max_retries=self.config.max_retries,
-                        error=str(error)
+                        error=str(error),
                     )
                     return None
 
-                await asyncio.sleep(self.config.retry_delay * (2 ** attempt))
+                await asyncio.sleep(self.config.retry_delay * (2**attempt))
 
         return None
 
     def call_vlm_multi_image(
-        self,
-        prompt: str,
-        image_paths: List[str],
-        **kwargs
+        self, prompt: str, image_paths: List[str], **kwargs
     ) -> Optional[Dict[str, Any]]:
         """
         Synchronous wrapper for multi-image VLM call
@@ -294,13 +289,12 @@ class VLMClient:
         Returns:
             Response dictionary with 'content' field, or None on failure
         """
-        return asyncio.run(self.call_vlm_multi_image_async(prompt, image_paths, **kwargs))
+        return asyncio.run(
+            self.call_vlm_multi_image_async(prompt, image_paths, **kwargs)
+        )
 
     async def _call_qwen_multi_image(
-        self,
-        prompt: str,
-        image_paths: List[str],
-        **kwargs
+        self, prompt: str, image_paths: List[str], **kwargs
     ) -> Dict[str, Any]:
         """Call Qwen VLM API with multiple images"""
         # Encode all images
@@ -316,21 +310,23 @@ class VLMClient:
         # Build multi-image payload for Qwen
         content = [{"type": "text", "text": prompt}]
         for img_b64 in images_b64:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
-            })
+            content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
+                }
+            )
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.config.api_key}"
+            "Authorization": f"Bearer {self.config.api_key}",
         }
 
         payload = {
             "model": self.config.model,
             "messages": [{"role": "user", "content": content}],
             "max_tokens": self.config.max_tokens,
-            "temperature": self.config.temperature
+            "temperature": self.config.temperature,
         }
 
         # Use asyncio to run requests in thread pool
@@ -341,18 +337,20 @@ class VLMClient:
                 f"{self.config.api_url}/chat/completions",
                 headers=headers,
                 json=payload,
-                timeout=DEFAULT_VLM_TIMEOUT
-            )
+                timeout=DEFAULT_VLM_TIMEOUT,
+            ),
         )
 
         response.raise_for_status()
         result = response.json()
 
         return {
-            "content": result.get("choices", [{}])[0].get("message", {}).get("content", ""),
+            "content": result.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", ""),
             "usage": result.get("usage", {}),
             "multi_image": True,
-            "image_count": len(image_paths)
+            "image_count": len(image_paths),
         }
 
     def get_stats(self) -> Dict[str, Any]:
@@ -364,5 +362,5 @@ class VLMClient:
             "success_rate": self.stats.success_rate,
             "total_time": self.stats.total_time,
             "avg_time": self.stats.avg_time,
-            "total_cost": self.stats.total_cost
+            "total_cost": self.stats.total_cost,
         }
