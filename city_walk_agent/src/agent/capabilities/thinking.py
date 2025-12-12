@@ -210,6 +210,16 @@ class ThinkingModule:
         if personality is None:
             return None
 
+        # Prefer explicit personality_id when available
+        personality_id = getattr(personality, "personality_id", None)
+        if personality_id:
+            normalized_id = personality_id.lower().replace(" ", "_")
+            if normalized_id in ENHANCED_PERSONALITIES:
+                try:
+                    return get_enhanced_personality(normalized_id)
+                except ValueError:
+                    pass
+
         # Try to find enhanced config by matching name
         personality_name = personality.name.lower().replace(" ", "_")
 
@@ -220,6 +230,10 @@ class ThinkingModule:
             "balanced_navigator": "homebuyer",
             "comfort_seeker": "elderly_walker",
             "urban_explorer": "photographer",
+            "street_photographer": "photographer",
+            "prospective_homebuyer": "homebuyer",
+            "urban_runner": "runner",
+            "parent_with_young_children": "parent_with_kids",
         }
 
         # Check direct match or mapped match

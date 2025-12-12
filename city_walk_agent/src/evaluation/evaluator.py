@@ -79,7 +79,8 @@ class Evaluator:
         self,
         image_path: str,
         dimensions: Optional[List[str]] = None,
-        previous_context: Optional[Dict[str, Any]] = None
+        previous_context: Optional[Dict[str, Any]] = None,
+        persona_hint: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Evaluate single image across specified dimensions
@@ -93,6 +94,7 @@ class Evaluator:
                 - reasoning: Dict[str, str]
                 - phash_distance: float
                 - visual_change_detected: bool
+            persona_hint: Optional persona-aware evaluation hint to prepend to prompt
 
         Returns:
             List of evaluation results (one per dimension)
@@ -120,6 +122,13 @@ class Evaluator:
                 prompt = context_text + base_prompt
             else:
                 prompt = base_prompt
+
+            # Add persona hint if provided
+            if persona_hint:
+                prompt = f"""**EVALUATOR PERSPECTIVE:**
+{persona_hint}
+
+{prompt}"""
 
             # Call VLM
             response = self.vlm_client.call_vlm(prompt, image_path)

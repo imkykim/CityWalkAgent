@@ -61,73 +61,12 @@ ENHANCED_PERSONALITIES: dict[str, EnhancedPersonalityConfig] = {
 
         # Scoring rules for post-VLM transformation
         scoring_rules=PersonalityScoringRules(
-            # Feature modifiers - semantic keywords detected in VLM reasoning
-            # Maps to dimension KEYWORDS not IDs (framework-agnostic)
-            feature_modifiers={
-                "shops_visible": {
-                    "comfort": 1.2, "functional": 1.2, "interest": 0.5
-                },
-                "cafe_restaurant": {
-                    "comfort": 1.0, "interest": 0.8, "functional": 0.8
-                },
-                "school_nearby": {
-                    "safety": 1.5, "comfort": 1.0, "functional": 1.5
-                },
-                "park_greenery": {
-                    "comfort": 1.5, "aesthetics": 1.2, "safety": 0.5
-                },
-                "playground": {
-                    "comfort": 1.5, "interest": 1.0, "safety": 0.5
-                },
-                "heavy_traffic": {
-                    "safety": -2.0, "comfort": -1.5
-                },
-                "narrow_sidewalk": {
-                    "safety": -1.5, "comfort": -1.2
-                },
-                "poor_lighting": {
-                    "safety": -1.5
-                },
-                "residential_quiet": {
-                    "comfort": 1.5, "safety": 0.8
-                },
-                "industrial_zone": {
-                    "comfort": -1.5, "aesthetics": -1.0, "safety": -0.5
-                },
-                "construction": {
-                    "safety": -1.5, "comfort": -1.2
-                },
-            },
-
-            # Sensitivity multipliers - semantic dimension keywords
-            sensitivity_multipliers={
-                "safety": 1.8,
-                "secure": 1.8,
-                "protection": 1.8,
-                "comfort": 1.5,
-                "ease": 1.5,
-                "functional": 1.4,
-                "interest": 0.8,
-                "aesthetics": 0.7,
-                "complexity": 0.6,
-            },
-
-            # Attention floors - strict thresholds for priority dimensions
-            attention_floors={
-                "safety": 7.0,
-                "secure": 7.0,
-                "comfort": 6.5,
-                "functional": 6.5,
-            },
-
-            # Concern keywords - trigger general negative adjustment
             concern_keywords=[
                 "traffic", "construction", "noise", "industrial",
                 "abandoned", "graffiti", "dark", "narrow", "unsafe",
                 "poor condition", "no sidewalk", "dangerous",
             ],
 
-            # Boost keywords - trigger general positive adjustment
             boost_keywords=[
                 "tree-lined", "park", "school", "playground", "shop",
                 "cafe", "restaurant", "residential", "quiet", "clean",
@@ -168,6 +107,10 @@ WHAT MATTERS LESS TO YOU:
 YOUR PERSPECTIVE:
 A quiet residential street with nearby shops and a visible school is ideal - this is where you'd want to raise a family. An architecturally stunning but noisy commercial street with heavy traffic is unappealing, regardless of visual interest. Practical livability trumps aesthetic excitement.
 """,
+
+        system1_persona_hint="""Evaluate as a PROSPECTIVE HOMEBUYER considering moving here with your family.
+Prioritize: daily convenience (shops, services), safety (traffic, lighting), and family-friendly amenities (schools, parks).
+Penalize: heavy traffic, industrial zones, lack of nearby amenities.""",
 
         thresholds={
             "min_overall_score": 6.5,
@@ -215,73 +158,16 @@ A quiet residential street with nearby shops and a visible school is ideal - thi
         },
 
         scoring_rules=PersonalityScoringRules(
-            feature_modifiers={
-                "wide_path": {
-                    "comfort": 2.0, "safety": 1.0, "spatial": 1.5
-                },
-                "park_trail": {
-                    "comfort": 2.5, "aesthetics": 1.5, "safety": 1.0
-                },
-                "dedicated_running_path": {
-                    "comfort": 3.0, "safety": 1.5
-                },
-                "smooth_surface": {
-                    "comfort": 1.5, "safety": 1.0
-                },
-                "uneven_surface": {
-                    "safety": -2.0, "comfort": -2.0
-                },
-                "cobblestone": {
-                    "safety": -1.5, "comfort": -1.5
-                },
-                "crowded_pedestrians": {
-                    "comfort": -1.5, "spatial": -1.0
-                },
-                "tree_shade": {
-                    "comfort": 1.5, "aesthetics": 1.0
-                },
-                "waterfront": {
-                    "aesthetics": 2.0, "comfort": 1.0, "interest": 1.0
-                },
-                "heavy_traffic": {
-                    "safety": -1.5, "comfort": -1.0
-                },
-                "steps_stairs": {
-                    "comfort": -1.5
-                },
-                "air_pollution": {
-                    "comfort": -2.0, "safety": -1.0
-                },
-            },
-
-            sensitivity_multipliers={
-                "comfort": 2.0,  # Very sensitive to running comfort
-                "ease": 2.0,
-                "spatial": 1.8,
-                "safety": 1.6,
-                "aesthetics": 1.2,
-                "interest": 0.6,
-                "functional": 0.4,
-            },
-
-            attention_floors={
-                "comfort": 6.5,
-                "spatial": 6.0,
-                "safety": 6.0,
-            },
-
             concern_keywords=[
                 "uneven", "cracked", "cobblestone", "crowded",
                 "narrow", "steps", "stairs", "obstacles", "traffic",
                 "pollution", "smog", "congested",
             ],
-
             boost_keywords=[
                 "park", "promenade", "wide", "smooth", "dedicated",
                 "path", "trail", "tree-lined", "waterfront", "shade",
                 "open", "spacious",
             ],
-
             keyword_modifier_strength=0.7,
         ),
 
@@ -318,6 +204,10 @@ WHAT YOU IGNORE:
 YOUR PERSPECTIVE:
 A wide park path with smooth pavement and tree shade is perfect - you can maintain pace and enjoy the run. A beautiful narrow street with charming cobblestones is terrible for running, despite its visual appeal. Function matters more than form when you're running.
 """,
+
+        system1_persona_hint="""Evaluate as an URBAN RUNNER planning regular jogging routes.
+Prioritize: smooth, even surfaces, wide paths with room to run, shade and air quality.
+Penalize: uneven surfaces (cobblestones, cracks), narrow paths, heavy crowding, steps/stairs.""",
 
         thresholds={
             "min_overall_score": 6.0,
@@ -364,83 +254,17 @@ A wide park path with smooth pavement and tree shade is perfect - you can mainta
         },
 
         scoring_rules=PersonalityScoringRules(
-            feature_modifiers={
-                "playground": {
-                    "interest": 2.5, "comfort": 1.5, "safety": 0.5
-                },
-                "park": {
-                    "safety": 1.0, "comfort": 1.5, "interest": 1.5
-                },
-                "school_nearby": {
-                    "safety": 1.0, "comfort": 1.0
-                },
-                "crosswalk": {
-                    "safety": 1.5
-                },
-                "wide_sidewalk": {
-                    "safety": 1.0, "comfort": 2.0  # Stroller needs width
-                },
-                "heavy_traffic": {
-                    "safety": -3.0,  # SEVERE penalty
-                    "comfort": -1.5
-                },
-                "no_sidewalk": {
-                    "safety": -3.0,  # DEAL BREAKER
-                    "comfort": -2.0
-                },
-                "narrow_sidewalk": {
-                    "safety": -2.0,
-                    "comfort": -2.0  # Stroller problem
-                },
-                "construction": {
-                    "safety": -2.5,
-                    "comfort": -1.5
-                },
-                "steps_stairs": {
-                    "comfort": -2.5,  # Cannot use with stroller
-                    "safety": -1.0
-                },
-                "uneven_surface": {
-                    "safety": -1.5,
-                    "comfort": -2.0  # Stroller wheels
-                },
-                "isolated_area": {
-                    "safety": -2.0
-                },
-                "poor_lighting": {
-                    "safety": -2.0
-                },
-            },
-
-            sensitivity_multipliers={
-                "safety": 2.5,  # MAXIMUM sensitivity
-                "secure": 2.5,
-                "protection": 2.5,
-                "comfort": 1.6,
-                "accessibility": 1.8,
-                "interest": 0.6,
-                "aesthetics": 0.4,
-            },
-
-            attention_floors={
-                "safety": 7.5,  # HIGHEST threshold
-                "secure": 7.5,
-                "comfort": 6.5,
-            },
-
             concern_keywords=[
                 "traffic", "vehicle", "no sidewalk", "construction",
                 "narrow", "steps", "stairs", "unsafe", "dark",
                 "isolated", "dangerous", "hazard", "obstacle",
                 "uneven", "broken", "hole",
             ],
-
             boost_keywords=[
                 "playground", "park", "school", "crosswalk", "crossing",
                 "wide", "protected", "safe", "family", "stroller",
                 "accessible", "flat", "smooth",
             ],
-
             keyword_modifier_strength=0.8,  # Strong keyword impact
         ),
 
@@ -480,6 +304,10 @@ WHAT YOU BARELY NOTICE:
 YOUR PERSPECTIVE:
 You are EXTREMELY RISK-AVERSE. A beautiful street with heavy traffic is a bad street - period. A plain street with a playground and wide sidewalks is a good street. Even minor safety concerns matter greatly. Stroller accessibility is non-negotiable. You evaluate through the lens of "Is this safe and manageable with my children?"
 """,
+
+        system1_persona_hint="""Evaluate as a PARENT WITH YOUNG CHILDREN pushing a stroller.
+#1 PRIORITY: CHILD SAFETY. Prioritize: traffic separation, wide sidewalks for stroller, smooth surfaces, safe crossings.
+Apply SEVERE penalties to: heavy traffic, no/narrow sidewalks, steps/stairs, uneven surfaces, construction zones.""",
 
         thresholds={
             "min_overall_score": 7.0,  # High threshold
@@ -528,67 +356,15 @@ You are EXTREMELY RISK-AVERSE. A beautiful street with heavy traffic is a bad st
         },
 
         scoring_rules=PersonalityScoringRules(
-            feature_modifiers={
-                "dramatic_lighting": {
-                    "aesthetics": 2.5, "interest": 1.5
-                },
-                "interesting_architecture": {
-                    "aesthetics": 2.0, "interest": 1.5, "complexity": 1.0
-                },
-                "layered_depth": {
-                    "spatial": 2.0, "aesthetics": 1.5
-                },
-                "street_life": {
-                    "interest": 2.0, "complexity": 1.5
-                },
-                "unique_character": {
-                    "aesthetics": 2.0, "mystery": 1.5
-                },
-                "visual_contrast": {
-                    "aesthetics": 1.5, "complexity": 1.5
-                },
-                "monotonous": {
-                    "aesthetics": -2.0, "interest": -2.0
-                },
-                "generic_buildings": {
-                    "aesthetics": -1.5, "interest": -1.0
-                },
-                "visually_cluttered": {
-                    "aesthetics": -1.0, "coherence": -1.5
-                },
-                "harsh_lighting": {
-                    "aesthetics": -1.0
-                },
-            },
-
-            sensitivity_multipliers={
-                "aesthetics": 2.0,
-                "visual": 2.0,
-                "complexity": 1.8,
-                "interest": 1.8,
-                "spatial": 1.6,
-                "mystery": 1.5,
-                "safety": 0.5,
-                "comfort": 0.5,
-                "functional": 0.4,
-            },
-
-            attention_floors={
-                "aesthetics": 6.0,
-                "interest": 5.5,
-            },
-
             concern_keywords=[
                 "boring", "monotonous", "generic", "bland", "uniform",
                 "featureless", "plain", "uninteresting", "flat",
             ],
-
             boost_keywords=[
                 "dramatic", "interesting", "unique", "character", "texture",
                 "contrast", "layers", "depth", "light", "shadow",
                 "architectural", "historic", "street life", "vibrant",
             ],
-
             keyword_modifier_strength=0.7,
         ),
 
@@ -624,6 +400,10 @@ WHAT YOU IGNORE:
 YOUR PERSPECTIVE:
 A gritty alley with dramatic light and interesting textures is exciting - that's where the photos are. A safe, clean, well-maintained but visually boring street is uninteresting, regardless of how pleasant it is to walk. You're seeking visual stories and compelling images, not practical navigation. Mystery and complexity are virtues. You see through the lens, not through the pedestrian experience.
 """,
+
+        system1_persona_hint="""Evaluate as a STREET PHOTOGRAPHER seeking compelling images.
+Prioritize: visual interest, dramatic lighting, architectural detail, layers and depth, unique character.
+Ignore: walkability, safety, functional amenities. Value: complexity, texture, atmosphere, photographic stories.""",
 
         thresholds={
             "min_overall_score": 5.5,  # Lower threshold - will accept some risks
@@ -671,71 +451,16 @@ A gritty alley with dramatic light and interesting textures is exciting - that's
         },
 
         scoring_rules=PersonalityScoringRules(
-            feature_modifiers={
-                "benches_seating": {
-                    "comfort": 2.5, "functional": 2.0
-                },
-                "smooth_surface": {
-                    "safety": 2.0, "comfort": 2.0
-                },
-                "good_lighting": {
-                    "safety": 1.5
-                },
-                "gentle_slope": {
-                    "comfort": 1.5, "safety": 1.0
-                },
-                "uneven_surface": {
-                    "safety": -2.5, "comfort": -2.0  # Trip hazard
-                },
-                "steep_slope": {
-                    "safety": -2.0, "comfort": -2.0
-                },
-                "steps_stairs": {
-                    "safety": -2.0, "comfort": -2.5
-                },
-                "crowded": {
-                    "comfort": -1.5, "safety": -1.0
-                },
-                "no_handrails": {
-                    "safety": -1.5
-                },
-                "long_distance_no_rest": {
-                    "comfort": -2.0
-                },
-                "poor_signage": {
-                    "legibility": -1.5, "comfort": -1.0
-                },
-            },
-
-            sensitivity_multipliers={
-                "safety": 2.2,
-                "comfort": 2.2,
-                "ease": 2.2,
-                "legibility": 1.6,
-                "functional": 1.5,
-                "aesthetics": 0.7,
-                "interest": 0.6,
-                "complexity": 0.4,
-            },
-
-            attention_floors={
-                "safety": 7.0,
-                "comfort": 7.0,
-                "ease": 7.0,
-            },
-
             concern_keywords=[
                 "uneven", "cracked", "steep", "steps", "stairs",
                 "crowded", "obstacle", "trip", "hazard", "slippery",
                 "no handrail", "dark", "confusing",
             ],
-
             boost_keywords=[
                 "bench", "seating", "rest area", "smooth", "flat",
                 "well-lit", "handrail", "clear", "accessible",
                 "gentle", "wide", "uncrowded",
             ],
-
             keyword_modifier_strength=0.7,
         ),
 
@@ -775,6 +500,10 @@ WHAT MATTERS LESS TO YOU:
 YOUR PERSPECTIVE:
 A flat path with benches every 100 meters is ideal - you can walk at your pace and rest when needed. A visually stunning hillside street with stairs and uneven surfaces is problematic, no matter how beautiful. Your focus is on safe, comfortable mobility. Even small obstacles that others might ignore can be significant barriers for you. Rest opportunities are essential, not optional.
 """,
+
+        system1_persona_hint="""Evaluate as an ELDERLY WALKER with mobility considerations.
+Prioritize: even, smooth surfaces (trip hazards are dangerous), benches/rest areas, gentle slopes, good lighting, clear navigation.
+Apply strong penalties to: uneven surfaces, steps/stairs, steep slopes, long distances without rest.""",
 
         thresholds={
             "min_overall_score": 7.0,

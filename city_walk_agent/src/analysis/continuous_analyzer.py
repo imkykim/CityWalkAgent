@@ -12,7 +12,7 @@ integration for adaptive route analysis.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.evaluation.evaluator import Evaluator
 from src.evaluation.vlm_client import VLMConfig
@@ -27,13 +27,19 @@ class WaypointAnalysis:
     """Analysis results for a single waypoint during continuous traversal"""
     waypoint_id: int
     image_path: Path
-    scores: Dict[str, float]  # {dimension_id: score}
-    reasoning: Dict[str, str]  # {dimension_id: reasoning text}
+    scores: Dict[str, float]  # Final scores (with persona if applied)
+    reasoning: Dict[str, str]  # Final reasoning
     timestamp: str
     gps: Tuple[float, float]
     heading: float
     visual_change_detected: bool
     phash_distance: Optional[float]
+
+    # Dual VLM evaluation fields
+    neutral_scores: Optional[Dict[str, float]] = None  # Scores without persona
+    persona_adjustments: Optional[Dict[str, float]] = None  # Difference (persona - neutral)
+    neutral_reasoning: Optional[Dict[str, str]] = None  # Reasoning without persona
+    persona_applied: bool = False  # Flag indicating if persona was used
 
 
 class ContinuousAnalyzer:
@@ -70,7 +76,9 @@ class ContinuousAnalyzer:
         framework_id: str,
         context_window: int = 3,
         multi_image_threshold: float = 15.0,
-        enable_multi_image: bool = True
+        enable_multi_image: bool = True,
+        personality: Optional[Any] = None,
+        persona_hint: Optional[str] = None
     ):
         """
         Initialize continuous analyzer with VLM evaluator
@@ -80,6 +88,8 @@ class ContinuousAnalyzer:
             context_window: Number of previous waypoints to maintain in memory
             multi_image_threshold: pHash threshold to trigger multi-image evaluation
             enable_multi_image: Enable/disable multi-image comparison feature
+            personality: Optional personality object for persona-aware evaluation
+            persona_hint: Optional persona hint to prepend to evaluation prompts
         """
         logger.info(f"Initializing ContinuousAnalyzer with framework: {framework_id}")
 
@@ -104,10 +114,15 @@ class ContinuousAnalyzer:
         # Statistics tracking
         self.phash_distances: List[float] = []  # Track distances for statistics
 
+        # Store personality for persona-aware evaluation
+        self.personality = personality
+        self.persona_hint = persona_hint
+
         logger.info(
             f"Analyzer initialized - context_window={context_window}, "
             f"multi_image: {'enabled' if enable_multi_image else 'disabled'}, "
-            f"multi_image_threshold={multi_image_threshold}"
+            f"multi_image_threshold={multi_image_threshold}, "
+            f"persona_aware: {persona_hint is not None}"
         )
 
     def analyze_waypoint(
@@ -144,9 +159,12 @@ class ContinuousAnalyzer:
             self.phash_distances.append(phash_distance)
 
         if visual_change_detected:
+            distance_display = (
+                f"{phash_distance:.2f}" if phash_distance is not None else "N/A"
+            )
             logger.info(
                 f"Visual change detected at waypoint {waypoint_id} "
-                f"(phash_distance={phash_distance:.2f if phash_distance else 'N/A'})"
+                f"(phash_distance={distance_display})"
             )
 
         # 2. Build previous context if available
@@ -190,33 +208,131 @@ class ContinuousAnalyzer:
             scores = {dim_id: res['score'] for dim_id, res in comparison_results.items()}
             reasoning = {dim_id: res['reasoning'] for dim_id, res in comparison_results.items()}
 
+            # For multi-image, run persona-aware evaluation separately if hint provided
+            neutral_scores = scores.copy()
+            neutral_reasoning = reasoning.copy()
+            persona_adjustments = None
+            persona_applied = False
+
+            if self.persona_hint:
+                logger.info(
+                    f"🔶 Dual VLM (multi-image mode): Making persona-aware call for waypoint {waypoint_id}"
+                )
+                persona_results = self.evaluator.evaluate_image(
+                    str(image_path),
+                    previous_context=previous_context,
+                    persona_hint=self.persona_hint
+                )
+                persona_scores = {
+                    r['dimension_id']: r['score'] for r in persona_results
+                }
+                persona_reasoning = {
+                    r['dimension_id']: r['reasoning'] for r in persona_results
+                }
+
+                persona_adjustments = {
+                    dim: round(persona_scores.get(dim, neutral_scores[dim]) - neutral_scores[dim], 2)
+                    for dim in neutral_scores
+                }
+                persona_applied = True
+
+                # Log significant adjustments
+                significant_adjustments = {
+                    dim: adj for dim, adj in persona_adjustments.items()
+                    if abs(adj) >= 0.5
+                }
+                if significant_adjustments:
+                    logger.info(
+                        f"   Persona adjustments (WP {waypoint_id}, multi-img): {significant_adjustments}"
+                    )
+
+                # Final scores reflect persona-aware evaluation
+                scores = persona_scores
+                reasoning = persona_reasoning
+            else:
+                logger.warning(
+                    f"⚠️ Multi-image mode: No persona hint for waypoint {waypoint_id}"
+                )
+
             self.multi_image_evaluations += 1
 
         else:
-            # Standard single-image evaluation with context
+            # Standard single-image evaluation with dual VLM calls (neutral + persona)
             logger.debug(
                 f"Using single-image evaluation with context for waypoint {waypoint_id}"
             )
 
+            # === VLM Call 1: Neutral (no persona) ===
             eval_results = self.evaluator.evaluate_image(
                 str(image_path),
-                previous_context=previous_context
+                previous_context=previous_context,
+                persona_hint=None  # No persona for neutral evaluation
             )
 
-            scores = {r['dimension_id']: r['score'] for r in eval_results}
-            reasoning = {r['dimension_id']: r['reasoning'] for r in eval_results}
+            neutral_scores = {r['dimension_id']: r['score'] for r in eval_results}
+            neutral_reasoning = {r['dimension_id']: r['reasoning'] for r in eval_results}
 
-        # 5. Build WaypointAnalysis object
+            # === VLM Call 2: With Persona (if persona_hint provided) ===
+            if self.persona_hint:
+                logger.info(f"🔶 Dual VLM: Making persona-aware call for waypoint {waypoint_id}")
+                persona_results = self.evaluator.evaluate_image(
+                    str(image_path),
+                    previous_context=previous_context,
+                    persona_hint=self.persona_hint
+                )
+                persona_scores = {r['dimension_id']: r['score'] for r in persona_results}
+                persona_reasoning = {r['dimension_id']: r['reasoning'] for r in persona_results}
+
+                # Calculate adjustments
+                persona_adjustments = {
+                    dim: round(persona_scores[dim] - neutral_scores[dim], 2)
+                    for dim in neutral_scores
+                }
+                persona_applied = True
+
+                # Log significant adjustments
+                significant_adjustments = {
+                    dim: adj for dim, adj in persona_adjustments.items()
+                    if abs(adj) >= 0.5
+                }
+                if significant_adjustments:
+                    logger.info(
+                        f"   Persona adjustments (WP {waypoint_id}): {significant_adjustments}"
+                    )
+
+                # Final scores = persona scores
+                scores = persona_scores
+                reasoning = persona_reasoning
+            else:
+                logger.warning(
+                    f"⚠️ No persona hint available for waypoint {waypoint_id} - "
+                    f"using neutral scores only"
+                )
+                # No persona - use neutral as final
+                persona_scores = neutral_scores
+                persona_reasoning = neutral_reasoning
+                persona_adjustments = None
+                persona_applied = False
+
+                scores = neutral_scores
+                reasoning = neutral_reasoning
+
+        # 5. Build WaypointAnalysis object with dual score fields
         analysis = WaypointAnalysis(
             waypoint_id=waypoint_id,
             image_path=image_path,
-            scores=scores,
+            scores=scores,  # Final = persona (or neutral if no persona)
             reasoning=reasoning,
             timestamp=metadata.get('timestamp', ''),
             gps=(metadata.get('lat', 0.0), metadata.get('lon', 0.0)),
             heading=metadata.get('heading', 0.0),
             visual_change_detected=visual_change_detected,
-            phash_distance=phash_distance
+            phash_distance=phash_distance,
+            # NEW: Dual score fields
+            neutral_scores=neutral_scores,
+            persona_adjustments=persona_adjustments,
+            neutral_reasoning=neutral_reasoning,
+            persona_applied=persona_applied
         )
 
         logger.debug(

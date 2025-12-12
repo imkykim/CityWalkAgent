@@ -19,17 +19,38 @@ Usage:
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from src.agent.config.constants import (
     FRAMEWORK_SPECIFIC_PERSONALITIES,
     MAX_WEIGHT,
     MIN_WEIGHT,
+    PERSONALITY_ENHANCEMENT_MAP,
     SEMANTIC_PERSONALITIES,
     WEIGHT_NEUTRAL_VALUE,
     WEIGHT_THRESHOLD_PRIMARY,
 )
+from src.agent.config.enhanced_personalities import (
+    get_enhanced_personality,
+    list_enhanced_personalities,
+)
 from src.config import load_framework
+
+
+def _resolve_enhanced_personality_id(preset_name: str) -> Optional[str]:
+    """Return enhanced personality id for a given preset name if available."""
+    normalized = preset_name.lower()
+
+    # Direct enhanced personality
+    if normalized in list_enhanced_personalities():
+        return normalized
+
+    # Legacy preset mapped to enhanced personality
+    mapped = PERSONALITY_ENHANCEMENT_MAP.get(normalized)
+    if mapped:
+        return mapped
+
+    return None
 
 
 # ============================================================================
@@ -236,7 +257,9 @@ def get_primary_dimensions(
 
 def get_available_personalities() -> List[str]:
     """Return the list of supported personality identifiers."""
-    return list(SEMANTIC_PERSONALITIES.keys())
+    enhanced = list_enhanced_personalities()
+    legacy = [p for p in SEMANTIC_PERSONALITIES.keys() if p not in enhanced]
+    return enhanced + legacy
 
 
 def get_available_frameworks_for_personality(personality_type: str) -> List[str]:
@@ -276,6 +299,7 @@ class AgentPersonality:
     dimension_weights: Dict[str, float]
     decision_thresholds: Dict[str, float]
     explanation_style: str
+    personality_id: Optional[str] = None
 
 
 def get_preset(
@@ -284,7 +308,8 @@ def get_preset(
     """Get a preset personality configuration for a specific framework.
 
     Args:
-        preset_name: Personality identifier (safety, scenic, balanced, etc.).
+        preset_name: Personality identifier (homebuyer, runner, parent_with_kids,
+            photographer, elderly_walker, or legacy presets like safety/scenic).
         framework_id: Target evaluation framework identifier.
         use_semantic: When True, use semantic mapping to adapt to framework.
             When False, use framework-specific preset if available.
@@ -302,11 +327,35 @@ def get_preset(
 
         >>> # Semantic mapping adapts to any framework
         >>> explorer = get_preset("explorer", "custom_framework_10dim", use_semantic=True)
+        >>> # Enhanced personas are supported directly
+        >>> photo = get_preset("photographer", "streetagent_5d")
     """
-    # Get personality configuration
-    personality_config = get_personality_for_framework(
-        preset_name, framework_id, use_semantic
-    )
+    # Prefer enhanced personalities (including legacy aliases) when available
+    enhanced_id = _resolve_enhanced_personality_id(preset_name)
+    resolved_personality_id = enhanced_id or preset_name
+
+    if enhanced_id:
+        use_semantic = True  # Enhanced personas are framework-agnostic
+        enhanced_config = get_enhanced_personality(enhanced_id)
+        personality_config = {
+            "name": enhanced_config.name,
+            "description": enhanced_config.description,
+            "semantic_config": enhanced_config.semantic_config,
+            "weight_distribution": enhanced_config.weight_distribution,
+            "thresholds": enhanced_config.thresholds,
+            "explanation_style": enhanced_config.explanation_style,
+        }
+    else:
+        try:
+            personality_config = get_personality_for_framework(
+                preset_name, framework_id, use_semantic
+            )
+        except ValueError as e:
+            available = ", ".join(get_available_personalities())
+            raise ValueError(
+                f"Unknown personality type: {preset_name}. "
+                f"Valid types: {available}"
+            ) from e
 
     # Load framework to get dimension definitions
     framework = load_framework(framework_id)
@@ -349,6 +398,7 @@ def get_preset(
         dimension_weights=dimension_weights,
         decision_thresholds=decision_thresholds,
         explanation_style=explanation_style,
+        personality_id=resolved_personality_id,
     )
 
 
@@ -360,7 +410,7 @@ def list_presets() -> List[str]:
 
     Examples:
         >>> list_presets()
-        ['safety', 'scenic', 'balanced', 'comfort', 'explorer', 'technical']
+        ['homebuyer', 'runner', 'parent_with_kids', 'photographer', 'elderly_walker', 'safety', 'scenic', 'balanced', 'comfort', 'explorer', 'technical']
     """
     return get_available_personalities()
 
@@ -410,4 +460,5 @@ def create_neutral_personality(framework_id: str) -> AgentPersonality:
         dimension_weights=dimension_weights,
         decision_thresholds=decision_thresholds,
         explanation_style="balanced",
+        personality_id="neutral",
     )
