@@ -20,6 +20,7 @@ from src.utils.logging import get_logger
 @dataclass
 class VisualChangeResult:
     """Result of visual change detection for a single waypoint."""
+
     changed: bool
     phash_distance: Optional[float]
     should_trigger: bool
@@ -29,7 +30,7 @@ class VisualChangeResult:
 class CognitiveController:
     """Handle perceptual hashing and trigger decisions for System 2."""
 
-    def __init__(self, phash_threshold: int = 10, hash_size: int = 8) -> None:
+    def __init__(self, phash_threshold: int = 30, hash_size: int = 8) -> None:
         """Initialize with pHash threshold for visual change detection."""
         self.phash_threshold = phash_threshold
         self.hash_size = hash_size
@@ -67,10 +68,7 @@ class CognitiveController:
         """
         if force:
             return VisualChangeResult(
-                changed=True,
-                phash_distance=None,
-                should_trigger=True,
-                reason="force"
+                changed=True, phash_distance=None, should_trigger=True, reason="force"
             )
 
         if not image_path or not Path(image_path).exists():
@@ -78,7 +76,7 @@ class CognitiveController:
                 changed=False,
                 phash_distance=None,
                 should_trigger=False,
-                reason="no_image"
+                reason="no_image",
             )
 
         try:
@@ -89,7 +87,7 @@ class CognitiveController:
                 changed=False,
                 phash_distance=None,
                 should_trigger=False,
-                reason="phash_error"
+                reason="phash_error",
             )
 
         # First image establishes baseline
@@ -99,7 +97,7 @@ class CognitiveController:
                 changed=False,
                 phash_distance=None,
                 should_trigger=False,
-                reason="baseline"
+                reason="baseline",
             )
 
         # Compute distance
@@ -121,7 +119,7 @@ class CognitiveController:
             changed=changed,
             phash_distance=distance,
             should_trigger=changed,
-            reason="visual_change" if changed else "no_change"
+            reason="visual_change" if changed else "no_change",
         )
 
     def should_trigger_thinking(

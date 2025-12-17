@@ -1,24 +1,28 @@
-"""Demo: Dual-system evaluation with enhanced personality system.
+"""Demo: Dual VLM Evaluation - Neutral vs Persona-Aware Scoring.
 
-This demo showcases the dual-system cognitive architecture with enhanced
-personality-driven score transformations.
+This demo showcases the dual VLM evaluation system that compares:
+- Neutral evaluation (no persona bias)
+- Persona-aware evaluation (with personality-specific hints)
+
+The system makes TWO VLM calls per waypoint to reveal how persona hints
+influence perception and scoring of walking environments.
 
 Examples:
-    # Run with parent personality (extreme safety focus)
+    # Run with parent personality to see safety bias
     python examples/dual_system_demo.py --personality parent_with_kids
 
-    # Run photographer personality (aesthetics focus)
+    # Run photographer personality to see aesthetics bias
     python examples/dual_system_demo.py --personality photographer
 
-    # Compare safety vs scenic
-    python examples/dual_system_demo.py --personality safety
-    python examples/dual_system_demo.py --personality scenic --output-dir outputs/scenic_demo
+    # Compare runner vs elderly walker
+    python examples/dual_system_demo.py --personality runner
+    python examples/dual_system_demo.py --personality elderly_walker --output-dir outputs/elderly_demo
 
     # Use existing route images
-    python examples/dual_system_demo.py --route-folder data/images/singapore/ --personality runner
+    python examples/dual_system_demo.py --route-folder data/images/singapore/ --personality homebuyer
 
-    # Custom coordinates
-    python examples/dual_system_demo.py --start "22.3298,114.1630" --end "22.3250,114.1550" --personality elderly_walker
+    # Visualize only (skip re-running VLM)
+    python examples/dual_system_demo.py --visualize-only --output-dir outputs/dual_system_demo
 """
 
 import sys
@@ -31,14 +35,14 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.agent.walking_agent import WalkingAgent
-from src.utils.visualization import plot_dual_system_analysis
+from src.utils.visualization import RouteVisualizer
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 def _load_existing_results(output_dir: Path) -> dict:
-    """Load prior run outputs to regenerate visualizations without rerunning the agent."""
+    """Load prior run outputs to regenerate visualizations without rerunning VLM."""
     analysis_path = output_dir / "analysis_results.json"
     if not analysis_path.exists():
         raise FileNotFoundError(
@@ -46,131 +50,229 @@ def _load_existing_results(output_dir: Path) -> dict:
             "Run the demo once without --visualize-only to generate it."
         )
 
-    analysis_results = json.loads(analysis_path.read_text())
+    with open(analysis_path, "r", encoding="utf-8") as f:
+        analysis_results = json.load(f)
 
-    # Get waypoint IDs from this run's analysis
-    current_waypoint_ids = {r["waypoint_id"] for r in analysis_results}
+    return {"analysis_results": analysis_results}
 
-    # Try multiple sources for narrative chapters (in order of preference)
-    narrative_chapters = None
 
-    # 1. Check for JSON in output dir
-    narrative_json = output_dir / "narrative_chapters.json"
-    if narrative_json.exists():
-        narrative_chapters = json.loads(narrative_json.read_text())
-        # Filter to current run's waypoints
-        narrative_chapters = [
-            ch
-            for ch in narrative_chapters
-            if ch.get("waypoint_id") in current_waypoint_ids
-        ]
-    else:
-        # 2. Check for JSONL in agent memory (common location)
-        from src.config import settings
+def generate_persona_visualizations(
+    analysis_results: list,
+    output_dir: Path,
+    framework_id: str,
+    personality_name: str,
+) -> dict:
+    """Generate visualizations comparing neutral vs persona-aware evaluations.
 
-        memory_dir = settings.data_dir / "agent_memory"
-        # Try to find the narrative JSONL file
-        narrative_jsonl_files = list(memory_dir.glob("*_narrative.jsonl"))
-        if narrative_jsonl_files:
-            # Use the most recent one
-            narrative_jsonl = max(
-                narrative_jsonl_files, key=lambda p: p.stat().st_mtime
-            )
-            all_chapters = []
-            with open(narrative_jsonl, "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
-                        all_chapters.append(json.loads(line))
+    Args:
+        analysis_results: List of waypoint result dicts with neutral_scores and persona scores
+        output_dir: Directory to save visualizations
+        framework_id: Framework ID for dimension labels
+        personality_name: Name of personality for titles
 
-            # Filter to only chapters matching this run's waypoint IDs
-            # and take the most recent chapter for each waypoint
-            waypoint_to_chapter = {}
-            for chapter in all_chapters:
-                wp_id = chapter.get("waypoint_id")
-                if wp_id in current_waypoint_ids:
-                    # Keep the most recent chapter for this waypoint
-                    if wp_id not in waypoint_to_chapter or chapter.get(
-                        "timestamp", ""
-                    ) > waypoint_to_chapter[wp_id].get("timestamp", ""):
-                        waypoint_to_chapter[wp_id] = chapter
+    Returns:
+        Dict mapping visualization names to file paths
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    viz = RouteVisualizer(framework_id=framework_id)
 
-            # Sort by waypoint_id to maintain order
-            narrative_chapters = (
-                sorted(
-                    waypoint_to_chapter.values(),
-                    key=lambda ch: ch.get("waypoint_id", 0),
-                )
-                if waypoint_to_chapter
-                else None
-            )
+    print("\n" + "=" * 60)
+    print("GENERATING PERSONA IMPACT VISUALIZATIONS")
+    print("=" * 60)
+
+    viz_paths = {}
+
+    # 1. Persona comparison (line plots with arrows)
+    print("\n1. Creating neutral vs persona comparison plots...")
+    comparison_path = output_dir / "persona_comparison.png"
+    viz.plot_persona_comparison(
+        waypoint_results=analysis_results,
+        title=f"Neutral vs Persona-Aware Evaluation ({personality_name})",
+        save_path=comparison_path,
+    )
+    viz_paths["persona_comparison"] = comparison_path
+
+    # 2. Summary radar chart
+    print("2. Creating persona impact radar chart...")
+    radar_path = output_dir / "persona_summary_radar.png"
+    viz.plot_persona_summary_radar(
+        waypoint_results=analysis_results,
+        save_path=radar_path,
+    )
+    viz_paths["persona_radar"] = radar_path
+
+    # 3. Delta distribution (histograms + box plot)
+    print("3. Creating persona adjustment distribution...")
+    delta_path = output_dir / "persona_delta_distribution.png"
+    viz.plot_persona_delta_distribution(
+        waypoint_results=analysis_results,
+        save_path=delta_path,
+    )
+    viz_paths["persona_delta"] = delta_path
+
+    # 4. Individual score plots (neutral and persona separately)
+    print("4. Creating individual score timeline plots...")
+
+    # Extract neutral and persona scores
+    waypoint_ids = [str(r["waypoint_id"]) for r in analysis_results]
+    system2_triggers = [str(r["waypoint_id"]) for r in analysis_results if r.get("system2_triggered")]
+
+    # Get dimensions from first result
+    first_result = analysis_results[0]
+    neutral_scores_dict = first_result.get("neutral_scores", first_result.get("system1_scores", {}))
+    dimensions = list(neutral_scores_dict.keys())
+
+    # Build neutral scores dict
+    neutral_scores = {dim: [] for dim in dimensions}
+    for r in analysis_results:
+        n_scores = r.get("neutral_scores", r.get("system1_scores", {}))
+        for dim in dimensions:
+            neutral_scores[dim].append(n_scores.get(dim, 0))
+
+    # Build persona scores dict
+    persona_scores = {dim: [] for dim in dimensions}
+    for r in analysis_results:
+        p_scores = r.get("scores", {})
+        for dim in dimensions:
+            persona_scores[dim].append(p_scores.get(dim, 0))
+
+    # Plot neutral scores
+    neutral_path = output_dir / "scores_neutral.png"
+    viz.plot_scores_with_trends(
+        scores=neutral_scores,
+        waypoint_ids=waypoint_ids,
+        title="Neutral Evaluation (No Persona Bias)",
+        save_path=neutral_path,
+        system2_triggered_waypoints=system2_triggers,
+    )
+    viz_paths["neutral_scores"] = neutral_path
+
+    # Plot persona-aware scores
+    persona_path = output_dir / "scores_persona_aware.png"
+    viz.plot_scores_with_trends(
+        scores=persona_scores,
+        waypoint_ids=waypoint_ids,
+        title=f"Persona-Aware Evaluation ({personality_name})",
+        save_path=persona_path,
+        system2_triggered_waypoints=system2_triggers,
+    )
+    viz_paths["persona_scores"] = persona_path
+
+    print("\n✅ All visualizations generated!")
+    return viz_paths
+
+
+def compute_persona_statistics(analysis_results: list) -> dict:
+    """Compute statistics about persona impact on scoring.
+
+    Args:
+        analysis_results: List of waypoint result dicts
+
+    Returns:
+        Dict with persona impact statistics
+    """
+    import numpy as np
+
+    # Collect adjustments
+    all_adjustments = []
+    dimension_adjustments = {}
+
+    for result in analysis_results:
+        adjustments = result.get("persona_adjustments", {})
+        if adjustments:
+            for dim, adj in adjustments.items():
+                all_adjustments.append(adj)
+                dimension_adjustments.setdefault(dim, []).append(adj)
+
+    if not all_adjustments:
+        return {
+            "total_waypoints": len(analysis_results),
+            "persona_applied": False,
+            "mean_adjustment": 0.0,
+            "median_adjustment": 0.0,
+            "max_positive": 0.0,
+            "max_negative": 0.0,
+        }
+
+    # Overall statistics
+    all_adjustments = np.array(all_adjustments)
+    positive_adjustments = all_adjustments[all_adjustments > 0]
+    negative_adjustments = all_adjustments[all_adjustments < 0]
+
+    # Per-dimension statistics
+    dim_stats = {}
+    for dim, adjs in dimension_adjustments.items():
+        adjs_arr = np.array(adjs)
+        dim_stats[dim] = {
+            "mean": float(np.mean(adjs_arr)),
+            "median": float(np.median(adjs_arr)),
+            "std": float(np.std(adjs_arr)),
+            "min": float(np.min(adjs_arr)),
+            "max": float(np.max(adjs_arr)),
+        }
 
     return {
-        "analysis_results": analysis_results,
-        "narrative_chapters": narrative_chapters,
+        "total_waypoints": len(analysis_results),
+        "persona_applied": True,
+        "mean_adjustment": float(np.mean(all_adjustments)),
+        "median_adjustment": float(np.median(all_adjustments)),
+        "std_adjustment": float(np.std(all_adjustments)),
+        "max_positive": float(np.max(positive_adjustments)) if len(positive_adjustments) > 0 else 0.0,
+        "max_negative": float(np.min(negative_adjustments)) if len(negative_adjustments) > 0 else 0.0,
+        "positive_count": int(np.sum(all_adjustments > 0.1)),
+        "negative_count": int(np.sum(all_adjustments < -0.1)),
+        "neutral_count": int(np.sum(np.abs(all_adjustments) <= 0.1)),
+        "dimension_stats": dim_stats,
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Dual-system demo with enhanced personality system",
+        description="Dual VLM evaluation demo: Neutral vs Persona-Aware scoring",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Enhanced Personalities Available:
-  Basic presets (automatically use enhanced versions):
-    - safety (→ parent_with_kids): Extreme safety focus, stroller accessibility
-    - scenic (→ photographer): Visual interest, aesthetics prioritized
-    - balanced (→ homebuyer): Practical livability, family-friendly
-    - comfort (→ elderly_walker): Accessibility, rest areas, smooth surfaces
-    - explorer (→ photographer): Discovery and visual complexity
-    - technical: Neutral analysis (no enhancement)
+  - homebuyer: Family residence evaluation (focus: safety, convenience, amenities)
+  - runner: Running route suitability (focus: smooth surfaces, width, air quality)
+  - parent_with_kids: Child safety paramount (focus: traffic separation, stroller access)
+  - photographer: Photogenic scenes (focus: visual interest, lighting, composition)
+  - elderly_walker: Mobility considerations (focus: smooth surfaces, rest areas, gentle slopes)
 
-  Direct enhanced personalities:
-    - homebuyer: Family residence evaluation
-    - runner: Running route suitability
-    - parent_with_kids: Child safety paramount
-    - photographer: Photogenic scenes
-    - elderly_walker: Mobility considerations
+What This Demo Shows:
+  The system makes TWO VLM calls per waypoint:
+  1. Neutral evaluation (no persona bias)
+  2. Persona-aware evaluation (with personality-specific hints)
+
+  Visualizations reveal how personas influence perception and scoring.
         """
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("outputs/dual_system_demo"),
-        help="Directory containing or writing outputs.",
+        default=Path("outputs/dual_vlm_demo"),
+        help="Directory for outputs.",
     )
     parser.add_argument(
         "--visualize-only",
         action="store_true",
-        help="Skip running the agent and only render visualizations from existing outputs.",
+        help="Skip VLM calls and only render visualizations from existing outputs.",
     )
     parser.add_argument(
         "--framework-id",
         default="streetagent_5d",
-        help="Framework id to use for agent (when running) and visualization labels/colors.",
+        help="Evaluation framework to use.",
     )
     parser.add_argument(
         "--personality",
-        default="safety",
-        choices=["safety", "scenic", "balanced", "comfort", "explorer", "technical",
-                 "homebuyer", "runner", "parent_with_kids", "photographer", "elderly_walker"],
-        help="Personality preset or enhanced personality to use (default: safety).",
-    )
-    parser.add_argument(
-        "--enable-system2",
-        action="store_true",
-        default=True,
-        help="Enable System 2 deep thinking (enabled by default).",
-    )
-    parser.add_argument(
-        "--disable-system2",
-        action="store_true",
-        help="Disable System 2 and use only System 1 (fast perception).",
+        default="homebuyer",
+        choices=["homebuyer", "runner", "parent_with_kids", "photographer", "elderly_walker"],
+        help="Enhanced personality to use (default: homebuyer).",
     )
     parser.add_argument(
         "--route-folder",
         type=Path,
-        help="Path to existing route images folder (e.g., data/images/singapore/). "
-        "If provided, the agent will analyze these images instead of generating new ones.",
+        help="Path to existing route images folder. "
+        "If provided, analyze these images instead of generating new ones.",
     )
     parser.add_argument(
         "--start",
@@ -188,6 +290,20 @@ Enhanced Personalities Available:
         default=12,
         help="Waypoint interval in meters (default: 12).",
     )
+    parser.add_argument(
+        "--phash-threshold",
+        type=int,
+        default=30,
+        help="pHash threshold for System 2 trigger (default: 30). "
+        "Lower values = more sensitive to visual changes.",
+    )
+    parser.add_argument(
+        "--multi-image-threshold",
+        type=float,
+        default=30.0,
+        help="Threshold for multi-image VLM evaluation (default: 30.0). "
+        "Higher values = only very significant changes trigger multi-image mode.",
+    )
     args = parser.parse_args()
 
     # Configuration
@@ -198,7 +314,8 @@ Enhanced Personalities Available:
     framework_id = args.framework_id
     route_folder = args.route_folder
     personality = args.personality
-    enable_system2 = args.enable_system2 and not args.disable_system2
+    phash_threshold = args.phash_threshold
+    multi_image_threshold = args.multi_image_threshold
 
     if args.visualize_only:
         logger.info(
@@ -206,45 +323,42 @@ Enhanced Personalities Available:
             extra={"output_dir": str(output_dir)},
         )
         result = _load_existing_results(output_dir)
+        analysis_results = result["analysis_results"]
     else:
         # Show personality info
-        from src.agent.config import (
-            get_enhanced_personality,
-            list_enhanced_personalities,
-            PERSONALITY_ENHANCEMENT_MAP
-        )
+        from src.agent.config.enhanced_personalities import get_enhanced_personality
 
-        print("\n" + "=" * 60)
-        print("ENHANCED PERSONALITY SYSTEM")
-        print("=" * 60)
+        print("\n" + "=" * 70)
+        print("DUAL VLM EVALUATION: NEUTRAL vs PERSONA-AWARE")
+        print("=" * 70)
         print(f"\nSelected personality: {personality}")
 
-        # Check if this maps to an enhanced personality
-        enhanced_id = None
-        if personality in PERSONALITY_ENHANCEMENT_MAP:
-            enhanced_id = PERSONALITY_ENHANCEMENT_MAP[personality]
-            if enhanced_id:
-                print(f"  → Maps to enhanced: {enhanced_id}")
-        elif personality in list_enhanced_personalities():
-            enhanced_id = personality
-            print(f"  → Using enhanced personality directly")
+        try:
+            enhanced_config = get_enhanced_personality(personality)
+            print(f"\nPersonality: {enhanced_config.name}")
+            print(f"Description: {enhanced_config.description}")
 
-        if enhanced_id:
-            try:
-                enhanced_config = get_enhanced_personality(enhanced_id)
-                print(f"\nEnhanced Personality: {enhanced_config.name}")
-                print(f"Description: {enhanced_config.description}")
-                print(f"Feature modifiers: {len(enhanced_config.scoring_rules.feature_modifiers)}")
-                print(f"Sensitivity multipliers: {len(enhanced_config.scoring_rules.sensitivity_multipliers)}")
-                print(f"Concern keywords: {len(enhanced_config.scoring_rules.concern_keywords)}")
-                print(f"Boost keywords: {len(enhanced_config.scoring_rules.boost_keywords)}")
-            except ValueError:
-                print("  (No enhanced config available)")
-        else:
-            print("  (Using basic personality - no enhancement)")
+            # Show persona hint
+            if hasattr(enhanced_config, 'system1_persona_hint') and enhanced_config.system1_persona_hint:
+                print(f"\nPersona Hint Preview:")
+                hint_preview = enhanced_config.system1_persona_hint.strip().split('\n')[0]
+                print(f"  {hint_preview}...")
 
-        print(f"\nSystem 2 enabled: {enable_system2}")
-        print("=" * 60 + "\n")
+            print(f"\nScoring Configuration:")
+            print(f"  Concern keywords: {len(enhanced_config.scoring_rules.concern_keywords)}")
+            print(f"  Boost keywords: {len(enhanced_config.scoring_rules.boost_keywords)}")
+        except ValueError as e:
+            print(f"Error loading personality: {e}")
+            return
+
+        print("\n" + "=" * 70)
+        print("VLM EVALUATION STRATEGY:")
+        print("  For each waypoint, the system makes TWO VLM calls:")
+        print("  1. 🔷 Neutral: Unbiased evaluation (no persona hint)")
+        print("  2. 🔶 Persona: Evaluation with personality-specific hint")
+        print("  ")
+        print("  This reveals how personas shift perception and scoring.")
+        print("=" * 70 + "\n")
 
         # Initialize agent
         agent = WalkingAgent.from_preset(
@@ -252,20 +366,21 @@ Enhanced Personalities Available:
             framework_id=framework_id,
         )
 
-        # Configure System 2 thresholds
-        if enable_system2:
-            agent.cognitive.phash_threshold = 30
-            agent.continuous_analyzer.multi_image_threshold = 30
-            agent.continuous_analyzer.enable_multi_image = True
-            agent.continuous_analyzer.adaptive = False
-        else:
-            # Effectively disable System 2 by setting very high thresholds
-            agent.thinking_module.enable_score_revision = False
-            logger.info("System 2 disabled - using only System 1 perception")
+        # Configure thresholds BEFORE accessing analyzers (they are lazy-loaded)
+        agent.set_thresholds(
+            phash_threshold=phash_threshold,
+            multi_image_threshold=multi_image_threshold,
+        )
+        logger.info(
+            f"Thresholds configured: phash={phash_threshold}, "
+            f"multi_image={multi_image_threshold}"
+        )
+
+        # NOTE: The dual VLM calls are now automatic in ContinuousAnalyzer!
+        # No additional configuration needed - it will make both calls by default.
 
         if route_folder:
-            # Run with existing route images
-            logger.info("Starting dual-system demo with existing route images")
+            logger.info("Starting dual VLM evaluation with existing route images")
             logger.info(f"Route folder: {route_folder}")
 
             result = agent.run_with_memory_from_folder(
@@ -273,12 +388,10 @@ Enhanced Personalities Available:
                 output_dir=output_dir,
             )
         else:
-            # Generate new route
-            logger.info("Starting dual-system demo")
+            logger.info("Starting dual VLM evaluation with new route")
             logger.info(f"Route: {start} → {end}")
             logger.info(f"Interval: {interval}m")
 
-            # Run analysis with memory
             result = agent.run_with_memory(
                 start=start,
                 end=end,
@@ -286,99 +399,114 @@ Enhanced Personalities Available:
                 output_dir=output_dir,
             )
 
-        # Print statistics
-        stats = result.get("statistics", {})
-        dual_stats = stats.get("dual_system", {})
+        analysis_results = result.get("analysis_results", [])
 
-        print("\n" + "=" * 60)
-        print("DUAL-SYSTEM ANALYSIS RESULTS")
-        print("=" * 60)
+        # Print persona impact statistics
+        stats = compute_persona_statistics(analysis_results)
+
+        print("\n" + "=" * 70)
+        print("PERSONA IMPACT ANALYSIS")
+        print("=" * 70)
 
         route_data = result.get("route_data", {})
         if route_data:
             print(f"\nRoute: {route_data.get('route_id')}")
-        print(f"Distance: {stats.get('route_length_km', 0.0):.2f} km")
-        print(f"Waypoints: {stats.get('total_waypoints', 0)}")
+
+        route_length = result.get("statistics", {}).get("route_length_km", 0.0)
+        print(f"Distance: {route_length:.2f} km")
+        print(f"Waypoints: {stats['total_waypoints']}")
         print(f"Personality: {personality}")
 
-        print(
-            f"\nSystem 2 Triggers: {dual_stats.get('system2_triggered', 0)} "
-            f"({dual_stats.get('system2_trigger_rate', 0.0):.1%})"
-        )
-        print(
-            f"Avg Score Adjustment: {dual_stats.get('avg_score_adjustment', 0.0):+.2f}"
-        )
-        print(f"  Positive adjustments: {dual_stats.get('positive_adjustments', 0)}")
-        print(f"  Negative adjustments: {dual_stats.get('negative_adjustments', 0)}")
-        print(f"  No change: {dual_stats.get('no_change', 0)}")
+        if stats["persona_applied"]:
+            print(f"\n📊 Persona Impact Summary:")
+            print(f"  Mean adjustment: {stats['mean_adjustment']:+.2f}")
+            print(f"  Median adjustment: {stats['median_adjustment']:+.2f}")
+            print(f"  Std deviation: {stats['std_adjustment']:.2f}")
+            print(f"  Max positive boost: +{stats['max_positive']:.2f}")
+            print(f"  Max negative penalty: {stats['max_negative']:.2f}")
 
-        # Show enhanced personality impact
-        analysis_results = result.get("analysis_results", [])
-        system2_results = [r for r in analysis_results if r.get("system2_result")]
+            print(f"\n📈 Adjustment Distribution:")
+            print(f"  Positive adjustments (>0.1): {stats['positive_count']}")
+            print(f"  Negative adjustments (<-0.1): {stats['negative_count']}")
+            print(f"  Neutral (≈0): {stats['neutral_count']}")
 
-        if system2_results:
-            print(f"\n--- Enhanced Personality Impact ---")
-
-            # Count transformation applications
-            transformations_applied = sum(
-                1 for r in system2_results
-                if r.get("system2_result", {}).get("memory_influence", {}).get("transformation_applied", False)
-            )
-            print(f"Transformations applied: {transformations_applied}/{len(system2_results)}")
-
-            # Collect all detected features
-            all_features = []
-            for r in system2_results:
-                memory_inf = r.get("system2_result", {}).get("memory_influence", {})
-                features = memory_inf.get("detected_features", [])
-                all_features.extend(features)
-
-            if all_features:
-                from collections import Counter
-                feature_counts = Counter(all_features)
-                print(f"\nTop detected features:")
-                for feature, count in feature_counts.most_common(5):
-                    print(f"  - {feature}: {count}x")
-
-            # Show personality impact levels
-            personality_impacts = [
-                r.get("system2_result", {}).get("personality_factor", "unknown")
-                for r in system2_results
-            ]
-            from collections import Counter
-            impact_counts = Counter(personality_impacts)
-            print(f"\nPersonality impact distribution:")
-            for impact, count in sorted(impact_counts.items(), reverse=True):
-                print(f"  - {impact}: {count}")
-
-        print(f"\nNarrative Chapters: {len(result.get('narrative_chapters', []))}")
+            # Show per-dimension stats
+            dim_stats = stats.get("dimension_stats", {})
+            if dim_stats:
+                print(f"\n🎯 Per-Dimension Impact:")
+                for dim, ds in sorted(dim_stats.items(), key=lambda x: abs(x[1]["mean"]), reverse=True):
+                    print(f"  {dim}:")
+                    print(f"    Mean: {ds['mean']:+.2f}, Range: [{ds['min']:.2f}, {ds['max']:.2f}]")
+        else:
+            print("\n⚠️  No persona adjustments detected (persona hint may not be configured)")
 
     # Generate visualizations
-    print("\nGenerating visualizations...")
-    narrative_chapters = result.get("narrative_chapters")
-    if narrative_chapters:
-        print(f"Loaded {len(narrative_chapters)} narrative chapters")
-    else:
-        print("No narrative chapters available")
+    print("\n" + "=" * 70)
+    print("GENERATING VISUALIZATIONS")
+    print("=" * 70)
 
     viz_dir = output_dir / "visualizations"
-    viz_paths = plot_dual_system_analysis(
-        waypoint_results=result["analysis_results"],
-        narrative_chapters=narrative_chapters,
-        output_dir=viz_dir,
-        framework_id=framework_id,
-        generate_radar_sets=True,
-    )
+    viz_paths = {}
 
-    print("\nVisualizations saved:")
-    for name, path in viz_paths.items():
-        print(f"  - {name}: {path}")
+    try:
+        # 1. Generate persona comparison visualizations (neutral vs persona-aware)
+        print("\n=== Persona Impact Visualizations ===")
+        persona_viz_paths = generate_persona_visualizations(
+            analysis_results=analysis_results,
+            output_dir=viz_dir,
+            framework_id=framework_id,
+            personality_name=personality,
+        )
+        viz_paths.update(persona_viz_paths)
 
-    print(f"\nComplete narrative: {output_dir / 'complete_narrative.md'}")
+        # 2. Generate traditional dual-system visualizations (System 1 vs System 2)
+        print("\n=== Memory/Thinking System Visualizations ===")
+        from src.utils.visualization import plot_dual_system_analysis
 
-    print("\n" + "=" * 60)
-    print("✅ Dual-system demo complete!")
-    print("=" * 60)
+        # Load narrative chapters if available
+        narrative_chapters = None
+        narrative_json = output_dir / "narrative_chapters.json"
+        if narrative_json.exists():
+            import json
+            with open(narrative_json, "r", encoding="utf-8") as f:
+                narrative_chapters = json.load(f)
+            print(f"Loaded {len(narrative_chapters)} narrative chapters")
+
+        system_viz_paths = plot_dual_system_analysis(
+            waypoint_results=analysis_results,
+            narrative_chapters=narrative_chapters,
+            output_dir=viz_dir,
+            framework_id=framework_id,
+            generate_radar_sets=False,  # Skip radar sets for speed
+        )
+        viz_paths.update(system_viz_paths)
+
+        print("\n📁 All visualizations saved:")
+        print("\nPersona Impact (Neutral vs Persona-Aware):")
+        for name in ["persona_comparison", "persona_radar", "persona_delta", "neutral_scores", "persona_scores"]:
+            if name in viz_paths:
+                print(f"  ✓ {viz_paths[name].name}")
+
+        print("\nMemory/Thinking System (System 1 vs System 2):")
+        for name in ["comparison", "heatmap", "system1", "final_scores", "narrative"]:
+            if name in viz_paths:
+                print(f"  ✓ {viz_paths[name].name}")
+
+        print(f"\n📂 All outputs in: {output_dir}")
+    except Exception as e:
+        logger.error(f"Visualization generation failed: {e}", exc_info=True)
+        print(f"\n❌ Visualization error: {e}")
+
+    print("\n" + "=" * 70)
+    print("✅ Dual VLM demo complete!")
+    print("=" * 70)
+    print(f"\nNext steps:")
+    print(f"  1. View visualizations in: {viz_dir}")
+    print(f"  2. Compare with other personalities:")
+    print(f"     python examples/dual_system_demo.py --personality photographer")
+    print(f"  3. Re-visualize without re-running VLM:")
+    print(f"     python examples/dual_system_demo.py --visualize-only")
+    print("=" * 70 + "\n")
 
 
 if __name__ == "__main__":

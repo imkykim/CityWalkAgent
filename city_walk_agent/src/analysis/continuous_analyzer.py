@@ -25,6 +25,7 @@ logger = get_logger(__name__)
 @dataclass
 class WaypointAnalysis:
     """Analysis results for a single waypoint during continuous traversal"""
+
     waypoint_id: int
     image_path: Path
     scores: Dict[str, float]  # Final scores (with persona if applied)
@@ -37,7 +38,9 @@ class WaypointAnalysis:
 
     # Dual VLM evaluation fields
     neutral_scores: Optional[Dict[str, float]] = None  # Scores without persona
-    persona_adjustments: Optional[Dict[str, float]] = None  # Difference (persona - neutral)
+    persona_adjustments: Optional[Dict[str, float]] = (
+        None  # Difference (persona - neutral)
+    )
     neutral_reasoning: Optional[Dict[str, str]] = None  # Reasoning without persona
     persona_applied: bool = False  # Flag indicating if persona was used
 
@@ -75,10 +78,10 @@ class ContinuousAnalyzer:
         self,
         framework_id: str,
         context_window: int = 3,
-        multi_image_threshold: float = 15.0,
+        multi_image_threshold: float = 30.0,
         enable_multi_image: bool = True,
         personality: Optional[Any] = None,
-        persona_hint: Optional[str] = None
+        persona_hint: Optional[str] = None,
     ):
         """
         Initialize continuous analyzer with VLM evaluator
@@ -98,7 +101,7 @@ class ContinuousAnalyzer:
         vlm_config = VLMConfig(
             api_key=settings.qwen_vlm_api_key,
             model=settings.qwen_vlm_model,
-            api_url=settings.qwen_vlm_api_url
+            api_url=settings.qwen_vlm_api_url,
         )
         self.evaluator = Evaluator(vlm_config, framework, max_concurrent=5)
 
@@ -131,7 +134,7 @@ class ContinuousAnalyzer:
         image_path: Path,
         metadata: Dict,
         visual_change_detected: bool = False,
-        phash_distance: Optional[float] = None
+        phash_distance: Optional[float] = None,
     ) -> WaypointAnalysis:
         """
         Analyze single waypoint with visual change info from CognitiveController
@@ -179,7 +182,7 @@ class ContinuousAnalyzer:
                 "reasoning": prev_analysis.reasoning,
                 "summary": self._summarize_analysis(prev_analysis),
                 "phash_distance": phash_distance,
-                "visual_change_detected": visual_change_detected
+                "visual_change_detected": visual_change_detected,
             }
 
         # 3. Determine evaluation mode
@@ -201,12 +204,16 @@ class ContinuousAnalyzer:
             comparison_results = self.evaluator.evaluate_with_comparison(
                 previous_image_path=prev_img_path,
                 current_image_path=image_path,
-                previous_context=previous_context
+                previous_context=previous_context,
             )
 
             # Convert comparison results to standard format
-            scores = {dim_id: res['score'] for dim_id, res in comparison_results.items()}
-            reasoning = {dim_id: res['reasoning'] for dim_id, res in comparison_results.items()}
+            scores = {
+                dim_id: res["score"] for dim_id, res in comparison_results.items()
+            }
+            reasoning = {
+                dim_id: res["reasoning"] for dim_id, res in comparison_results.items()
+            }
 
             # For multi-image, run persona-aware evaluation separately if hint provided
             neutral_scores = scores.copy()
@@ -221,24 +228,29 @@ class ContinuousAnalyzer:
                 persona_results = self.evaluator.evaluate_image(
                     str(image_path),
                     previous_context=previous_context,
-                    persona_hint=self.persona_hint
+                    persona_hint=self.persona_hint,
                 )
                 persona_scores = {
-                    r['dimension_id']: r['score'] for r in persona_results
+                    r["dimension_id"]: r["score"] for r in persona_results
                 }
                 persona_reasoning = {
-                    r['dimension_id']: r['reasoning'] for r in persona_results
+                    r["dimension_id"]: r["reasoning"] for r in persona_results
                 }
 
                 persona_adjustments = {
-                    dim: round(persona_scores.get(dim, neutral_scores[dim]) - neutral_scores[dim], 2)
+                    dim: round(
+                        persona_scores.get(dim, neutral_scores[dim])
+                        - neutral_scores[dim],
+                        2,
+                    )
                     for dim in neutral_scores
                 }
                 persona_applied = True
 
                 # Log significant adjustments
                 significant_adjustments = {
-                    dim: adj for dim, adj in persona_adjustments.items()
+                    dim: adj
+                    for dim, adj in persona_adjustments.items()
                     if abs(adj) >= 0.5
                 }
                 if significant_adjustments:
@@ -266,22 +278,30 @@ class ContinuousAnalyzer:
             eval_results = self.evaluator.evaluate_image(
                 str(image_path),
                 previous_context=previous_context,
-                persona_hint=None  # No persona for neutral evaluation
+                persona_hint=None,  # No persona for neutral evaluation
             )
 
-            neutral_scores = {r['dimension_id']: r['score'] for r in eval_results}
-            neutral_reasoning = {r['dimension_id']: r['reasoning'] for r in eval_results}
+            neutral_scores = {r["dimension_id"]: r["score"] for r in eval_results}
+            neutral_reasoning = {
+                r["dimension_id"]: r["reasoning"] for r in eval_results
+            }
 
             # === VLM Call 2: With Persona (if persona_hint provided) ===
             if self.persona_hint:
-                logger.info(f"🔶 Dual VLM: Making persona-aware call for waypoint {waypoint_id}")
+                logger.info(
+                    f"🔶 Dual VLM: Making persona-aware call for waypoint {waypoint_id}"
+                )
                 persona_results = self.evaluator.evaluate_image(
                     str(image_path),
                     previous_context=previous_context,
-                    persona_hint=self.persona_hint
+                    persona_hint=self.persona_hint,
                 )
-                persona_scores = {r['dimension_id']: r['score'] for r in persona_results}
-                persona_reasoning = {r['dimension_id']: r['reasoning'] for r in persona_results}
+                persona_scores = {
+                    r["dimension_id"]: r["score"] for r in persona_results
+                }
+                persona_reasoning = {
+                    r["dimension_id"]: r["reasoning"] for r in persona_results
+                }
 
                 # Calculate adjustments
                 persona_adjustments = {
@@ -292,7 +312,8 @@ class ContinuousAnalyzer:
 
                 # Log significant adjustments
                 significant_adjustments = {
-                    dim: adj for dim, adj in persona_adjustments.items()
+                    dim: adj
+                    for dim, adj in persona_adjustments.items()
                     if abs(adj) >= 0.5
                 }
                 if significant_adjustments:
@@ -323,16 +344,16 @@ class ContinuousAnalyzer:
             image_path=image_path,
             scores=scores,  # Final = persona (or neutral if no persona)
             reasoning=reasoning,
-            timestamp=metadata.get('timestamp', ''),
-            gps=(metadata.get('lat', 0.0), metadata.get('lon', 0.0)),
-            heading=metadata.get('heading', 0.0),
+            timestamp=metadata.get("timestamp", ""),
+            gps=(metadata.get("lat", 0.0), metadata.get("lon", 0.0)),
+            heading=metadata.get("heading", 0.0),
             visual_change_detected=visual_change_detected,
             phash_distance=phash_distance,
             # NEW: Dual score fields
             neutral_scores=neutral_scores,
             persona_adjustments=persona_adjustments,
             neutral_reasoning=neutral_reasoning,
-            persona_applied=persona_applied
+            persona_applied=persona_applied,
         )
 
         logger.debug(
@@ -345,9 +366,7 @@ class ContinuousAnalyzer:
         return analysis
 
     def analyze_route(
-        self,
-        image_paths: List[Path],
-        waypoint_metadata: List[Dict]
+        self, image_paths: List[Path], waypoint_metadata: List[Dict]
     ) -> List[WaypointAnalysis]:
         """
         Analyze all waypoints sequentially with temporal context
@@ -383,9 +402,7 @@ class ContinuousAnalyzer:
 
             # Analyze waypoint using extracted method
             analysis = self.analyze_waypoint(
-                waypoint_id=i,
-                image_path=img_path,
-                metadata=metadata
+                waypoint_id=i, image_path=img_path, metadata=metadata
             )
 
             # Update analysis history
@@ -423,10 +440,11 @@ class ContinuousAnalyzer:
             ),
             "avg_phash_distance": (
                 sum(self.phash_distances) / len(self.phash_distances)
-                if self.phash_distances else 0
+                if self.phash_distances
+                else 0
             ),
             "phash_distances": self.phash_distances,
-            "multi_image_evaluations": self.multi_image_evaluations
+            "multi_image_evaluations": self.multi_image_evaluations,
         }
 
         logger.info(
@@ -463,7 +481,8 @@ class ContinuousAnalyzer:
             List of WaypointAnalysis objects where visual_change_detected=True
         """
         change_points = [
-            analysis for analysis in self.analysis_history
+            analysis
+            for analysis in self.analysis_history
             if analysis.visual_change_detected
         ]
 
