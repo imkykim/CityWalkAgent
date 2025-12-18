@@ -23,7 +23,6 @@ SCORE_DECIMAL_PLACES: Final[int] = 1
 DEFAULT_FRAMEWORK_ID: Final[str] = "streetagent_5d"
 
 # Multi-Image Evaluation
-DEFAULT_PHASH_THRESHOLD: Final[float] = 15.0  # Visual change detection threshold
-DEFAULT_MULTI_IMAGE_THRESHOLD: Final[float] = 15.0  # Multi-image trigger threshold
+DEFAULT_PHASH_THRESHOLD: Final[float] = 15.0  # Visual change detection and multi-image trigger threshold
 DEFAULT_ENABLE_MULTI_IMAGE: Final[bool] = True  # Enable multi-image evaluation
 DEFAULT_CONTEXT_WINDOW: Final[int] = 3  # Waypoint context window size

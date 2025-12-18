@@ -106,7 +106,6 @@ class WalkingAgent(BaseAgent):
 
         # Configurable thresholds (can be overridden via set_thresholds())
         self._phash_threshold: int = 30  # Default for System 2 trigger
-        self._multi_image_threshold: float = 30.0  # Default for multi-image VLM
 
         # Initialize state with personality weights
         self.state.preferences = personality.dimension_weights.copy()
@@ -176,39 +175,32 @@ class WalkingAgent(BaseAgent):
     def set_thresholds(
         self,
         phash_threshold: Optional[int] = None,
-        multi_image_threshold: Optional[float] = None,
     ) -> None:
-        """Configure visual change detection thresholds.
+        """Configure visual change detection threshold.
 
         IMPORTANT: Must be called BEFORE accessing continuous_analyzer or cognitive
-        properties, as these are lazy-loaded and will use the configured thresholds.
+        properties, as these are lazy-loaded and will use the configured threshold.
 
         Args:
             phash_threshold: Threshold for CognitiveController (System 2 trigger).
                 Lower values = more sensitive to visual changes.
+                This threshold controls both visual change detection AND multi-image evaluation.
                 Default: 30 (if not set)
-            multi_image_threshold: Threshold for triggering multi-image VLM evaluation.
-                Higher values = only very significant changes trigger multi-image mode.
-                Default: 30.0 (if not set)
 
         Example:
             ```python
             agent = WalkingAgent.from_preset("balanced", "streetagent_5d")
 
-            # Configure thresholds BEFORE using the agent
-            agent.set_thresholds(phash_threshold=30, multi_image_threshold=30)
+            # Configure threshold BEFORE using the agent
+            agent.set_thresholds(phash_threshold=30)
 
-            # Now run analysis - will use configured thresholds
+            # Now run analysis - will use configured threshold
             result = agent.run_with_memory(start=(lat1, lon1), end=(lat2, lon2))
             ```
         """
         if phash_threshold is not None:
             self._phash_threshold = phash_threshold
             self.logger.info(f"pHash threshold set to {phash_threshold}")
-
-        if multi_image_threshold is not None:
-            self._multi_image_threshold = multi_image_threshold
-            self.logger.info(f"Multi-image threshold set to {multi_image_threshold}")
 
     def run(
         self,
@@ -444,7 +436,6 @@ class WalkingAgent(BaseAgent):
             self._continuous_analyzer = ContinuousAnalyzer(
                 framework_id=self.framework_id,
                 context_window=3,
-                multi_image_threshold=self._multi_image_threshold,
                 enable_multi_image=True,
                 personality=self.personality,
                 persona_hint=persona_hint,

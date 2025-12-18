@@ -889,12 +889,10 @@ class TestContinuousAnalyzer:
 
         analyzer = ContinuousAnalyzer(
             framework_id="sagai_2025",
-            context_window=3,
-            multi_image_threshold=15.0
+            context_window=3
         )
 
         assert analyzer.context_window == 3
-        assert analyzer.multi_image_threshold == 15.0
         assert analyzer.enable_multi_image is True
         assert len(analyzer.analysis_history) == 0
         assert len(analyzer.phash_distances) == 0

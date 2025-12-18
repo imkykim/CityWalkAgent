@@ -294,15 +294,8 @@ What This Demo Shows:
         "--phash-threshold",
         type=int,
         default=30,
-        help="pHash threshold for System 2 trigger (default: 30). "
+        help="pHash threshold for System 2 trigger and multi-image evaluation (default: 30). "
         "Lower values = more sensitive to visual changes.",
-    )
-    parser.add_argument(
-        "--multi-image-threshold",
-        type=float,
-        default=30.0,
-        help="Threshold for multi-image VLM evaluation (default: 30.0). "
-        "Higher values = only very significant changes trigger multi-image mode.",
     )
     args = parser.parse_args()
 
@@ -315,7 +308,6 @@ What This Demo Shows:
     route_folder = args.route_folder
     personality = args.personality
     phash_threshold = args.phash_threshold
-    multi_image_threshold = args.multi_image_threshold
 
     if args.visualize_only:
         logger.info(
@@ -369,11 +361,9 @@ What This Demo Shows:
         # Configure thresholds BEFORE accessing analyzers (they are lazy-loaded)
         agent.set_thresholds(
             phash_threshold=phash_threshold,
-            multi_image_threshold=multi_image_threshold,
         )
         logger.info(
-            f"Thresholds configured: phash={phash_threshold}, "
-            f"multi_image={multi_image_threshold}"
+            f"Threshold configured: phash={phash_threshold}"
         )
 
         # NOTE: The dual VLM calls are now automatic in ContinuousAnalyzer!

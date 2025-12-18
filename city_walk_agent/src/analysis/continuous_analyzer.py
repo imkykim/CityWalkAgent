@@ -78,7 +78,6 @@ class ContinuousAnalyzer:
         self,
         framework_id: str,
         context_window: int = 3,
-        multi_image_threshold: float = 30.0,
         enable_multi_image: bool = True,
         personality: Optional[Any] = None,
         persona_hint: Optional[str] = None,
@@ -89,7 +88,6 @@ class ContinuousAnalyzer:
         Args:
             framework_id: ID of evaluation framework to use
             context_window: Number of previous waypoints to maintain in memory
-            multi_image_threshold: pHash threshold to trigger multi-image evaluation
             enable_multi_image: Enable/disable multi-image comparison feature
             personality: Optional personality object for persona-aware evaluation
             persona_hint: Optional persona hint to prepend to evaluation prompts
@@ -106,7 +104,6 @@ class ContinuousAnalyzer:
         self.evaluator = Evaluator(vlm_config, framework, max_concurrent=5)
 
         # Multi-image evaluation configuration
-        self.multi_image_threshold = multi_image_threshold
         self.enable_multi_image = enable_multi_image
         self.multi_image_evaluations: int = 0
 
@@ -124,7 +121,6 @@ class ContinuousAnalyzer:
         logger.info(
             f"Analyzer initialized - context_window={context_window}, "
             f"multi_image: {'enabled' if enable_multi_image else 'disabled'}, "
-            f"multi_image_threshold={multi_image_threshold}, "
             f"persona_aware: {persona_hint is not None}"
         )
 
@@ -189,8 +185,6 @@ class ContinuousAnalyzer:
         use_multi_image = (
             self.enable_multi_image
             and visual_change_detected
-            and phash_distance is not None
-            and phash_distance >= self.multi_image_threshold
             and prev_img_path is not None  # Need previous waypoint
         )
 
