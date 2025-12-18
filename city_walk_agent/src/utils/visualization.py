@@ -1189,6 +1189,621 @@ class RouteVisualizer:
             "radar_overlay_dir": overlay_dir,
         }
 
+    def plot_persona_comparison(
+        self,
+        waypoint_results: Sequence[Mapping[str, Any]],
+        title: str = "Neutral vs Persona-Aware Evaluation",
+        save_path: Optional[Path] = None,
+        dimensions: Optional[Sequence[str]] = None,
+    ) -> plt.Figure:
+        """
+        Plot neutral scores vs persona-adjusted scores for dual VLM evaluation.
+
+        This visualization shows the impact of persona hints on VLM scoring
+        by comparing neutral (unbiased) evaluations against persona-aware scores.
+
+        Args:
+            waypoint_results: Sequence of waypoint result dicts containing:
+                - neutral_scores: Scores without persona hint
+                - scores: Final scores (with persona if applied)
+                - persona_adjustments: Difference between persona and neutral
+                - persona_applied: Whether persona was used
+            title: Plot title
+            save_path: Optional path to save figure
+            dimensions: Optional ordered list of dimensions to plot
+
+        Returns:
+            Matplotlib figure object
+        """
+        # Infer dimensions
+        dim_keys = self._infer_dimension_keys(
+            dimensions=dimensions, waypoint_results=waypoint_results
+        )
+        dim_config = self._build_dim_config(dim_keys)
+
+        # Extract waypoint IDs
+        waypoint_ids = []
+        for r in waypoint_results:
+            if isinstance(r, Mapping):
+                waypoint_ids.append(r.get("waypoint_id", len(waypoint_ids)))
+            else:
+                waypoint_ids.append(getattr(r, "waypoint_id", len(waypoint_ids)))
+
+        # Prepare score data
+        neutral_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+        persona_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+
+        for r in waypoint_results:
+            if isinstance(r, Mapping):
+                n_scores = r.get("neutral_scores", {})
+                p_scores = r.get("scores", {})
+                # Fallback if neutral_scores not available
+                if not n_scores:
+                    n_scores = r.get("system1_scores", {})
+            else:
+                n_scores = getattr(r, "neutral_scores", {})
+                p_scores = getattr(r, "scores", {})
+                if not n_scores:
+                    n_scores = getattr(r, "system1_scores", {})
+
+            for dim in dim_keys:
+                neutral_scores[dim].append(float(n_scores.get(dim, 0) or 0))
+                persona_scores[dim].append(float(p_scores.get(dim, 0) or 0))
+
+        # Create 2x2 subplot for first 4 dimensions
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12), dpi=self.dpi)
+        axes = axes.flatten()
+        x = np.arange(len(waypoint_ids))
+
+        for idx, dim_key in enumerate(dim_keys[:4]):  # Limit to 4 dimensions
+            ax = axes[idx]
+            config = dim_config[dim_key]
+
+            # Plot neutral scores (baseline)
+            ax.plot(
+                x,
+                neutral_scores[dim_key],
+                marker="o",
+                markersize=3.5,
+                linewidth=1.2,
+                color="#94A3B8",
+                alpha=0.7,
+                label="Neutral (No Persona)",
+                linestyle="--",
+            )
+
+            # Plot persona-aware scores
+            ax.plot(
+                x,
+                persona_scores[dim_key],
+                marker="s",
+                markersize=4,
+                linewidth=1.5,
+                color=config["color"],
+                alpha=0.9,
+                label="Persona-Aware",
+                linestyle="-",
+            )
+
+            # Highlight significant differences with arrows
+            for i in range(len(waypoint_ids)):
+                n_score = neutral_scores[dim_key][i]
+                p_score = persona_scores[dim_key][i]
+                delta = p_score - n_score
+
+                if abs(delta) >= 1.0:  # Significant adjustment threshold
+                    color = "#10B981" if delta > 0 else "#EF4444"
+                    ax.annotate(
+                        "",
+                        xy=(i, p_score),
+                        xytext=(i, n_score),
+                        arrowprops=dict(
+                            arrowstyle="->",
+                            color=color,
+                            alpha=0.6,
+                            lw=1.5,
+                        ),
+                    )
+
+            ax.set_title(
+                f"{config['label']} - Persona Impact",
+                fontsize=12,
+                fontweight="bold"
+            )
+            ax.set_xlabel("Waypoint ID", fontsize=10)
+            ax.set_ylabel("Score", fontsize=10)
+            ax.set_ylim(0, 10.5)
+            ax.legend(loc="best", fontsize=9)
+
+            # X-axis formatting
+            tick_step = max(1, len(waypoint_ids) // 10)
+            ax.set_xticks(x[::tick_step])
+            ax.set_xticklabels(
+                [str(wid) for wid in waypoint_ids[::tick_step]],
+                rotation=45,
+                ha="right",
+                fontsize=8,
+            )
+
+            # Add statistics text box
+            n_mean = np.mean(neutral_scores[dim_key])
+            p_mean = np.mean(persona_scores[dim_key])
+            delta_mean = p_mean - n_mean
+            stats_text = (
+                f"Avg Δ: {delta_mean:+.2f}\n"
+                f"Neutral: {n_mean:.2f}\n"
+                f"Persona: {p_mean:.2f}"
+            )
+            ax.text(
+                0.02,
+                0.98,
+                stats_text,
+                transform=ax.transAxes,
+                fontsize=9,
+                verticalalignment="top",
+                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+            )
+
+        plt.suptitle(title, fontsize=14, fontweight="bold", y=0.995)
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
+            print(f"Saved persona comparison to {save_path}")
+
+        return fig
+
+    def plot_persona_neutral_overview(
+        self,
+        waypoint_results: Sequence[Mapping[str, Any]],
+        title: str = "Neutral vs Persona Overview",
+        save_path: Optional[Path] = None,
+        dimensions: Optional[Sequence[str]] = None,
+    ) -> plt.Figure:
+        """
+        Plot neutral vs persona averages alongside a delta heatmap.
+
+        This combines the line + heatmap view from the legacy visualizater script
+        into the reusable RouteVisualizer API.
+        """
+        dim_keys = self._infer_dimension_keys(
+            dimensions=dimensions, waypoint_results=waypoint_results
+        )
+        if not dim_keys:
+            raise ValueError("No dimensions available for persona overview plot.")
+
+        def _get(obj, key, default=None):
+            if isinstance(obj, Mapping):
+                return obj.get(key, default)
+            return getattr(obj, key, default)
+
+        waypoint_ids: List[str] = []
+        neutral_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+        persona_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+
+        for idx, result in enumerate(waypoint_results):
+            waypoint_id = _get(result, "waypoint_id", idx)
+            waypoint_ids.append(str(waypoint_id))
+
+            neutral = (
+                _get(result, "neutral_scores")
+                or _get(result, "system1_scores")
+                or {}
+            )
+            persona = _get(result, "scores") or neutral
+
+            for dim in dim_keys:
+                neutral_scores[dim].append(float(neutral.get(dim, 0) or 0.0))
+                persona_scores[dim].append(float(persona.get(dim, 0) or 0.0))
+
+        n_points = len(waypoint_ids)
+        if n_points == 0:
+            raise ValueError("No waypoint results provided for persona overview plot.")
+
+        avg_neutral = [
+            float(np.mean([neutral_scores[dim][i] for dim in dim_keys]))
+            for i in range(n_points)
+        ]
+        avg_persona = [
+            float(np.mean([persona_scores[dim][i] for dim in dim_keys]))
+            for i in range(n_points)
+        ]
+
+        delta_matrix = np.array(
+            [
+                [
+                    persona_scores[dim][i] - neutral_scores[dim][i]
+                    for i in range(n_points)
+                ]
+                for dim in dim_keys
+            ]
+        )
+
+        fig, axes = plt.subplots(
+            1, 2, figsize=(16, 6), gridspec_kw={"width_ratios": [1.25, 1]}
+        )
+
+        x = np.arange(n_points)
+        axes[0].plot(
+            x,
+            avg_neutral,
+            marker="o",
+            markersize=3.5,
+            linewidth=1.4,
+            color="#94A3B8",
+            alpha=0.9,
+            label="Neutral (No Persona)",
+            linestyle="--",
+        )
+        axes[0].plot(
+            x,
+            avg_persona,
+            marker="s",
+            markersize=4,
+            linewidth=1.6,
+            color="#EF4444",
+            alpha=0.95,
+            label="Persona-Aware",
+        )
+
+        axes[0].fill_between(
+            x,
+            avg_neutral,
+            avg_persona,
+            color="#EF4444",
+            alpha=0.12,
+            label="Difference Zone",
+        )
+
+        tick_step = max(1, n_points // 12)
+        axes[0].set_xticks(x[::tick_step])
+        axes[0].set_xticklabels(
+            [waypoint_ids[i] for i in range(0, n_points, tick_step)],
+            rotation=45,
+            ha="right",
+            fontsize=8,
+        )
+        axes[0].set_xlabel("Waypoint ID", fontsize=11, fontweight="bold")
+        axes[0].set_ylabel("Average Score", fontsize=11, fontweight="bold")
+        axes[0].set_ylim(0, 10.5)
+        axes[0].set_title(
+            f"{title} – Averages", fontsize=13, fontweight="bold", pad=12
+        )
+        axes[0].legend(loc="best", fontsize=10)
+
+        if delta_matrix.size:
+            max_abs = float(np.max(np.abs(delta_matrix))) if delta_matrix.size else 1.0
+            max_abs = max(max_abs, 0.5)
+            im = axes[1].imshow(
+                delta_matrix,
+                aspect="auto",
+                cmap="coolwarm",
+                vmin=-max_abs,
+                vmax=max_abs,
+                interpolation="nearest",
+            )
+            axes[1].set_yticks(np.arange(len(dim_keys)))
+            axes[1].set_yticklabels(dim_keys)
+
+            heat_tick_step = max(1, n_points // 12)
+            axes[1].set_xticks(np.arange(0, n_points, heat_tick_step))
+            axes[1].set_xticklabels(
+                waypoint_ids[::heat_tick_step],
+                rotation=45,
+                ha="right",
+                fontsize=8,
+            )
+            axes[1].set_xlabel("Waypoint ID", fontsize=11, fontweight="bold")
+            axes[1].set_title(
+                f"{title} – Persona − Neutral",
+                fontsize=13,
+                fontweight="bold",
+                pad=12,
+            )
+
+            # Annotate deltas for readability
+            for row_idx, dim in enumerate(dim_keys):
+                for col_idx in range(n_points):
+                    delta_val = delta_matrix[row_idx, col_idx]
+                    axes[1].text(
+                        col_idx,
+                        row_idx,
+                        f"{delta_val:+.2f}",
+                        ha="center",
+                        va="center",
+                        fontsize=7,
+                        color="black",
+                    )
+
+            cbar = plt.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
+            cbar.set_label("Persona Adjustment", rotation=270, labelpad=18)
+
+        fig.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
+            print(f"Saved persona overview to {save_path}")
+
+        return fig
+
+    def plot_persona_summary_radar(
+        self,
+        waypoint_results: Sequence[Mapping[str, Any]],
+        save_path: Optional[Path] = None,
+        dimensions: Optional[Sequence[str]] = None,
+        figsize: Tuple[int, int] = (10, 10),
+    ) -> plt.Figure:
+        """
+        Create radar chart showing average neutral vs persona scores across all dimensions.
+
+        Args:
+            waypoint_results: Sequence of waypoint result dicts with neutral_scores and scores
+            save_path: Optional path to save figure
+            dimensions: Optional ordered list of dimensions to plot
+            figsize: Figure size in inches
+
+        Returns:
+            Matplotlib figure object
+        """
+        # Infer dimensions
+        dim_keys = self._infer_dimension_keys(
+            dimensions=dimensions, waypoint_results=waypoint_results
+        )
+        dim_config = self._build_dim_config(dim_keys)
+
+        # Calculate average scores across all waypoints
+        neutral_avgs = []
+        persona_avgs = []
+
+        for dim in dim_keys:
+            neutral_vals = []
+            persona_vals = []
+
+            for r in waypoint_results:
+                if isinstance(r, Mapping):
+                    n_scores = r.get("neutral_scores", r.get("system1_scores", {}))
+                    p_scores = r.get("scores", {})
+                else:
+                    n_scores = getattr(r, "neutral_scores", getattr(r, "system1_scores", {}))
+                    p_scores = getattr(r, "scores", {})
+
+                neutral_vals.append(float(n_scores.get(dim, 0) or 0))
+                persona_vals.append(float(p_scores.get(dim, 0) or 0))
+
+            neutral_avgs.append(np.mean(neutral_vals))
+            persona_avgs.append(np.mean(persona_vals))
+
+        # Prepare radar chart data
+        labels = [dim_config[dim]["label"] for dim in dim_keys]
+        num_vars = len(labels)
+
+        # Compute angles
+        angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+
+        # Close the plot by appending the first value
+        neutral_avgs += neutral_avgs[:1]
+        persona_avgs += persona_avgs[:1]
+        angles += angles[:1]
+
+        # Create radar chart
+        fig, ax = plt.subplots(
+            figsize=figsize, subplot_kw=dict(projection="polar"), dpi=self.dpi
+        )
+
+        # Plot neutral scores
+        ax.plot(
+            angles,
+            neutral_avgs,
+            "o--",
+            linewidth=2,
+            color="#94A3B8",
+            label="Neutral (No Persona)",
+        )
+        ax.fill(angles, neutral_avgs, alpha=0.20, color="#94A3B8")
+
+        # Plot persona scores
+        ax.plot(
+            angles,
+            persona_avgs,
+            "o-",
+            linewidth=2.5,
+            color="#EF4444",
+            label="Persona-Aware",
+        )
+        ax.fill(angles, persona_avgs, alpha=0.25, color="#EF4444")
+
+        # Set axis labels
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(labels, fontsize=11)
+
+        # Set y-axis limits and labels
+        ax.set_ylim(0, 10)
+        ax.set_yticks([2, 4, 6, 8, 10])
+        ax.set_yticklabels(["2", "4", "6", "8", "10"], fontsize=9, alpha=0.7)
+
+        # Add grid
+        ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.4)
+
+        # Add legend
+        ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1), fontsize=11)
+
+        # Add title
+        ax.set_title(
+            "Average Persona Impact Across All Dimensions",
+            fontsize=14,
+            fontweight="bold",
+            pad=20,
+        )
+
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
+            print(f"Saved persona summary radar to {save_path}")
+
+        return fig
+
+    def plot_persona_delta_distribution(
+        self,
+        waypoint_results: Sequence[Mapping[str, Any]],
+        save_path: Optional[Path] = None,
+        dimensions: Optional[Sequence[str]] = None,
+    ) -> plt.Figure:
+        """
+        Plot distribution of persona adjustments (score deltas) across dimensions.
+
+        Shows histograms and box plots of how much persona hints adjust scores
+        from neutral baseline, revealing persona bias patterns.
+
+        Args:
+            waypoint_results: Sequence of waypoint result dicts with persona_adjustments
+            save_path: Optional path to save figure
+            dimensions: Optional ordered list of dimensions to plot
+
+        Returns:
+            Matplotlib figure object
+        """
+        # Infer dimensions
+        dim_keys = self._infer_dimension_keys(
+            dimensions=dimensions, waypoint_results=waypoint_results
+        )
+        dim_config = self._build_dim_config(dim_keys)
+
+        # Collect adjustments for each dimension
+        adjustments_by_dim: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+
+        for r in waypoint_results:
+            if isinstance(r, Mapping):
+                adj = r.get("persona_adjustments", {})
+            else:
+                adj = getattr(r, "persona_adjustments", {})
+
+            if adj:
+                for dim in dim_keys:
+                    val = adj.get(dim)
+                    if val is not None:
+                        adjustments_by_dim[dim].append(float(val))
+
+        # Create subplot with histogram and box plot
+        fig = plt.figure(figsize=(16, 10), dpi=self.dpi)
+        gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
+
+        # Top: Histograms for first 4 dimensions
+        for idx, dim in enumerate(dim_keys[:4]):
+            ax = fig.add_subplot(gs[idx // 2, idx % 2])
+            config = dim_config[dim]
+            deltas = adjustments_by_dim[dim]
+
+            if not deltas:
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No persona adjustments",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                    fontsize=10,
+                    style="italic",
+                    color="gray",
+                )
+                ax.set_title(config["label"], fontsize=12, fontweight="bold")
+                continue
+
+            # Plot histogram
+            ax.hist(
+                deltas,
+                bins=20,
+                color=config["color"],
+                alpha=0.7,
+                edgecolor="black",
+                linewidth=0.5,
+            )
+
+            # Add vertical line at zero
+            ax.axvline(x=0, color="gray", linestyle="--", linewidth=1.5, alpha=0.6)
+
+            # Add mean and median lines
+            mean_delta = np.mean(deltas)
+            median_delta = np.median(deltas)
+
+            ax.axvline(
+                x=mean_delta,
+                color="red",
+                linestyle="-",
+                linewidth=2,
+                alpha=0.8,
+                label=f"Mean: {mean_delta:+.2f}",
+            )
+            ax.axvline(
+                x=median_delta,
+                color="blue",
+                linestyle="-.",
+                linewidth=2,
+                alpha=0.8,
+                label=f"Median: {median_delta:+.2f}",
+            )
+
+            ax.set_title(config["label"], fontsize=12, fontweight="bold")
+            ax.set_xlabel("Score Adjustment (Persona - Neutral)", fontsize=10)
+            ax.set_ylabel("Frequency", fontsize=10)
+            ax.legend(loc="best", fontsize=9)
+            ax.grid(True, alpha=0.3, linestyle=":")
+
+        # Bottom: Box plot comparing all dimensions
+        ax_box = fig.add_subplot(gs[2, :])
+
+        # Prepare data for box plot
+        box_data = []
+        box_labels = []
+
+        for dim in dim_keys:
+            deltas = adjustments_by_dim[dim]
+            if deltas:
+                box_data.append(deltas)
+                box_labels.append(dim_config[dim]["label"])
+
+        if box_data:
+            bp = ax_box.boxplot(
+                box_data,
+                labels=box_labels,
+                patch_artist=True,
+                notch=True,
+                showmeans=True,
+            )
+
+            # Color boxes
+            for idx, (patch, dim) in enumerate(zip(bp["boxes"], dim_keys[:len(box_data)])):
+                config = dim_config.get(dim, {})
+                color = config.get("color", "#94A3B8")
+                patch.set_facecolor(color)
+                patch.set_alpha(0.6)
+
+            # Add horizontal line at zero
+            ax_box.axhline(y=0, color="gray", linestyle="--", linewidth=1.5, alpha=0.6)
+
+            ax_box.set_title(
+                "Persona Adjustment Distribution by Dimension",
+                fontsize=13,
+                fontweight="bold",
+            )
+            ax_box.set_ylabel("Score Adjustment", fontsize=11)
+            ax_box.set_xlabel("Dimension", fontsize=11)
+            ax_box.grid(True, alpha=0.3, linestyle=":", axis="y")
+            ax_box.tick_params(axis="x", rotation=45)
+
+        plt.suptitle(
+            "Persona Adjustment Patterns (Persona - Neutral)",
+            fontsize=15,
+            fontweight="bold",
+            y=0.995,
+        )
+
+        if save_path:
+            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
+            print(f"Saved persona delta distribution to {save_path}")
+
+        return fig
+
     @classmethod
     def from_jsonl(
         cls,
@@ -1535,6 +2150,140 @@ def plot_analysis_results(
     return output_path
 
 
+def regenerate_visualizations(
+    output_dir: Path,
+    framework_id: str = "streetagent_5d",
+    personality: str = "unknown",
+    only: str = "all",
+    radar_charts: bool = False,
+) -> Dict[str, Path]:
+    """
+    Regenerate persona/system visualizations using an existing analysis_results.json.
+
+    This replaces the old examples/regenerate_visualizations.py script.
+    """
+    output_dir = Path(output_dir)
+    if not output_dir.exists():
+        raise FileNotFoundError(f"Output directory not found: {output_dir}")
+
+    analysis_path = output_dir / "analysis_results.json"
+    if not analysis_path.exists():
+        raise FileNotFoundError(
+            f"analysis_results.json not found in {output_dir}. Run a demo first."
+        )
+
+    analyses = _load_analyses_from_json(analysis_path)
+    viz_dir = output_dir / "visualizations"
+    viz_dir.mkdir(parents=True, exist_ok=True)
+
+    viz = RouteVisualizer(framework_id=framework_id)
+    viz_paths: Dict[str, Path] = {}
+
+    def _get(obj, key, default=None):
+        if isinstance(obj, Mapping):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    if only in ("persona", "all"):
+        dim_keys = viz._infer_dimension_keys(
+            dimensions=None, waypoint_results=analyses
+        )
+        waypoint_ids = [str(_get(r, "waypoint_id", idx)) for idx, r in enumerate(analyses)]
+        system2_triggers = [
+            str(_get(r, "waypoint_id", idx))
+            for idx, r in enumerate(analyses)
+            if _get(r, "system2_triggered", False)
+        ]
+
+        neutral_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+        persona_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+
+        for result in analyses:
+            neutral = (
+                _get(result, "neutral_scores")
+                or _get(result, "system1_scores")
+                or {}
+            )
+            persona = _get(result, "scores") or neutral
+
+            for dim in dim_keys:
+                neutral_scores[dim].append(float(neutral.get(dim, 0) or 0.0))
+                persona_scores[dim].append(float(persona.get(dim, 0) or 0.0))
+
+        comparison_path = viz_dir / "persona_comparison.png"
+        viz.plot_persona_comparison(
+            waypoint_results=analyses,
+            title=f"Neutral vs Persona-Aware Evaluation ({personality})",
+            save_path=comparison_path,
+            dimensions=dim_keys,
+        )
+        viz_paths["persona_comparison"] = comparison_path
+
+        overview_path = viz_dir / "persona_neutral_overview.png"
+        viz.plot_persona_neutral_overview(
+            waypoint_results=analyses,
+            title=f"Neutral vs Persona Overview ({personality})",
+            save_path=overview_path,
+            dimensions=dim_keys,
+        )
+        viz_paths["persona_overview"] = overview_path
+
+        radar_path = viz_dir / "persona_summary_radar.png"
+        viz.plot_persona_summary_radar(
+            waypoint_results=analyses,
+            save_path=radar_path,
+            dimensions=dim_keys,
+        )
+        viz_paths["persona_radar"] = radar_path
+
+        delta_path = viz_dir / "persona_delta_distribution.png"
+        viz.plot_persona_delta_distribution(
+            waypoint_results=analyses,
+            save_path=delta_path,
+            dimensions=dim_keys,
+        )
+        viz_paths["persona_delta"] = delta_path
+
+        neutral_path = viz_dir / "scores_neutral.png"
+        viz.plot_scores_with_trends(
+            scores=neutral_scores,
+            waypoint_ids=waypoint_ids,
+            title="Neutral Evaluation (No Persona Bias)",
+            save_path=neutral_path,
+            dimensions=dim_keys,
+            system2_triggered_waypoints=system2_triggers,
+        )
+        viz_paths["neutral_scores"] = neutral_path
+
+        persona_path = viz_dir / "scores_persona_aware.png"
+        viz.plot_scores_with_trends(
+            scores=persona_scores,
+            waypoint_ids=waypoint_ids,
+            title=f"Persona-Aware Evaluation ({personality})",
+            save_path=persona_path,
+            dimensions=dim_keys,
+            system2_triggered_waypoints=system2_triggers,
+        )
+        viz_paths["persona_scores"] = persona_path
+
+    if only in ("system", "all"):
+        narrative_json = output_dir / "narrative_chapters.json"
+        narrative_chapters = None
+        if narrative_json.exists():
+            narrative_chapters = json.loads(narrative_json.read_text())
+
+        system_paths = plot_dual_system_analysis(
+            waypoint_results=analyses,
+            narrative_chapters=narrative_chapters,
+            output_dir=viz_dir,
+            framework_id=framework_id,
+            generate_radar_sets=radar_charts,
+        )
+        viz_paths.update(system_paths)
+
+    return viz_paths
+
+
 # ============================================================================
 # CLI helper to visualize existing outputs
 # ============================================================================
@@ -1607,13 +2356,32 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "input", type=Path, help="Path to analysis_results.json/.csv/.jsonl"
+        "input",
+        nargs="?",
+        type=Path,
+        help="Path to analysis_results.json/.csv/.jsonl",
     )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
         help="Where to save the plot PNG (default: input with .png)",
+    )
+    parser.add_argument(
+        "--regenerate-output-dir",
+        type=Path,
+        help="Regenerate persona/system visualizations from an output directory (replaces examples/regenerate_visualizations.py)",
+    )
+    parser.add_argument(
+        "--regenerate-only",
+        choices=["persona", "system", "all"],
+        default="all",
+        help="Subset of visualizations to regenerate (with --regenerate-output-dir)",
+    )
+    parser.add_argument(
+        "--personality",
+        default="unknown",
+        help="Personality label for persona plots (regeneration mode)",
     )
     parser.add_argument(
         "-d",
@@ -1638,6 +2406,23 @@ def main():
         help="Framework id to use for labels/colors when inferring dimensions",
     )
     args = parser.parse_args()
+
+    if args.regenerate_output_dir:
+        paths = regenerate_visualizations(
+            output_dir=args.regenerate_output_dir,
+            framework_id=args.framework_id,
+            personality=args.personality,
+            only=args.regenerate_only,
+            radar_charts=args.radar_charts,
+        )
+
+        print("Regenerated visualizations:")
+        for name, path in paths.items():
+            print(f"  - {name}: {path}")
+        return
+
+    if args.input is None:
+        raise SystemExit("Either provide an input file to plot or --regenerate-output-dir.")
 
     input_path: Path = args.input
     if not input_path.exists():
