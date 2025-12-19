@@ -52,7 +52,11 @@ class TriggerReason(Enum):
 
 @dataclass
 class ThinkingResult:
-    """Result of System 2 waypoint-level reasoning with VLM-revised scores."""
+    """Result of System 2 waypoint-level reasoning with VLM-revised scores.
+
+    System 2 receives persona_scores from System 1 (not objective scores).
+    Revisions are made to persona-aware scores based on memory and context.
+    """
 
     waypoint_id: int
     trigger_reason: TriggerReason
@@ -66,20 +70,20 @@ class ThinkingResult:
     confidence: float
     used_vlm: bool  # Keep for backward compatibility
 
-    # === NEW: VLM-Revised Scores ===
-    revised_scores: Optional[Dict[str, float]] = None
-    score_adjustments: Optional[Dict[str, float]] = None
+    # === VLM-Revised Scores ===
+    revised_scores: Optional[Dict[str, float]] = None  # Revisions of persona_scores
+    score_adjustments: Optional[Dict[str, float]] = None  # Differences from System 1 persona scores
     revision_reasoning: Optional[Dict[str, str]] = None
 
-    # === NEW: Memory Influence Tracking ===
+    # === Memory Influence Tracking ===
     memory_influence: Dict[str, Any] = field(default_factory=dict)
     used_stm_context: bool = False
     used_ltm_patterns: bool = False
     personality_factor: str = "unknown"
 
-    # === NEW: Metadata ===
+    # === Metadata ===
     vlm_model_used: str = "none"
-    system1_scores: Dict[str, float] = field(default_factory=dict)
+    system1_scores: Dict[str, float] = field(default_factory=dict)  # System 1 persona scores
     processing_time_seconds: float = 0.0
 
 
@@ -877,13 +881,14 @@ Provide 1-2 sentences of visual insight."""
 ## YOUR PERSONA
 {persona_prompt}
 
-## CONTEXT FOR YOUR EVALUATION
-Based on your persona priorities, certain features should naturally influence your assessment:
+## EVALUATION GUIDANCE
+You have already completed a persona-aware System 1 evaluation. Now, using memory and context:
+- Review your initial persona-aware scores with deeper reflection
+- Consider how patterns from memory might inform your assessment
+- Let your persona priorities naturally guide any revisions
+- Only adjust scores if memory/context reveals new insights
 
-Features that align with your values: {', '.join(enhanced_config.scoring_rules.boost_keywords[:8])}
-Features that concern you: {', '.join(enhanced_config.scoring_rules.concern_keywords[:8])}
-
-Evaluate honestly from your perspective. Don't force changes - let your priorities naturally guide your assessment.
+Evaluate honestly from your perspective.
 """
         else:
             # Fallback for basic personalities

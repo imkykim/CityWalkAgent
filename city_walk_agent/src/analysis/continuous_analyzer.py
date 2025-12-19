@@ -24,25 +24,26 @@ logger = get_logger(__name__)
 
 @dataclass
 class WaypointAnalysis:
-    """Analysis results for a single waypoint during continuous traversal"""
+    """Analysis results for a single waypoint during continuous traversal.
+
+    Uses dual evaluation system with independent objective and persona scores.
+    """
 
     waypoint_id: int
     image_path: Path
-    scores: Dict[str, float]  # Final scores (with persona if applied)
-    reasoning: Dict[str, str]  # Final reasoning
+
+    # Dual evaluation results (independent)
+    objective_scores: Dict[str, float]  # Objective evaluation scores (research)
+    objective_reasoning: Dict[str, str]  # Objective evaluation reasoning
+    persona_scores: Dict[str, float]  # Persona-aware scores (final/decision-making)
+    persona_reasoning: Dict[str, str]  # Persona-aware reasoning
+
+    # Metadata
     timestamp: str
     gps: Tuple[float, float]
     heading: float
     visual_change_detected: bool
     phash_distance: Optional[float]
-
-    # Dual VLM evaluation fields
-    neutral_scores: Optional[Dict[str, float]] = None  # Scores without persona
-    persona_adjustments: Optional[Dict[str, float]] = (
-        None  # Difference (persona - neutral)
-    )
-    neutral_reasoning: Optional[Dict[str, str]] = None  # Reasoning without persona
-    persona_applied: bool = False  # Flag indicating if persona was used
 
 
 class ContinuousAnalyzer:
@@ -79,8 +80,7 @@ class ContinuousAnalyzer:
         framework_id: str,
         context_window: int = 3,
         enable_multi_image: bool = True,
-        personality: Optional[Any] = None,
-        persona_hint: Optional[str] = None,
+        persona: Optional[Any] = None,
     ):
         """
         Initialize continuous analyzer with VLM evaluator
@@ -89,8 +89,7 @@ class ContinuousAnalyzer:
             framework_id: ID of evaluation framework to use
             context_window: Number of previous waypoints to maintain in memory
             enable_multi_image: Enable/disable multi-image comparison feature
-            personality: Optional personality object for persona-aware evaluation
-            persona_hint: Optional persona hint to prepend to evaluation prompts
+            persona: Optional EnhancedPersonalityConfig for persona-aware evaluation
         """
         logger.info(f"Initializing ContinuousAnalyzer with framework: {framework_id}")
 
@@ -114,14 +113,13 @@ class ContinuousAnalyzer:
         # Statistics tracking
         self.phash_distances: List[float] = []  # Track distances for statistics
 
-        # Store personality for persona-aware evaluation
-        self.personality = personality
-        self.persona_hint = persona_hint
+        # Store persona for dual evaluation
+        self.persona = persona
 
         logger.info(
             f"Analyzer initialized - context_window={context_window}, "
             f"multi_image: {'enabled' if enable_multi_image else 'disabled'}, "
-            f"persona_aware: {persona_hint is not None}"
+            f"persona_aware: {persona is not None}"
         )
 
     def analyze_waypoint(
@@ -133,13 +131,10 @@ class ContinuousAnalyzer:
         phash_distance: Optional[float] = None,
     ) -> WaypointAnalysis:
         """
-        Analyze single waypoint with visual change info from CognitiveController
+        Analyze single waypoint using dual evaluation (objective + persona).
 
-        This method:
-        1. Receives pre-computed visual change detection from CognitiveController
-        2. Determines whether to use multi-image or single-image evaluation
-        3. Calls appropriate evaluator method
-        4. Returns WaypointAnalysis object
+        This method performs parallel dual evaluation if a persona is configured.
+        Both objective and persona evaluations are independent - no weight-based adjustments.
 
         Args:
             waypoint_id: Sequential ID of this waypoint
@@ -149,7 +144,7 @@ class ContinuousAnalyzer:
             phash_distance: pHash distance from previous waypoint (from CognitiveController)
 
         Returns:
-            WaypointAnalysis object with scores, reasoning, and metadata
+            WaypointAnalysis object with dual evaluation results
         """
         logger.debug(f"Analyzing waypoint {waypoint_id}: {image_path}")
 
@@ -166,195 +161,99 @@ class ContinuousAnalyzer:
                 f"(phash_distance={distance_display})"
             )
 
-        # 2. Build previous context if available
+        # Build previous context if available
         previous_context = None
-        prev_img_path = None
         if self.analysis_history:
             prev_analysis = self.analysis_history[-1]
-            prev_img_path = prev_analysis.image_path
             previous_context = {
                 "waypoint_id": prev_analysis.waypoint_id,
-                "scores": prev_analysis.scores,
-                "reasoning": prev_analysis.reasoning,
+                "scores": prev_analysis.persona_scores,  # Use persona scores for context
+                "reasoning": prev_analysis.persona_reasoning,
                 "summary": self._summarize_analysis(prev_analysis),
                 "phash_distance": phash_distance,
                 "visual_change_detected": visual_change_detected,
             }
 
-        # 3. Determine evaluation mode
-        use_multi_image = (
-            self.enable_multi_image
-            and visual_change_detected
-            and prev_img_path is not None  # Need previous waypoint
-        )
-
-        # 4. Choose evaluation method based on trigger logic
-        if use_multi_image:
+        # Perform dual evaluation if persona is configured
+        if self.persona:
             logger.info(
-                f"Using multi-image evaluation for waypoint {waypoint_id} "
-                f"(pHash distance: {phash_distance:.1f})"
+                f"🔶 Dual evaluation for waypoint {waypoint_id} "
+                f"(persona: {self.persona.name})"
             )
 
-            comparison_results = self.evaluator.evaluate_with_comparison(
-                previous_image_path=prev_img_path,
-                current_image_path=image_path,
+            # Single call returns both objective and persona results
+            dual_results = self.evaluator.evaluate_image(
+                str(image_path),
                 previous_context=previous_context,
+                persona=self.persona,
+                evaluation_mode="dual"
             )
 
-            # Convert comparison results to standard format
-            scores = {
-                dim_id: res["score"] for dim_id, res in comparison_results.items()
-            }
-            reasoning = {
-                dim_id: res["reasoning"] for dim_id, res in comparison_results.items()
-            }
+            # Extract objective and persona scores from DualEvaluationResult objects
+            objective_scores = {}
+            objective_reasoning = {}
+            persona_scores = {}
+            persona_reasoning = {}
 
-            # For multi-image, run persona-aware evaluation separately if hint provided
-            neutral_scores = scores.copy()
-            neutral_reasoning = reasoning.copy()
-            persona_adjustments = None
-            persona_applied = False
+            for result in dual_results:
+                # result is a DualEvaluationResult object
+                objective_scores[result.dimension_id] = result.objective_score
+                objective_reasoning[result.dimension_id] = result.objective_reasoning
+                persona_scores[result.dimension_id] = result.persona_score
+                persona_reasoning[result.dimension_id] = result.persona_reasoning
 
-            if self.persona_hint:
+            # Log significant differences between objective and persona scores
+            score_differences = {
+                dim: round(persona_scores[dim] - objective_scores[dim], 2)
+                for dim in objective_scores
+            }
+            significant_diffs = {
+                dim: diff for dim, diff in score_differences.items()
+                if abs(diff) >= 0.5
+            }
+            if significant_diffs:
                 logger.info(
-                    f"🔶 Dual VLM (multi-image mode): Making persona-aware call for waypoint {waypoint_id}"
+                    f"   Objective vs Persona differences (WP {waypoint_id}): {significant_diffs}"
                 )
-                persona_results = self.evaluator.evaluate_image(
-                    str(image_path),
-                    previous_context=previous_context,
-                    persona_hint=self.persona_hint,
-                )
-                persona_scores = {
-                    r["dimension_id"]: r["score"] for r in persona_results
-                }
-                persona_reasoning = {
-                    r["dimension_id"]: r["reasoning"] for r in persona_results
-                }
-
-                persona_adjustments = {
-                    dim: round(
-                        persona_scores.get(dim, neutral_scores[dim])
-                        - neutral_scores[dim],
-                        2,
-                    )
-                    for dim in neutral_scores
-                }
-                persona_applied = True
-
-                # Log significant adjustments
-                significant_adjustments = {
-                    dim: adj
-                    for dim, adj in persona_adjustments.items()
-                    if abs(adj) >= 0.5
-                }
-                if significant_adjustments:
-                    logger.info(
-                        f"   Persona adjustments (WP {waypoint_id}, multi-img): {significant_adjustments}"
-                    )
-
-                # Final scores reflect persona-aware evaluation
-                scores = persona_scores
-                reasoning = persona_reasoning
-            else:
-                logger.warning(
-                    f"⚠️ Multi-image mode: No persona hint for waypoint {waypoint_id}"
-                )
-
-            self.multi_image_evaluations += 1
 
         else:
-            # Standard single-image evaluation with dual VLM calls (neutral + persona)
-            logger.debug(
-                f"Using single-image evaluation with context for waypoint {waypoint_id}"
-            )
+            # No persona - run objective evaluation only
+            logger.info(f"Objective-only evaluation for waypoint {waypoint_id}")
 
-            # === VLM Call 1: Neutral (no persona) ===
             eval_results = self.evaluator.evaluate_image(
                 str(image_path),
                 previous_context=previous_context,
-                persona_hint=None,  # No persona for neutral evaluation
+                evaluation_mode="objective"
             )
 
-            neutral_scores = {r["dimension_id"]: r["score"] for r in eval_results}
-            neutral_reasoning = {
-                r["dimension_id"]: r["reasoning"] for r in eval_results
-            }
+            # Extract scores and reasoning
+            objective_scores = {r["dimension_id"]: r["score"] for r in eval_results}
+            objective_reasoning = {r["dimension_id"]: r["reasoning"] for r in eval_results}
 
-            # === VLM Call 2: With Persona (if persona_hint provided) ===
-            if self.persona_hint:
-                logger.info(
-                    f"🔶 Dual VLM: Making persona-aware call for waypoint {waypoint_id}"
-                )
-                persona_results = self.evaluator.evaluate_image(
-                    str(image_path),
-                    previous_context=previous_context,
-                    persona_hint=self.persona_hint,
-                )
-                persona_scores = {
-                    r["dimension_id"]: r["score"] for r in persona_results
-                }
-                persona_reasoning = {
-                    r["dimension_id"]: r["reasoning"] for r in persona_results
-                }
+            # No persona - use objective scores for persona fields as well
+            persona_scores = objective_scores.copy()
+            persona_reasoning = objective_reasoning.copy()
 
-                # Calculate adjustments
-                persona_adjustments = {
-                    dim: round(persona_scores[dim] - neutral_scores[dim], 2)
-                    for dim in neutral_scores
-                }
-                persona_applied = True
-
-                # Log significant adjustments
-                significant_adjustments = {
-                    dim: adj
-                    for dim, adj in persona_adjustments.items()
-                    if abs(adj) >= 0.5
-                }
-                if significant_adjustments:
-                    logger.info(
-                        f"   Persona adjustments (WP {waypoint_id}): {significant_adjustments}"
-                    )
-
-                # Final scores = persona scores
-                scores = persona_scores
-                reasoning = persona_reasoning
-            else:
-                logger.warning(
-                    f"⚠️ No persona hint available for waypoint {waypoint_id} - "
-                    f"using neutral scores only"
-                )
-                # No persona - use neutral as final
-                persona_scores = neutral_scores
-                persona_reasoning = neutral_reasoning
-                persona_adjustments = None
-                persona_applied = False
-
-                scores = neutral_scores
-                reasoning = neutral_reasoning
-
-        # 5. Build WaypointAnalysis object with dual score fields
+        # Build WaypointAnalysis object with dual evaluation results
         analysis = WaypointAnalysis(
             waypoint_id=waypoint_id,
             image_path=image_path,
-            scores=scores,  # Final = persona (or neutral if no persona)
-            reasoning=reasoning,
+            objective_scores=objective_scores,
+            objective_reasoning=objective_reasoning,
+            persona_scores=persona_scores,
+            persona_reasoning=persona_reasoning,
             timestamp=metadata.get("timestamp", ""),
             gps=(metadata.get("lat", 0.0), metadata.get("lon", 0.0)),
             heading=metadata.get("heading", 0.0),
             visual_change_detected=visual_change_detected,
             phash_distance=phash_distance,
-            # NEW: Dual score fields
-            neutral_scores=neutral_scores,
-            persona_adjustments=persona_adjustments,
-            neutral_reasoning=neutral_reasoning,
-            persona_applied=persona_applied,
         )
 
         logger.debug(
             f"Waypoint {waypoint_id} analyzed - "
-            f"avg_score={sum(scores.values()) / len(scores):.2f}, "
-            f"visual_change={visual_change_detected}, "
-            f"mode={'multi-image' if use_multi_image else 'single-image'}"
+            f"avg_objective={sum(objective_scores.values()) / len(objective_scores):.2f}, "
+            f"avg_persona={sum(persona_scores.values()) / len(persona_scores):.2f}, "
+            f"visual_change={visual_change_detected}"
         )
 
         return analysis
@@ -409,12 +308,7 @@ class ContinuousAnalyzer:
 
     def get_statistics(self) -> Dict:
         """
-        Return statistics about visual changes across the route
-
-        Useful for understanding route characteristics:
-        - How many significant visual transitions occurred?
-        - What's the typical pHash distance between waypoints?
-        - Are changes frequent (urban) or rare (monotonous)?
+        Return statistics about visual changes and dual evaluation across the route.
 
         Returns:
             Dictionary containing:
@@ -422,10 +316,29 @@ class ContinuousAnalyzer:
             - visual_changes_detected: Count of waypoints with visual changes
             - avg_phash_distance: Average pHash distance across waypoints
             - phash_distances: List of all pHash distances (for plotting)
-            - multi_image_evaluations: Count of multi-image comparisons performed
+            - objective_score_stats: Stats for objective evaluation
+            - persona_score_stats: Stats for persona evaluation
+            - avg_score_difference: Average difference between persona and objective
         """
         if not self.analysis_history:
             return {}
+
+        # Calculate objective score statistics
+        all_objective_scores = []
+        all_persona_scores = []
+        score_differences = []
+
+        for analysis in self.analysis_history:
+            obj_scores = list(analysis.objective_scores.values())
+            per_scores = list(analysis.persona_scores.values())
+
+            all_objective_scores.extend(obj_scores)
+            all_persona_scores.extend(per_scores)
+
+            # Calculate per-waypoint difference
+            avg_obj = sum(obj_scores) / len(obj_scores) if obj_scores else 0
+            avg_per = sum(per_scores) / len(per_scores) if per_scores else 0
+            score_differences.append(avg_per - avg_obj)
 
         stats = {
             "total_waypoints": len(self.analysis_history),
@@ -438,14 +351,25 @@ class ContinuousAnalyzer:
                 else 0
             ),
             "phash_distances": self.phash_distances,
-            "multi_image_evaluations": self.multi_image_evaluations,
+            "objective_score_stats": {
+                "avg": sum(all_objective_scores) / len(all_objective_scores) if all_objective_scores else 0,
+                "min": min(all_objective_scores) if all_objective_scores else 0,
+                "max": max(all_objective_scores) if all_objective_scores else 0,
+            },
+            "persona_score_stats": {
+                "avg": sum(all_persona_scores) / len(all_persona_scores) if all_persona_scores else 0,
+                "min": min(all_persona_scores) if all_persona_scores else 0,
+                "max": max(all_persona_scores) if all_persona_scores else 0,
+            },
+            "avg_score_difference": sum(score_differences) / len(score_differences) if score_differences else 0,
         }
 
         logger.info(
-            f"Statistics: {stats['visual_changes_detected']} changes in "
-            f"{stats['total_waypoints']} waypoints "
-            f"(avg distance={stats['avg_phash_distance']:.2f}), "
-            f"multi-image evals: {stats['multi_image_evaluations']}"
+            f"Statistics: {stats['total_waypoints']} waypoints, "
+            f"{stats['visual_changes_detected']} changes, "
+            f"avg_objective={stats['objective_score_stats']['avg']:.2f}, "
+            f"avg_persona={stats['persona_score_stats']['avg']:.2f}, "
+            f"avg_diff={stats['avg_score_difference']:.2f}"
         )
 
         return stats
@@ -485,7 +409,9 @@ class ContinuousAnalyzer:
 
     def _summarize_analysis(self, analysis: WaypointAnalysis) -> str:
         """
-        Create concise summary of waypoint analysis for context
+        Create concise summary of waypoint analysis for context.
+
+        Uses persona scores as the primary decision-making scores.
 
         Args:
             analysis: WaypointAnalysis object to summarize
@@ -493,14 +419,14 @@ class ContinuousAnalyzer:
         Returns:
             Human-readable summary string
         """
-        if not analysis.scores:
+        if not analysis.persona_scores:
             return "No evaluation data"
 
-        avg_score = sum(analysis.scores.values()) / len(analysis.scores)
+        avg_score = sum(analysis.persona_scores.values()) / len(analysis.persona_scores)
 
         # Find highest and lowest scoring dimensions
-        best_dim = max(analysis.scores.items(), key=lambda x: x[1])
-        worst_dim = min(analysis.scores.items(), key=lambda x: x[1])
+        best_dim = max(analysis.persona_scores.items(), key=lambda x: x[1])
+        worst_dim = min(analysis.persona_scores.items(), key=lambda x: x[1])
 
         summary = (
             f"Average score: {avg_score:.1f}/10. "

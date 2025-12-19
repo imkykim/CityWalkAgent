@@ -2,20 +2,42 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 from src.config import DEFAULT_MAX_CONCURRENT
 from src.utils.logging import get_logger
 
 from .batch_processor import BatchProcessor, EvaluationTask
+from .persona_prompt_builder import PersonaPromptBuilder
 from .prompt_builder import PromptBuilder
 from .response_parser import ResponseParser
 from .vlm_client import VLMClient, VLMConfig
 
 if TYPE_CHECKING:
+    from src.agent.config.personalities import EnhancedPersonalityConfig
     from src.utils.data_models import Route
+
+
+@dataclass
+class DualEvaluationResult:
+    """Result from dual evaluation (objective + persona).
+
+    Attributes:
+        dimension_id: The dimension identifier
+        objective_score: Score from objective evaluation
+        objective_reasoning: Reasoning from objective evaluation
+        persona_score: Score from persona-aware evaluation
+        persona_reasoning: Reasoning from persona-aware evaluation
+    """
+
+    dimension_id: str
+    objective_score: float
+    objective_reasoning: str
+    persona_score: float
+    persona_reasoning: str
 
 
 class Evaluator:
@@ -80,10 +102,16 @@ class Evaluator:
         image_path: str,
         dimensions: Optional[List[str]] = None,
         previous_context: Optional[Dict[str, Any]] = None,
-        persona_hint: Optional[str] = None
+        persona: Optional[EnhancedPersonalityConfig] = None,
+        evaluation_mode: Literal["objective", "persona", "dual"] = "objective"
     ) -> List[Dict[str, Any]]:
         """
-        Evaluate single image across specified dimensions
+        Evaluate single image across specified dimensions.
+
+        Supports three evaluation modes:
+        - "objective": Use framework prompts only (no persona)
+        - "persona": Use persona-aware prompts only
+        - "dual": Run both objective and persona evaluations in parallel
 
         Args:
             image_path: Path to street view image
@@ -94,16 +122,32 @@ class Evaluator:
                 - reasoning: Dict[str, str]
                 - phash_distance: float
                 - visual_change_detected: bool
-            persona_hint: Optional persona-aware evaluation hint to prepend to prompt
+            persona: Optional persona configuration for persona-aware evaluation
+            evaluation_mode: Type of evaluation ("objective", "persona", "dual")
 
         Returns:
             List of evaluation results (one per dimension)
+            For dual mode, returns DualEvaluationResult objects
+
+        Raises:
+            ValueError: If persona mode/dual mode requested without persona
         """
+        if evaluation_mode in ["persona", "dual"] and not persona:
+            raise ValueError(
+                f"Evaluation mode '{evaluation_mode}' requires a persona. "
+                "Please provide a persona parameter."
+            )
+
         if dimensions is None:
             dimensions = self.prompt_builder.get_all_dimension_ids()
 
         results = []
         image_id = Path(image_path).stem
+
+        # Create persona prompt builder if needed
+        persona_builder = None
+        if persona and evaluation_mode in ["persona", "dual"]:
+            persona_builder = PersonaPromptBuilder(self.framework, persona)
 
         for dimension_id in dimensions:
             if dimension_id not in self.prompts:
@@ -114,47 +158,166 @@ class Evaluator:
                 )
                 continue
 
-            base_prompt = self.prompts[dimension_id]
-
-            # Prepend context if available
-            if previous_context:
-                context_text = self._format_context_for_prompt(previous_context)
-                prompt = context_text + base_prompt
-            else:
-                prompt = base_prompt
-
-            # Add persona hint if provided
-            if persona_hint:
-                prompt = f"""**EVALUATOR PERSPECTIVE:**
-{persona_hint}
-
-{prompt}"""
-
-            # Call VLM
-            response = self.vlm_client.call_vlm(prompt, image_path)
-
-            if response and "content" in response:
-                parsed = self.response_parser.parse_response(
-                    response["content"],
-                    dimension_id
+            if evaluation_mode == "dual":
+                # Dual evaluation: run both objective and persona
+                result = self._evaluate_dimension_dual(
+                    image_path, dimension_id, persona_builder, previous_context
                 )
+                if result:
+                    results.append(result)
 
-                if parsed:
-                    dimension_meta = self.prompt_builder.get_dimension_metadata(dimension_id)
+            elif evaluation_mode == "persona":
+                # Persona-only evaluation
+                result = self._evaluate_dimension_persona(
+                    image_path, dimension_id, persona_builder, previous_context
+                )
+                if result:
+                    results.append(result)
 
-                    result = {
-                        "image_id": image_id,
-                        "image_path": image_path,
-                        "framework_id": self.framework_id,
-                        "dimension_id": dimension_id,
-                        "dimension_name": dimension_meta.get("name_cn", dimension_id),
-                        "score": parsed["score"],
-                        "reasoning": parsed["reasoning"],
-                        "timestamp": datetime.now().isoformat()
-                    }
+            else:
+                # Objective evaluation (default)
+                result = self._evaluate_dimension_objective(
+                    image_path, dimension_id, previous_context
+                )
+                if result:
                     results.append(result)
 
         return results
+
+    def _evaluate_dimension_objective(
+        self,
+        image_path: str,
+        dimension_id: str,
+        previous_context: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Evaluate a dimension using objective (framework-only) prompt."""
+        base_prompt = self.prompts[dimension_id]
+
+        # Prepend context if available
+        if previous_context:
+            context_text = self._format_context_for_prompt(previous_context)
+            prompt = context_text + base_prompt
+        else:
+            prompt = base_prompt
+
+        # Call VLM
+        response = self.vlm_client.call_vlm(prompt, image_path)
+
+        if response and "content" in response:
+            parsed = self.response_parser.parse_response(
+                response["content"],
+                dimension_id
+            )
+
+            if parsed:
+                dimension_meta = self.prompt_builder.get_dimension_metadata(dimension_id)
+                image_id = Path(image_path).stem
+
+                return {
+                    "image_id": image_id,
+                    "image_path": image_path,
+                    "framework_id": self.framework_id,
+                    "dimension_id": dimension_id,
+                    "dimension_name": dimension_meta.get("name_cn", dimension_id),
+                    "score": parsed["score"],
+                    "reasoning": parsed["reasoning"],
+                    "timestamp": datetime.now().isoformat(),
+                    "evaluation_mode": "objective"
+                }
+
+        return None
+
+    def _evaluate_dimension_persona(
+        self,
+        image_path: str,
+        dimension_id: str,
+        persona_builder: PersonaPromptBuilder,
+        previous_context: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Evaluate a dimension using persona-aware prompt."""
+        persona_prompt = persona_builder.build_persona_prompt(dimension_id)
+
+        # Prepend context if available
+        if previous_context:
+            context_text = self._format_context_for_prompt(previous_context)
+            prompt = context_text + persona_prompt
+        else:
+            prompt = persona_prompt
+
+        # Call VLM
+        response = self.vlm_client.call_vlm(prompt, image_path)
+
+        if response and "content" in response:
+            parsed = self.response_parser.parse_response(
+                response["content"],
+                dimension_id
+            )
+
+            if parsed:
+                dimension_meta = self.prompt_builder.get_dimension_metadata(dimension_id)
+                image_id = Path(image_path).stem
+
+                return {
+                    "image_id": image_id,
+                    "image_path": image_path,
+                    "framework_id": self.framework_id,
+                    "dimension_id": dimension_id,
+                    "dimension_name": dimension_meta.get("name_cn", dimension_id),
+                    "score": parsed["score"],
+                    "reasoning": parsed["reasoning"],
+                    "timestamp": datetime.now().isoformat(),
+                    "evaluation_mode": "persona"
+                }
+
+        return None
+
+    def _evaluate_dimension_dual(
+        self,
+        image_path: str,
+        dimension_id: str,
+        persona_builder: PersonaPromptBuilder,
+        previous_context: Optional[Dict[str, Any]] = None
+    ) -> Optional[DualEvaluationResult]:
+        """Evaluate a dimension using both objective and persona prompts."""
+        # Build both prompts
+        objective_prompt = self.prompts[dimension_id]
+        persona_prompt = persona_builder.build_persona_prompt(dimension_id)
+
+        # Add context if available
+        if previous_context:
+            context_text = self._format_context_for_prompt(previous_context)
+            objective_prompt = context_text + objective_prompt
+            persona_prompt = context_text + persona_prompt
+
+        # Call VLM for objective evaluation
+        objective_response = self.vlm_client.call_vlm(objective_prompt, image_path)
+        objective_parsed = None
+        if objective_response and "content" in objective_response:
+            objective_parsed = self.response_parser.parse_response(
+                objective_response["content"],
+                dimension_id
+            )
+
+        # Call VLM for persona evaluation
+        persona_response = self.vlm_client.call_vlm(persona_prompt, image_path)
+        persona_parsed = None
+        if persona_response and "content" in persona_response:
+            persona_parsed = self.response_parser.parse_response(
+                persona_response["content"],
+                dimension_id
+            )
+
+        # Return dual result if both succeeded
+        if objective_parsed and persona_parsed:
+            return DualEvaluationResult(
+                dimension_id=dimension_id,
+                objective_score=objective_parsed["score"],
+                objective_reasoning=objective_parsed["reasoning"],
+                persona_score=persona_parsed["score"],
+                persona_reasoning=persona_parsed["reasoning"]
+            )
+
+        return None
 
     def evaluate_images(
         self,

@@ -16,19 +16,13 @@ from src.agent.config.personalities import (
     create_neutral_personality,
     get_enhanced_personality,
     get_preset,
-    get_primary_dimensions,
     list_enhanced_personalities,
     list_presets,
-    map_semantic_to_weights,
-    normalize_weights,
 )
 
 # Import constants
 from src.agent.config.constants import (
     DEFAULT_FRAMEWORK_ID,
-    MAX_WEIGHT,
-    MIN_WEIGHT,
-    WEIGHT_NEUTRAL_VALUE,
 )
 
 __all__ = [
@@ -43,13 +37,6 @@ __all__ = [
     "list_enhanced_personalities",
     "ENHANCED_PERSONALITIES",
     "PERSONALITIES",  # Alias for backward compatibility
-    # Utilities
-    "map_semantic_to_weights",
-    "normalize_weights",
-    "get_primary_dimensions",
     # Constants
     "DEFAULT_FRAMEWORK_ID",
-    "WEIGHT_NEUTRAL_VALUE",
-    "MIN_WEIGHT",
-    "MAX_WEIGHT",
 ]

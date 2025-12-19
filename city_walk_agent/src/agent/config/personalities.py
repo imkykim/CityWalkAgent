@@ -17,11 +17,6 @@ Usage:
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from src.agent.config.constants import (
-    MAX_WEIGHT,
-    MIN_WEIGHT,
-    WEIGHT_NEUTRAL_VALUE,
-)
 from src.config import load_framework
 
 
@@ -38,8 +33,6 @@ class EnhancedPersonalityConfig:
         personality_id: Unique identifier (e.g., "homebuyer", "runner")
         name: Human-readable name
         description: Brief description of persona behavior
-        semantic_config: Priority mapping for dimension weights
-        weight_distribution: Weight values for priority levels
         vlm_persona_prompt: Detailed VLM instruction for this persona
         system1_persona_hint: Short hint for System 1 evaluation
         thresholds: Decision thresholds (min_score, max_volatility, etc.)
@@ -49,8 +42,6 @@ class EnhancedPersonalityConfig:
     personality_id: str
     name: str
     description: str
-    semantic_config: Dict[str, List[str]]
-    weight_distribution: Dict[str, float]
     vlm_persona_prompt: str
     system1_persona_hint: Optional[str] = None
     thresholds: Dict[str, float] = field(default_factory=dict)
@@ -64,7 +55,6 @@ class AgentPersonality:
     Attributes:
         name: Human-readable personality name
         description: Brief explanation of personality behavior
-        dimension_weights: Mapping of dimension IDs to weight values
         decision_thresholds: Threshold values for decision-making
         explanation_style: Style of explanations (safety, scenic, balanced, technical)
         personality_id: Optional personality identifier
@@ -72,7 +62,6 @@ class AgentPersonality:
 
     name: str
     description: str
-    dimension_weights: Dict[str, float]
     decision_thresholds: Dict[str, float]
     explanation_style: str
     personality_id: Optional[str] = None
@@ -92,36 +81,6 @@ ENHANCED_PERSONALITIES: dict[str, EnhancedPersonalityConfig] = {
         name="Prospective Homebuyer",
         description="Evaluating neighborhood livability for family residence",
 
-        # Semantic mapping - works with any framework
-        semantic_config={
-            "primary_focus": [
-                "safety", "secure", "protection", "安全",
-                "comfort", "ease", "convenience", "舒适",
-                "functional", "amenity", "service", "功能",
-            ],
-            "secondary_focus": [
-                "legibility", "navigation", "wayfinding", "清晰",
-                "coherence", "order", "organization", "秩序",
-            ],
-            "tertiary_focus": [
-                "interest", "engagement", "趣味",
-                "aesthetics", "beauty", "visual", "美观",
-            ],
-            "low_priority": [
-                "complexity", "mystery", "novelty",
-            ],
-        },
-
-        # Stronger weight spread for more differentiation
-        weight_distribution={
-            "primary": 2.5,
-            "secondary": 1.4,
-            "tertiary": 0.8,
-            "low": 0.5,
-            "unmapped": 0.7,
-        },
-
-        # Detailed VLM persona prompt
         vlm_persona_prompt="""
 You are evaluating this location as a PROSPECTIVE HOMEBUYER considering moving to this neighborhood with your family.
 
@@ -174,33 +133,6 @@ Penalize: heavy traffic, industrial zones, lack of nearby amenities.""",
         personality_id="runner",
         name="Urban Runner",
         description="Evaluating route suitability for regular running and jogging",
-
-        semantic_config={
-            "primary_focus": [
-                "safety", "secure", "安全",
-                "comfort", "ease", "smooth", "舒适",
-                "spatial", "openness", "width", "空间",
-            ],
-            "secondary_focus": [
-                "aesthetics", "visual", "景观",
-                "coherence", "continuity", "连续",
-            ],
-            "tertiary_focus": [
-                "interest", "variety", "趣味",
-            ],
-            "low_priority": [
-                "functional", "amenity", "service", "shops",
-                "complexity", "mystery",
-            ],
-        },
-
-        weight_distribution={
-            "primary": 2.5,
-            "secondary": 1.3,
-            "tertiary": 0.7,
-            "low": 0.4,
-            "unmapped": 0.6,
-        },
 
         vlm_persona_prompt="""
 You are evaluating this location as an URBAN RUNNER planning regular jogging routes.
@@ -257,32 +189,6 @@ Penalize: uneven surfaces (cobblestones, cracks), narrow paths, heavy crowding, 
         personality_id="parent_with_kids",
         name="Parent with Young Children",
         description="Evaluating route safety and family-friendliness with stroller",
-
-        semantic_config={
-            "primary_focus": [
-                "safety", "secure", "protection", "安全",
-            ],
-            "secondary_focus": [
-                "comfort", "ease", "accessibility", "舒适",
-                "functional", "amenity", "功能",
-            ],
-            "tertiary_focus": [
-                "interest", "engagement", "趣味",
-                "legibility", "navigation", "清晰",
-            ],
-            "low_priority": [
-                "aesthetics", "beauty", "美观",
-                "complexity", "mystery",
-            ],
-        },
-
-        weight_distribution={
-            "primary": 3.0,  # MAXIMUM safety weight
-            "secondary": 1.4,
-            "tertiary": 0.6,
-            "low": 0.3,
-            "unmapped": 0.5,
-        },
 
         vlm_persona_prompt="""
 You are evaluating this location as a PARENT WITH YOUNG CHILDREN pushing a stroller.
@@ -343,34 +249,6 @@ Apply SEVERE penalties to: heavy traffic, no/narrow sidewalks, steps/stairs, une
         name="Street Photographer",
         description="Seeking photogenic urban scenes and interesting compositions",
 
-        semantic_config={
-            "primary_focus": [
-                "aesthetics", "visual", "beauty", "美观",
-                "complexity", "interest", "variety", "趣味",
-                "spatial", "sequence", "composition", "构图",
-            ],
-            "secondary_focus": [
-                "coherence", "harmony", "秩序",
-                "mystery", "intrigue", "神秘",
-            ],
-            "tertiary_focus": [
-                "legibility", "landmark", "地标",
-            ],
-            "low_priority": [
-                "safety", "secure", "安全",
-                "comfort", "ease", "舒适",
-                "functional", "amenity", "功能",
-            ],
-        },
-
-        weight_distribution={
-            "primary": 2.5,
-            "secondary": 1.6,
-            "tertiary": 1.0,
-            "low": 0.5,
-            "unmapped": 0.8,
-        },
-
         vlm_persona_prompt="""
 You are evaluating this location as a STREET PHOTOGRAPHER seeking compelling images.
 
@@ -425,33 +303,6 @@ Ignore: walkability, safety, functional amenities. Value: complexity, texture, a
         personality_id="elderly_walker",
         name="Elderly Walker",
         description="Evaluating route for safe, comfortable walking with mobility considerations",
-
-        semantic_config={
-            "primary_focus": [
-                "safety", "secure", "安全",
-                "comfort", "ease", "舒适",
-            ],
-            "secondary_focus": [
-                "legibility", "navigation", "wayfinding", "清晰",
-                "functional", "amenity", "rest", "功能",
-            ],
-            "tertiary_focus": [
-                "aesthetics", "beauty", "美观",
-                "interest", "趣味",
-            ],
-            "low_priority": [
-                "complexity", "mystery",
-                "novelty",
-            ],
-        },
-
-        weight_distribution={
-            "primary": 2.8,
-            "secondary": 1.5,
-            "tertiary": 0.6,
-            "low": 0.3,
-            "unmapped": 0.5,
-        },
 
         vlm_persona_prompt="""
 You are evaluating this location as an ELDERLY WALKER with mobility considerations.
@@ -537,112 +388,7 @@ def list_enhanced_personalities() -> List[str]:
     return list(ENHANCED_PERSONALITIES.keys())
 
 
-def map_semantic_to_weights(
-    semantic_config: Dict[str, List[str]],
-    framework_dimensions: List[Dict],
-    weight_distribution: Dict[str, float],
-) -> Dict[str, float]:
-    """Translate semantic focus definitions into framework-specific weights.
-
-    Args:
-        semantic_config: Keyword groups describing priority levels
-        framework_dimensions: Framework dimensions with ids and optional names
-        weight_distribution: Weight values for priority buckets plus unmapped
-
-    Returns:
-        Dict[str, float]: Weight mapping keyed by dimension id
-    """
-    weights = {}
-
-    for dim in framework_dimensions:
-        dim_id = dim["id"]
-
-        # Collect all possible names for this dimension
-        dim_names = [dim_id.lower()]
-
-        # Add name variations if present
-        for name_field in ["name", "name_en", "name_cn", "dimension_name"]:
-            if name_field in dim:
-                dim_names.append(dim[name_field].lower())
-
-        # Check which priority level this dimension matches
-        assigned = False
-
-        priority_levels = [
-            "primary_focus",
-            "secondary_focus",
-            "tertiary_focus",
-            "low_priority",
-        ]
-
-        for priority_level in priority_levels:
-            keywords = semantic_config.get(priority_level, [])
-
-            # Check if dimension matches any keyword
-            for keyword in keywords:
-                keyword_lower = keyword.lower()
-
-                # Check if keyword appears in any of the dimension's names
-                for dim_name in dim_names:
-                    if keyword_lower in dim_name or dim_name in keyword_lower:
-                        # Map priority level to weight
-                        priority_key = priority_level.replace("_focus", "").replace(
-                            "_priority", ""
-                        )
-                        weights[dim_id] = weight_distribution.get(
-                            priority_key, WEIGHT_NEUTRAL_VALUE
-                        )
-                        assigned = True
-                        break
-
-                if assigned:
-                    break
-
-            if assigned:
-                break
-
-        # If not matched, use unmapped weight
-        if not assigned:
-            weights[dim_id] = weight_distribution.get("unmapped", WEIGHT_NEUTRAL_VALUE)
-
-    return weights
-
-
-def normalize_weights(weights: Dict[str, float]) -> Dict[str, float]:
-    """Rescale weights so their average equals 1.0.
-
-    Args:
-        weights: Mapping of dimension ids to raw weights
-
-    Returns:
-        Dict[str, float]: Normalized weight mapping
-    """
-    total_weight = sum(weights.values())
-    num_dimensions = len(weights)
-
-    if total_weight == 0:
-        # Avoid division by zero - return equal weights
-        return {dim_id: WEIGHT_NEUTRAL_VALUE for dim_id in weights}
-
-    # Normalize so sum equals number of dimensions (average = 1.0)
-    normalization_factor = num_dimensions / total_weight
-
-    return {dim_id: weight * normalization_factor for dim_id, weight in weights.items()}
-
-
-def get_primary_dimensions(
-    weights: Dict[str, float], threshold: float = 2.0
-) -> List[str]:
-    """Return dimension ids whose weight meets or exceeds the threshold.
-
-    Args:
-        weights: Mapping of dimension ids to weights
-        threshold: Minimum weight regarded as primary
-
-    Returns:
-        List[str]: Dimension ids flagged as primary
-    """
-    return [dim_id for dim_id, weight in weights.items() if weight >= threshold]
+# Weight utility functions removed - no longer needed in dual evaluation system
 
 
 # ============================================================================
@@ -651,16 +397,15 @@ def get_primary_dimensions(
 
 
 def get_preset(preset_name: str, framework_id: str) -> AgentPersonality:
-    """Get a preset personality configuration for a specific framework.
+    """Get a preset personality configuration.
 
     Args:
         preset_name: Personality ID (homebuyer, runner, parent_with_kids,
             photographer, elderly_walker)
-        framework_id: Target evaluation framework identifier
+        framework_id: Target evaluation framework identifier (for validation)
 
     Returns:
-        AgentPersonality: Configured personality instance with computed
-            dimension weights for the target framework
+        AgentPersonality: Configured personality instance
 
     Raises:
         ValueError: If preset_name is invalid or framework_id not found
@@ -677,29 +422,15 @@ def get_preset(preset_name: str, framework_id: str) -> AgentPersonality:
     # Get enhanced personality configuration
     enhanced_config = get_enhanced_personality(preset_name)
 
-    # Load framework to get dimension definitions
+    # Load framework to validate it exists
     framework = load_framework(framework_id)
-    framework_dimensions = framework.get("dimensions", [])
-
-    if not framework_dimensions:
+    if not framework.get("dimensions", []):
         raise ValueError(f"Framework '{framework_id}' has no dimensions defined")
 
-    # Map semantic configuration to actual weights
-    semantic_config = enhanced_config.semantic_config
-    weight_distribution = enhanced_config.weight_distribution
-
-    dimension_weights = map_semantic_to_weights(
-        semantic_config, framework_dimensions, weight_distribution
-    )
-
-    # Normalize weights so average = 1.0
-    dimension_weights = normalize_weights(dimension_weights)
-
-    # Build personality instance
+    # Build personality instance (no weight computation needed)
     return AgentPersonality(
         name=enhanced_config.name,
         description=enhanced_config.description,
-        dimension_weights=dimension_weights,
         decision_thresholds=enhanced_config.thresholds,
         explanation_style=enhanced_config.explanation_style,
         personality_id=preset_name,
@@ -720,7 +451,7 @@ def list_presets() -> List[str]:
 
 
 def create_neutral_personality(framework_id: str) -> AgentPersonality:
-    """Create a balanced personality with equal weights for all dimensions.
+    """Create a balanced personality for objective evaluation.
 
     This is useful for creating a baseline agent or for frameworks where
     no preset personalities are defined.
@@ -729,27 +460,20 @@ def create_neutral_personality(framework_id: str) -> AgentPersonality:
         framework_id: Target evaluation framework identifier
 
     Returns:
-        AgentPersonality: Neutral personality with all weights = 1.0
+        AgentPersonality: Neutral personality for objective evaluation
 
     Raises:
         ValueError: If framework_id not found
 
     Examples:
         >>> neutral = create_neutral_personality("sagai_2025")
-        >>> neutral.dimension_weights
-        {'safety': 1.0, 'comfort': 1.0, 'interest': 1.0, 'aesthetics': 1.0}
+        >>> neutral.personality_id
+        'neutral'
     """
-    # Load framework to get dimension definitions
+    # Load framework to validate it exists
     framework = load_framework(framework_id)
-    framework_dimensions = framework.get("dimensions", [])
-
-    if not framework_dimensions:
+    if not framework.get("dimensions", []):
         raise ValueError(f"Framework '{framework_id}' has no dimensions defined")
-
-    # Create equal weights for all dimensions
-    dimension_weights = {
-        dim["id"]: WEIGHT_NEUTRAL_VALUE for dim in framework_dimensions
-    }
 
     # Use default thresholds (framework-agnostic)
     decision_thresholds = {
@@ -761,7 +485,6 @@ def create_neutral_personality(framework_id: str) -> AgentPersonality:
     return AgentPersonality(
         name="Neutral Observer",
         description="Balanced evaluation across all dimensions",
-        dimension_weights=dimension_weights,
         decision_thresholds=decision_thresholds,
         explanation_style="balanced",
         personality_id="neutral",
