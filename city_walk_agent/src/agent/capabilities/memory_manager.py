@@ -83,11 +83,7 @@ class MemoryManager:
         status: Dynamic agent state (energy, mode, etc.)
     """
 
-    def __init__(
-        self,
-        agent_id: str,
-        storage_dir: Optional[Path] = None
-    ) -> None:
+    def __init__(self, agent_id: str, storage_dir: Optional[Path] = None) -> None:
         """Initialize memory manager with agent ID.
 
         Args:
@@ -145,8 +141,7 @@ class MemoryManager:
         """
         if self._ltm is None:
             self._ltm = LongTermMemory(
-                agent_id=self.agent_id,
-                storage_dir=self.storage_dir
+                agent_id=self.agent_id, storage_dir=self.storage_dir
             )
             self.logger.debug("LongTermMemory lazy-loaded")
         return self._ltm
@@ -159,7 +154,7 @@ class MemoryManager:
         self,
         personality: AgentPersonality,
         profile: Dict[str, Any],
-        status: Dict[str, Any]
+        status: Dict[str, Any],
     ) -> None:
         """Configure agent attributes to influence memory operations.
 
@@ -192,7 +187,7 @@ class MemoryManager:
             "Agent attributes configured",
             personality=personality.name,
             profile_keys=list(profile.keys()),
-            status=status
+            status=status,
         )
 
     # ========================================================================
@@ -200,8 +195,7 @@ class MemoryManager:
     # ========================================================================
 
     def _passes_attention_gate(
-        self,
-        waypoint_analysis: Any  # WaypointAnalysis type hint
+        self, waypoint_analysis: Any  # WaypointAnalysis type hint
     ) -> bool:
         """Determine if waypoint is significant enough to enter STM.
 
@@ -227,7 +221,7 @@ class MemoryManager:
             self.logger.debug(
                 "Attention gate: PASS (visual change)",
                 waypoint_id=waypoint_analysis.waypoint_id,
-                phash_distance=waypoint_analysis.phash_distance
+                phash_distance=waypoint_analysis.phash_distance,
             )
             return True
 
@@ -235,7 +229,7 @@ class MemoryManager:
         if waypoint_analysis.waypoint_id % 10 == 0:
             self.logger.debug(
                 "Attention gate: PASS (milestone)",
-                waypoint_id=waypoint_analysis.waypoint_id
+                waypoint_id=waypoint_analysis.waypoint_id,
             )
             return True
 
@@ -270,7 +264,7 @@ class MemoryManager:
                         "Attention gate: PASS (score anomaly)",
                         waypoint_id=waypoint_analysis.waypoint_id,
                         delta=score_delta,
-                        threshold=delta_threshold
+                        threshold=delta_threshold,
                     )
                     return True
 
@@ -284,7 +278,7 @@ class MemoryManager:
                     waypoint_id=waypoint_analysis.waypoint_id,
                     dimension=dim_id,
                     score=score,
-                    threshold=low_score_threshold
+                    threshold=low_score_threshold,
                 )
                 return True
 
@@ -292,7 +286,7 @@ class MemoryManager:
         self.logger.debug(
             "Attention gate: FILTER",
             waypoint_id=waypoint_analysis.waypoint_id,
-            avg_score=current_avg
+            avg_score=current_avg,
         )
         return False
 
@@ -364,13 +358,17 @@ class MemoryManager:
             recent_scores = stm_context["recent_scores"]
             recent_summaries = stm_context.get("recent_summaries", [])
 
-            for wid, scores, summary in zip(waypoint_ids, recent_scores, recent_summaries):
+            for wid, scores, summary in zip(
+                waypoint_ids, recent_scores, recent_summaries
+            ):
                 system2_info = ""
                 if wid in self._system2_results:
                     result = self._system2_results[wid]
                     adjustments = getattr(result, "score_adjustments", {}) or {}
                     avg_adjustment = (
-                        sum(adjustments.values()) / len(adjustments) if adjustments else 0.0
+                        sum(adjustments.values()) / len(adjustments)
+                        if adjustments
+                        else 0.0
                     )
                     system2_info = (
                         f" [System 2: {getattr(result, 'significance', 'medium')}, "
@@ -421,9 +419,7 @@ class MemoryManager:
         return context
 
     def _retrieve_relevant_ltm(
-        self,
-        current_gps: Tuple[float, float],
-        radius_meters: float = 500.0
+        self, current_gps: Tuple[float, float], radius_meters: float = 500.0
     ) -> List[Dict[str, Any]]:
         """Retrieve relevant experiences from LTM based on GPS proximity.
 
@@ -477,7 +473,7 @@ class MemoryManager:
         if not self._passes_attention_gate(waypoint_analysis):
             self.logger.debug(
                 "Waypoint filtered by attention gate",
-                waypoint_id=waypoint_analysis.waypoint_id
+                waypoint_id=waypoint_analysis.waypoint_id,
             )
             return None
 
@@ -488,15 +484,19 @@ class MemoryManager:
             waypoint_id=waypoint_analysis.waypoint_id,
             scores=waypoint_analysis.scores,
             summary=f"Waypoint {waypoint_analysis.waypoint_id}",
-            image_path=waypoint_analysis.image_path if waypoint_analysis.visual_change_detected else None,
+            image_path=(
+                waypoint_analysis.image_path
+                if waypoint_analysis.visual_change_detected
+                else None
+            ),
             gps=waypoint_analysis.gps,
-            timestamp=waypoint_analysis.timestamp
+            timestamp=waypoint_analysis.timestamp,
         )
 
         self.logger.debug(
             "Waypoint added to STM",
             waypoint_id=waypoint_analysis.waypoint_id,
-            stm_size=self.stm.get_memory_size()
+            stm_size=self.stm.get_memory_size(),
         )
 
         # Step 3: Return context only if triggered by controller
@@ -506,22 +506,21 @@ class MemoryManager:
         self._system2_triggers += 1
 
         context = self.prepare_context_for_thinking(
-            waypoint_analysis, trigger_reason=trigger_reason or TriggerReason.VISUAL_CHANGE
+            waypoint_analysis,
+            trigger_reason=trigger_reason or TriggerReason.VISUAL_CHANGE,
         )
 
         self.logger.info(
             "System 2 reasoning triggered",
             waypoint_id=waypoint_analysis.waypoint_id,
             total_triggers=self._system2_triggers,
-            trigger_rate=f"{self._system2_triggers}/{self._waypoints_processed}"
+            trigger_rate=f"{self._system2_triggers}/{self._waypoints_processed}",
         )
 
         return context
 
     def update_with_system2_result(
-        self,
-        waypoint_id: int,
-        thinking_result: Any  # ThinkingResult
+        self, waypoint_id: int, thinking_result: Any  # ThinkingResult
     ) -> None:
         """Update STM with System 2 revised scores.
 
@@ -535,10 +534,10 @@ class MemoryManager:
             for item in self.stm._memory:
                 if item.waypoint_id == waypoint_id:
                     item.scores = thinking_result.revised_scores
-                    item.summary = (
-                        f"Waypoint {waypoint_id} (System 2: {thinking_result.significance})"
+                    item.summary = f"Waypoint {waypoint_id} (System 2: {thinking_result.significance})"
+                    adjustments = (
+                        getattr(thinking_result, "score_adjustments", {}) or {}
                     )
-                    adjustments = getattr(thinking_result, "score_adjustments", {}) or {}
                     self.logger.debug(
                         "Updated STM with System 2 scores",
                         waypoint_id=waypoint_id,
@@ -553,7 +552,7 @@ class MemoryManager:
     def complete_route(
         self,
         route_data: Dict[str, Any],
-        thinking_history: List[Any]  # List[ThinkingResult]
+        thinking_history: List[Any],  # List[ThinkingResult]
     ) -> RouteSummary:
         """Consolidate STM → LTM when route analysis completes.
 
@@ -583,7 +582,7 @@ class MemoryManager:
             "Starting route consolidation",
             route_id=route_id,
             stm_size=self.stm.get_memory_size(),
-            thinking_episodes=len(thinking_history)
+            thinking_episodes=len(thinking_history),
         )
 
         # Step 1: Get all STM contents
@@ -597,11 +596,15 @@ class MemoryManager:
             waypoint_ids = stm_context.get("waypoint_ids", [])
 
             for i, scores in enumerate(recent_scores):
-                all_analyses.append({
-                    "waypoint_id": waypoint_ids[i] if i < len(waypoint_ids) else i,
-                    "scores": scores,
-                    "summary": recent_summaries[i] if i < len(recent_summaries) else ""
-                })
+                all_analyses.append(
+                    {
+                        "waypoint_id": waypoint_ids[i] if i < len(waypoint_ids) else i,
+                        "scores": scores,
+                        "summary": (
+                            recent_summaries[i] if i < len(recent_summaries) else ""
+                        ),
+                    }
+                )
 
         # Step 2: Add candidate moments from thinking history
         for thinking_result in thinking_history:
@@ -624,17 +627,14 @@ class MemoryManager:
                 self.logger.debug(
                     "Candidate moment identified",
                     waypoint_id=waypoint_id,
-                    significance=significance
+                    significance=significance,
                 )
 
         # Step 3: Extract patterns
-        thinking_texts = [
-            getattr(t, "interpretation", "") for t in thinking_history
-        ]
+        thinking_texts = [getattr(t, "interpretation", "") for t in thinking_history]
 
         self.episodic_ltm.extract_patterns(
-            all_analyses=all_analyses,
-            thinking_history=thinking_texts
+            all_analyses=all_analyses, thinking_history=thinking_texts
         )
 
         # Step 4: Generate route summary
@@ -642,7 +642,7 @@ class MemoryManager:
             route_id=route_id,
             total_waypoints=len(all_analyses),
             length_km=route_length_km,
-            all_analyses=all_analyses
+            all_analyses=all_analyses,
         )
 
         # Step 5: Clear STM for next route
@@ -657,7 +657,7 @@ class MemoryManager:
             barriers=len(route_summary.major_barriers),
             waypoints_processed=self._waypoints_processed,
             attention_gate_pass_rate=f"{self._attention_gate_passes}/{self._waypoints_processed}",
-            system2_trigger_rate=f"{self._system2_triggers}/{self._waypoints_processed}"
+            system2_trigger_rate=f"{self._system2_triggers}/{self._waypoints_processed}",
         )
 
         # Reset statistics for next route
@@ -690,13 +690,15 @@ class MemoryManager:
             "system2_triggers": self._system2_triggers,
             "attention_gate_pass_rate": (
                 self._attention_gate_passes / self._waypoints_processed
-                if self._waypoints_processed > 0 else 0.0
+                if self._waypoints_processed > 0
+                else 0.0
             ),
             "system2_trigger_rate": (
                 self._system2_triggers / self._waypoints_processed
-                if self._waypoints_processed > 0 else 0.0
+                if self._waypoints_processed > 0
+                else 0.0
             ),
             "stm_size": self.stm.get_memory_size(),
             "stm_full": self.stm.is_full(),
-            "ltm_stats": ltm_stats
+            "ltm_stats": ltm_stats,
         }

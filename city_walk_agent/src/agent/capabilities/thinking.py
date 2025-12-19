@@ -24,14 +24,10 @@ from src.agent.config.constants import (
     EXCELLENT_SCORE_THRESHOLD,
     LOW_VOLATILITY_THRESHOLD,
 )
-from src.agent.config.enhanced_personalities import (
+from src.agent.config import (
     ENHANCED_PERSONALITIES,
     get_enhanced_personality,
     EnhancedPersonalityConfig,
-)
-from src.agent.capabilities.score_transformer import (
-    ScoreTransformer,
-    create_dimension_mapping,
 )
 from src.config import settings
 from src.utils.logging import get_logger
@@ -162,12 +158,6 @@ class ThinkingModule:
         self.framework = load_framework(framework_id)
         self.dimensions = {d["id"]: d["name_en"] for d in self.framework["dimensions"]}
         self.dimension_ids = list(self.dimensions.keys())
-
-        # Create dimension mapping for score transformation
-        self.framework_dimensions = framework_dimensions or self.framework.get(
-            "dimensions", []
-        )
-        self.dimension_mapping = create_dimension_mapping(self.framework_dimensions)
 
         self.llm_api_url = self._prepare_chat_endpoint(
             llm_api_url or settings.qwen_vlm_api_url
@@ -368,33 +358,8 @@ class ThinkingModule:
             vlm_scores = parsed.get("revised_scores", system1_scores)
             vlm_reasoning = parsed.get("revision_reasoning", {})
 
-            # =====================================================
-            # NEW: Apply personality score transformation
-            # =====================================================
-            enhanced_config = self._get_enhanced_config(personality)
-            transformation_metadata = {}
-
-            if enhanced_config and self.dimension_mapping:
-                transformer = ScoreTransformer(
-                    scoring_rules=enhanced_config.scoring_rules,
-                    dimension_mapping=self.dimension_mapping,
-                )
-
-                final_scores, transformation_metadata = transformer.transform(
-                    scores=vlm_scores,
-                    vlm_reasoning=vlm_reasoning,
-                )
-
-                self.logger.debug(
-                    "Applied personality transformation",
-                    waypoint_id=waypoint_id,
-                    personality=enhanced_config.personality_id,
-                    adjustments=transformation_metadata.get(
-                        "total_adjustment_per_dim", {}
-                    ),
-                )
-            else:
-                final_scores = vlm_scores
+            # VLM persona prompt handles personality-specific scoring
+            final_scores = vlm_scores
 
             # Calculate total adjustments from System 1
             adjustments = {
@@ -402,12 +367,8 @@ class ThinkingModule:
                 for dim in system1_scores.keys()
             }
 
-            # Build memory influence with transformation info
+            # Build memory influence
             memory_influence = parsed.get("memory_influence", {})
-            memory_influence["transformation_applied"] = bool(enhanced_config)
-            memory_influence["detected_features"] = transformation_metadata.get(
-                "detected_features", []
-            ) + parsed.get("detected_features", [])
 
             result = ThinkingResult(
                 waypoint_id=waypoint_id,

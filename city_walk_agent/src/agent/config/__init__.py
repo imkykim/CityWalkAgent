@@ -1,82 +1,55 @@
 """Agent configuration package.
 
-This package consolidates all agent configuration functionality:
-- Personality definitions and presets
-- Semantic-to-framework weight mapping
-- Configuration validation utilities
-- Agent constants
-- Enhanced personality system with scoring rules
-
-Users should import from this package rather than submodules:
+Public API:
     from src.agent.config import get_preset, AgentPersonality
 
-The implementation details (whether functions come from personalities.py,
-constants.py, etc.) are hidden from users.
+    personality = get_preset("homebuyer", "sagai_2025")
+    agent = WalkingAgent(personality=personality)
 """
 
-# Import personality configuration functions and classes
+# All imports now come from personalities.py
 from src.agent.config.personalities import (
     AgentPersonality,
+    EnhancedPersonalityConfig,
+    ENHANCED_PERSONALITIES,
+    PERSONALITIES,
     create_neutral_personality,
-    get_available_frameworks_for_personality,
-    get_available_personalities,
-    get_personality_for_framework,
+    get_enhanced_personality,
     get_preset,
     get_primary_dimensions,
+    list_enhanced_personalities,
     list_presets,
     map_semantic_to_weights,
     normalize_weights,
-    validate_dimension_weights,
 )
 
-# Import enhanced personality system
-from src.agent.config.scoring_rules import (
-    EnhancedPersonalityConfig,
-    PersonalityScoringRules,
-)
-from src.agent.config.enhanced_personalities import (
-    ENHANCED_PERSONALITIES,
-    get_enhanced_personality,
-    list_enhanced_personalities,
-)
-
-# Import constants (make them accessible through the package)
+# Import constants
 from src.agent.config.constants import (
-    FRAMEWORK_SPECIFIC_PERSONALITIES,
+    DEFAULT_FRAMEWORK_ID,
     MAX_WEIGHT,
     MIN_WEIGHT,
-    PERSONALITY_ENHANCEMENT_MAP,
-    SEMANTIC_PERSONALITIES,
     WEIGHT_NEUTRAL_VALUE,
-    WEIGHT_THRESHOLD_PRIMARY,
 )
 
 __all__ = [
-    # High-level personality API
+    # Primary API
     "AgentPersonality",
     "get_preset",
     "list_presets",
     "create_neutral_personality",
-    # Enhanced personality system
-    "PersonalityScoringRules",
+    # Enhanced personality access
     "EnhancedPersonalityConfig",
-    "ENHANCED_PERSONALITIES",
     "get_enhanced_personality",
     "list_enhanced_personalities",
-    # Configuration helper functions
-    "get_personality_for_framework",
-    "validate_dimension_weights",
+    "ENHANCED_PERSONALITIES",
+    "PERSONALITIES",  # Alias for backward compatibility
+    # Utilities
     "map_semantic_to_weights",
     "normalize_weights",
     "get_primary_dimensions",
-    "get_available_personalities",
-    "get_available_frameworks_for_personality",
     # Constants
-    "SEMANTIC_PERSONALITIES",
-    "FRAMEWORK_SPECIFIC_PERSONALITIES",
-    "PERSONALITY_ENHANCEMENT_MAP",
+    "DEFAULT_FRAMEWORK_ID",
     "WEIGHT_NEUTRAL_VALUE",
-    "WEIGHT_THRESHOLD_PRIMARY",
     "MIN_WEIGHT",
     "MAX_WEIGHT",
 ]

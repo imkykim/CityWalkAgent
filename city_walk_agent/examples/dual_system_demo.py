@@ -318,7 +318,7 @@ What This Demo Shows:
         analysis_results = result["analysis_results"]
     else:
         # Show personality info
-        from src.agent.config.enhanced_personalities import get_enhanced_personality
+        from src.agent.config import get_enhanced_personality
 
         print("\n" + "=" * 70)
         print("DUAL VLM EVALUATION: NEUTRAL vs PERSONA-AWARE")

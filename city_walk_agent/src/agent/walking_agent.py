@@ -525,7 +525,7 @@ class WalkingAgent(BaseAgent):
             return None
 
         try:
-            from src.agent.config.enhanced_personalities import (
+            from src.agent.config import (
                 ENHANCED_PERSONALITIES,
                 get_enhanced_personality,
             )
