@@ -1,11 +1,11 @@
-"""Demo: Dual VLM Evaluation - Neutral vs Persona-Aware Scoring.
+"""Demo: Dual VLM Evaluation - Objective vs Persona-Aware Scoring.
 
 This demo showcases the dual VLM evaluation system that compares:
-- Neutral evaluation (no persona bias)
-- Persona-aware evaluation (with personality-specific hints)
+- Objective evaluation (framework-only, for research)
+- Persona-aware evaluation (with personality interpretation, for decisions)
 
-The system makes TWO VLM calls per waypoint to reveal how persona hints
-influence perception and scoring of walking environments.
+The system makes TWO independent VLM calls per waypoint to reveal how persona
+interpretation influences perception and scoring of walking environments.
 
 Examples:
     # Run with parent personality to see safety bias
@@ -62,10 +62,10 @@ def generate_persona_visualizations(
     framework_id: str,
     personality_name: str,
 ) -> dict:
-    """Generate visualizations comparing neutral vs persona-aware evaluations.
+    """Generate visualizations comparing objective vs persona-aware evaluations.
 
     Args:
-        analysis_results: List of waypoint result dicts with neutral_scores and persona scores
+        analysis_results: List of waypoint result dicts with objective_scores and persona_scores
         output_dir: Directory to save visualizations
         framework_id: Framework ID for dimension labels
         personality_name: Name of personality for titles
@@ -83,11 +83,11 @@ def generate_persona_visualizations(
     viz_paths = {}
 
     # 1. Persona comparison (line plots with arrows)
-    print("\n1. Creating neutral vs persona comparison plots...")
+    print("\n1. Creating objective vs persona comparison plots...")
     comparison_path = output_dir / "persona_comparison.png"
     viz.plot_persona_comparison(
         waypoint_results=analysis_results,
-        title=f"Neutral vs Persona-Aware Evaluation ({personality_name})",
+        title=f"Objective vs Persona-Aware Evaluation ({personality_name})",
         save_path=comparison_path,
     )
     viz_paths["persona_comparison"] = comparison_path
@@ -110,49 +110,49 @@ def generate_persona_visualizations(
     )
     viz_paths["persona_delta"] = delta_path
 
-    # 4. Individual score plots (neutral and persona separately)
+    # 4. Individual score plots (objective and persona separately)
     print("4. Creating individual score timeline plots...")
 
-    # Extract neutral and persona scores
+    # Extract objective and persona scores
     waypoint_ids = [str(r["waypoint_id"]) for r in analysis_results]
     system2_triggers = [str(r["waypoint_id"]) for r in analysis_results if r.get("system2_triggered")]
 
     # Get dimensions from first result
     first_result = analysis_results[0]
-    neutral_scores_dict = first_result.get("neutral_scores", first_result.get("system1_scores", {}))
-    dimensions = list(neutral_scores_dict.keys())
+    objective_scores_dict = first_result.get("objective_scores", first_result.get("neutral_scores", first_result.get("system1_scores", {})))
+    dimensions = list(objective_scores_dict.keys())
 
-    # Build neutral scores dict
-    neutral_scores = {dim: [] for dim in dimensions}
+    # Build objective scores dict
+    objective_scores = {dim: [] for dim in dimensions}
     for r in analysis_results:
-        n_scores = r.get("neutral_scores", r.get("system1_scores", {}))
+        obj_scores = r.get("objective_scores", r.get("neutral_scores", r.get("system1_scores", {})))
         for dim in dimensions:
-            neutral_scores[dim].append(n_scores.get(dim, 0))
+            objective_scores[dim].append(obj_scores.get(dim, 0))
 
     # Build persona scores dict
     persona_scores = {dim: [] for dim in dimensions}
     for r in analysis_results:
-        p_scores = r.get("scores", {})
+        per_scores = r.get("persona_scores", r.get("scores", {}))
         for dim in dimensions:
-            persona_scores[dim].append(p_scores.get(dim, 0))
+            persona_scores[dim].append(per_scores.get(dim, 0))
 
-    # Plot neutral scores
-    neutral_path = output_dir / "scores_neutral.png"
+    # Plot objective scores
+    objective_path = output_dir / "scores_objective.png"
     viz.plot_scores_with_trends(
-        scores=neutral_scores,
+        scores=objective_scores,
         waypoint_ids=waypoint_ids,
-        title="Neutral Evaluation (No Persona Bias)",
-        save_path=neutral_path,
+        title="Objective Evaluation (Research/Framework-Only)",
+        save_path=objective_path,
         system2_triggered_waypoints=system2_triggers,
     )
-    viz_paths["neutral_scores"] = neutral_path
+    viz_paths["objective_scores"] = objective_path
 
     # Plot persona-aware scores
     persona_path = output_dir / "scores_persona_aware.png"
     viz.plot_scores_with_trends(
         scores=persona_scores,
         waypoint_ids=waypoint_ids,
-        title=f"Persona-Aware Evaluation ({personality_name})",
+        title=f"Persona-Aware Evaluation ({personality_name}) - Final Scores",
         save_path=persona_path,
         system2_triggered_waypoints=system2_triggers,
     )
@@ -173,16 +173,20 @@ def compute_persona_statistics(analysis_results: list) -> dict:
     """
     import numpy as np
 
-    # Collect adjustments
+    # Collect differences between objective and persona scores
     all_adjustments = []
     dimension_adjustments = {}
 
     for result in analysis_results:
-        adjustments = result.get("persona_adjustments", {})
-        if adjustments:
-            for dim, adj in adjustments.items():
-                all_adjustments.append(adj)
-                dimension_adjustments.setdefault(dim, []).append(adj)
+        obj_scores = result.get("objective_scores", result.get("neutral_scores", {}))
+        per_scores = result.get("persona_scores", result.get("scores", {}))
+
+        if obj_scores and per_scores:
+            for dim in obj_scores.keys():
+                if dim in per_scores:
+                    adj = per_scores[dim] - obj_scores[dim]
+                    all_adjustments.append(adj)
+                    dimension_adjustments.setdefault(dim, []).append(adj)
 
     if not all_adjustments:
         return {
@@ -228,7 +232,7 @@ def compute_persona_statistics(analysis_results: list) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Dual VLM evaluation demo: Neutral vs Persona-Aware scoring",
+        description="Dual VLM evaluation demo: Objective vs Persona-Aware scoring",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Enhanced Personalities Available:
@@ -239,11 +243,11 @@ Enhanced Personalities Available:
   - elderly_walker: Mobility considerations (focus: smooth surfaces, rest areas, gentle slopes)
 
 What This Demo Shows:
-  The system makes TWO VLM calls per waypoint:
-  1. Neutral evaluation (no persona bias)
-  2. Persona-aware evaluation (with personality-specific hints)
+  The system makes TWO independent VLM calls per waypoint:
+  1. Objective evaluation (framework-only, for research/comparison)
+  2. Persona-aware evaluation (persona interprets dimensions, for final decisions)
 
-  Visualizations reveal how personas influence perception and scoring.
+  Visualizations reveal how persona interpretation influences perception and scoring.
         """
     )
     parser.add_argument(
@@ -336,20 +340,22 @@ What This Demo Shows:
                 hint_preview = enhanced_config.system1_persona_hint.strip().split('\n')[0]
                 print(f"  {hint_preview}...")
 
-            print(f"\nScoring Configuration:")
-            print(f"  Concern keywords: {len(enhanced_config.scoring_rules.concern_keywords)}")
-            print(f"  Boost keywords: {len(enhanced_config.scoring_rules.boost_keywords)}")
+            # Show VLM persona prompt preview
+            if enhanced_config.vlm_persona_prompt:
+                print(f"\nVLM Persona Prompt Preview:")
+                prompt_preview = enhanced_config.vlm_persona_prompt.strip().split('\n')[0][:80]
+                print(f"  {prompt_preview}...")
         except ValueError as e:
             print(f"Error loading personality: {e}")
             return
 
         print("\n" + "=" * 70)
         print("VLM EVALUATION STRATEGY:")
-        print("  For each waypoint, the system makes TWO VLM calls:")
-        print("  1. 🔷 Neutral: Unbiased evaluation (no persona hint)")
-        print("  2. 🔶 Persona: Evaluation with personality-specific hint")
+        print("  For each waypoint, the system makes TWO independent VLM calls:")
+        print("  1. 🔷 Objective: Framework-only evaluation (research/comparison)")
+        print("  2. 🔶 Persona: Persona interprets dimensions (final decisions)")
         print("  ")
-        print("  This reveals how personas shift perception and scoring.")
+        print("  This reveals how persona interpretation shifts perception and scoring.")
         print("=" * 70 + "\n")
 
         # Initialize agent
@@ -472,8 +478,8 @@ What This Demo Shows:
         viz_paths.update(system_viz_paths)
 
         print("\n📁 All visualizations saved:")
-        print("\nPersona Impact (Neutral vs Persona-Aware):")
-        for name in ["persona_comparison", "persona_radar", "persona_delta", "neutral_scores", "persona_scores"]:
+        print("\nPersona Impact (Objective vs Persona-Aware):")
+        for name in ["persona_comparison", "persona_radar", "persona_delta", "objective_scores", "persona_scores"]:
             if name in viz_paths:
                 print(f"  ✓ {viz_paths[name].name}")
 

@@ -107,8 +107,8 @@ class WalkingAgent(BaseAgent):
         # Configurable thresholds (can be overridden via set_thresholds())
         self._phash_threshold: int = 30  # Default for System 2 trigger
 
-        # Initialize state with personality weights
-        self.state.preferences = personality.dimension_weights.copy()
+        # Initialize state (preferences no longer used in dual evaluation system)
+        self.state.preferences = {}
 
         # Lazy-loaded capabilities (traditional)
         self._observer: Optional[ObservationCapability] = None
@@ -136,30 +136,24 @@ class WalkingAgent(BaseAgent):
         preset_name: str,
         framework_id: str,
         agent_id: Optional[str] = None,
-        use_semantic: bool = True,
     ) -> "WalkingAgent":
         """Create agent from a personality preset.
 
         Args:
-            preset_name: Personality identifier (e.g., "safety", "scenic", "balanced").
+            preset_name: Personality identifier (e.g., "homebuyer", "runner", "photographer").
             framework_id: Evaluation framework to use.
             agent_id: Optional agent ID (defaults to f"{preset_name}_agent").
-            use_semantic: Whether to use semantic mapping vs framework-specific config.
 
         Returns:
             Configured WalkingAgent instance.
 
         Example:
             ```python
-            # Using semantic mapping (adapts to any framework)
-            agent = WalkingAgent.from_preset("safety", "sagai_2025", use_semantic=True)
-
-            # Using framework-specific config
-            agent = WalkingAgent.from_preset("safety", "sagai_2025", use_semantic=False)
+            agent = WalkingAgent.from_preset("homebuyer", "streetagent_5d")
             ```
         """
         # Load personality
-        personality = get_preset(preset_name, framework_id, use_semantic)
+        personality = get_preset(preset_name, framework_id)
 
         # Generate agent ID if not provided
         if agent_id is None:
@@ -416,29 +410,28 @@ class WalkingAgent(BaseAgent):
         """Lazy-load continuous analyzer for waypoint-level analysis.
 
         Returns:
-            ContinuousAnalyzer instance configured with agent's framework and persona hint.
+            ContinuousAnalyzer instance configured with agent's framework and persona.
         """
         if self._continuous_analyzer is None:
             from src.analysis import ContinuousAnalyzer
 
-            # Get persona hint from enhanced personality if available
-            persona_hint = self._get_persona_hint()
+            # Get enhanced persona configuration if available
+            enhanced_persona = self._get_enhanced_persona()
 
-            if persona_hint:
+            if enhanced_persona:
                 self.logger.info(
-                    f"ContinuousAnalyzer: Dual VLM evaluation enabled with persona hint"
+                    f"ContinuousAnalyzer: Dual evaluation enabled with persona '{enhanced_persona.name}'"
                 )
             else:
                 self.logger.warning(
-                    "ContinuousAnalyzer: No persona hint - will use neutral evaluation only"
+                    "ContinuousAnalyzer: No persona - will use objective evaluation only"
                 )
 
             self._continuous_analyzer = ContinuousAnalyzer(
                 framework_id=self.framework_id,
                 context_window=3,
                 enable_multi_image=True,
-                personality=self.personality,
-                persona_hint=persona_hint,
+                persona=enhanced_persona,
             )
         return self._continuous_analyzer
 
@@ -514,14 +507,14 @@ class WalkingAgent(BaseAgent):
             )
         return self._cognitive_controller
 
-    def _get_persona_hint(self) -> Optional[str]:
-        """Get system1_persona_hint from enhanced personality configuration.
+    def _get_enhanced_persona(self):
+        """Get EnhancedPersonalityConfig from current personality.
 
         Returns:
-            Persona hint string if available, None otherwise.
+            EnhancedPersonalityConfig if available, None otherwise.
         """
         if self.personality is None:
-            self.logger.warning("No personality set - cannot get persona hint")
+            self.logger.warning("No personality set - cannot get enhanced persona")
             return None
 
         try:
@@ -538,7 +531,7 @@ class WalkingAgent(BaseAgent):
             personality_id = raw_personality_id.lower().replace(" ", "_")
 
             self.logger.debug(
-                f"Resolving persona hint - raw_id: '{raw_personality_id}', "
+                f"Resolving enhanced persona - raw_id: '{raw_personality_id}', "
                 f"converted: '{personality_id}'"
             )
 
@@ -559,28 +552,18 @@ class WalkingAgent(BaseAgent):
             self.logger.debug(f"Loading enhanced personality: '{personality_id}'")
             enhanced = get_enhanced_personality(personality_id)
 
-            # Return the system1_persona_hint if available
-            hint = getattr(enhanced, 'system1_persona_hint', None)
-            if hint:
-                hint_preview = hint.strip().split('\n')[0][:60]
-                self.logger.info(
-                    f"✓ Loaded persona hint for '{personality_id}': {hint_preview}..."
-                )
-            else:
-                self.logger.warning(
-                    f"Enhanced personality '{personality_id}' has no system1_persona_hint"
-                )
-            return hint
+            self.logger.info(
+                f"✓ Loaded enhanced persona '{enhanced.name}' for dual evaluation"
+            )
+            return enhanced
 
         except (ImportError, ValueError, AttributeError) as e:
-            # Fallback: generate hint from basic personality info
+            # Fallback: no enhanced persona available
             self.logger.warning(
-                f"Could not load enhanced personality hint: {e}. "
-                "Using fallback hint from basic personality."
+                f"Could not load enhanced personality: {e}. "
+                "Will use objective evaluation only."
             )
-            fallback = f"Evaluate as {self.personality.name}. {self.personality.description}"
-            self.logger.debug(f"Fallback hint: {fallback}")
-            return fallback
+            return None
 
     # ========================================================================
     # Traditional Methods (Backward Compatible)
@@ -1091,8 +1074,8 @@ class WalkingAgent(BaseAgent):
                         waypoint_id=analysis.waypoint_id,
                         trigger_reason=context["trigger_reason"],
                         current_image_path=context["image_path"],
-                        system1_scores=analysis.scores,
-                        system1_reasoning=analysis.reasoning,
+                        system1_scores=analysis.persona_scores,  # System 2 receives persona scores
+                        system1_reasoning=analysis.persona_reasoning,
                         stm_context=context["stm_context"],
                         ltm_patterns=context.get("ltm_patterns"),
                         personality=self.personality,
@@ -1118,7 +1101,7 @@ class WalkingAgent(BaseAgent):
                             self.thinking_module.generate_narrative_chapter(
                                 waypoint_id=analysis.waypoint_id,
                                 visual_description=visual_description,
-                                system1_scores=analysis.scores,
+                                system1_scores=analysis.persona_scores,
                                 system2_scores=thinking_result.revised_scores,
                                 score_adjustments=thinking_result.score_adjustments,
                                 stm_context=context["stm_context"],
@@ -1150,8 +1133,8 @@ class WalkingAgent(BaseAgent):
                     "image_path": str(analysis.image_path),
                     "gps": analysis.gps,
                     "timestamp": ts_value,
-                    "system1_scores": analysis.neutral_scores or analysis.scores,
-                    "system1_reasoning": analysis.neutral_reasoning or analysis.reasoning,
+                    "system1_scores": analysis.persona_scores,  # System 1 persona scores
+                    "system1_reasoning": analysis.persona_reasoning,
                     "system2_triggered": thinking_result is not None,
                     "system2_scores": (
                         thinking_result.revised_scores if thinking_result else None
@@ -1171,13 +1154,11 @@ class WalkingAgent(BaseAgent):
                     "memory_influence": (
                         thinking_result.memory_influence if thinking_result else None
                     ),
-                    # Dual VLM evaluation fields (persona-aware vs neutral)
-                    "neutral_scores": analysis.neutral_scores,
-                    "persona_adjustments": analysis.persona_adjustments,
-                    "neutral_reasoning": analysis.neutral_reasoning,
-                    "persona_applied": analysis.persona_applied,
-                    # Final scores = persona-aware if persona_applied, else neutral
-                    "scores": analysis.scores,
+                    # Dual VLM evaluation fields (objective vs persona-aware)
+                    "objective_scores": analysis.objective_scores,  # Research/comparison
+                    "objective_reasoning": analysis.objective_reasoning,
+                    "persona_scores": analysis.persona_scores,  # Final decision-making scores
+                    "persona_reasoning": analysis.persona_reasoning,
                 }
             )
 
@@ -1668,8 +1649,8 @@ class WalkingAgent(BaseAgent):
                         waypoint_id=analysis.waypoint_id,
                         trigger_reason=context["trigger_reason"],
                         current_image_path=context["image_path"],
-                        system1_scores=analysis.scores,
-                        system1_reasoning=analysis.reasoning,
+                        system1_scores=analysis.persona_scores,  # System 2 receives persona scores
+                        system1_reasoning=analysis.persona_reasoning,
                         stm_context=context["stm_context"],
                         ltm_patterns=context.get("ltm_patterns"),
                         personality=self.personality,
@@ -1695,7 +1676,7 @@ class WalkingAgent(BaseAgent):
                             self.thinking_module.generate_narrative_chapter(
                                 waypoint_id=analysis.waypoint_id,
                                 visual_description=visual_description,
-                                system1_scores=analysis.scores,
+                                system1_scores=analysis.persona_scores,
                                 system2_scores=thinking_result.revised_scores,
                                 score_adjustments=thinking_result.score_adjustments,
                                 stm_context=context["stm_context"],
@@ -1727,8 +1708,8 @@ class WalkingAgent(BaseAgent):
                     "image_path": str(analysis.image_path),
                     "gps": analysis.gps,
                     "timestamp": ts_value,
-                    "system1_scores": analysis.neutral_scores or analysis.scores,
-                    "system1_reasoning": analysis.neutral_reasoning or analysis.reasoning,
+                    "system1_scores": analysis.persona_scores,  # System 1 persona scores
+                    "system1_reasoning": analysis.persona_reasoning,
                     "system2_triggered": thinking_result is not None,
                     "system2_scores": (
                         thinking_result.revised_scores if thinking_result else None
@@ -1748,13 +1729,11 @@ class WalkingAgent(BaseAgent):
                     "memory_influence": (
                         thinking_result.memory_influence if thinking_result else None
                     ),
-                    # Dual VLM evaluation fields (persona-aware vs neutral)
-                    "neutral_scores": analysis.neutral_scores,
-                    "persona_adjustments": analysis.persona_adjustments,
-                    "neutral_reasoning": analysis.neutral_reasoning,
-                    "persona_applied": analysis.persona_applied,
-                    # Final scores = persona-aware if persona_applied, else neutral
-                    "scores": analysis.scores,
+                    # Dual VLM evaluation fields (objective vs persona-aware)
+                    "objective_scores": analysis.objective_scores,  # Research/comparison
+                    "objective_reasoning": analysis.objective_reasoning,
+                    "persona_scores": analysis.persona_scores,  # Final decision-making scores
+                    "persona_reasoning": analysis.persona_reasoning,
                 }
             )
 

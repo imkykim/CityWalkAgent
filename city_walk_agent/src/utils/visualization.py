@@ -1192,22 +1192,20 @@ class RouteVisualizer:
     def plot_persona_comparison(
         self,
         waypoint_results: Sequence[Mapping[str, Any]],
-        title: str = "Neutral vs Persona-Aware Evaluation",
+        title: str = "Objective vs Persona-Aware Evaluation",
         save_path: Optional[Path] = None,
         dimensions: Optional[Sequence[str]] = None,
     ) -> plt.Figure:
         """
-        Plot neutral scores vs persona-adjusted scores for dual VLM evaluation.
+        Plot objective scores vs persona-aware scores for dual VLM evaluation.
 
-        This visualization shows the impact of persona hints on VLM scoring
-        by comparing neutral (unbiased) evaluations against persona-aware scores.
+        This visualization shows the difference between objective (framework-only)
+        and persona-aware evaluations in the dual evaluation system.
 
         Args:
             waypoint_results: Sequence of waypoint result dicts containing:
-                - neutral_scores: Scores without persona hint
-                - scores: Final scores (with persona if applied)
-                - persona_adjustments: Difference between persona and neutral
-                - persona_applied: Whether persona was used
+                - objective_scores: Scores from objective evaluation (research)
+                - persona_scores: Scores from persona-aware evaluation (final)
             title: Plot title
             save_path: Optional path to save figure
             dimensions: Optional ordered list of dimensions to plot
@@ -1230,25 +1228,30 @@ class RouteVisualizer:
                 waypoint_ids.append(getattr(r, "waypoint_id", len(waypoint_ids)))
 
         # Prepare score data
-        neutral_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+        objective_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
         persona_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
 
         for r in waypoint_results:
             if isinstance(r, Mapping):
-                n_scores = r.get("neutral_scores", {})
-                p_scores = r.get("scores", {})
-                # Fallback if neutral_scores not available
-                if not n_scores:
-                    n_scores = r.get("system1_scores", {})
+                obj_scores = r.get("objective_scores", {})
+                per_scores = r.get("persona_scores", {})
+                # Fallback to old field names for backward compatibility
+                if not obj_scores:
+                    obj_scores = r.get("neutral_scores", r.get("system1_scores", {}))
+                if not per_scores:
+                    per_scores = r.get("scores", {})
             else:
-                n_scores = getattr(r, "neutral_scores", {})
-                p_scores = getattr(r, "scores", {})
-                if not n_scores:
-                    n_scores = getattr(r, "system1_scores", {})
+                obj_scores = getattr(r, "objective_scores", {})
+                per_scores = getattr(r, "persona_scores", {})
+                # Fallback to old field names for backward compatibility
+                if not obj_scores:
+                    obj_scores = getattr(r, "neutral_scores", getattr(r, "system1_scores", {}))
+                if not per_scores:
+                    per_scores = getattr(r, "scores", {})
 
             for dim in dim_keys:
-                neutral_scores[dim].append(float(n_scores.get(dim, 0) or 0))
-                persona_scores[dim].append(float(p_scores.get(dim, 0) or 0))
+                objective_scores[dim].append(float(obj_scores.get(dim, 0) or 0))
+                persona_scores[dim].append(float(per_scores.get(dim, 0) or 0))
 
         # Create 2x2 subplot for first 4 dimensions
         fig, axes = plt.subplots(2, 2, figsize=(16, 12), dpi=self.dpi)
@@ -1259,16 +1262,16 @@ class RouteVisualizer:
             ax = axes[idx]
             config = dim_config[dim_key]
 
-            # Plot neutral scores (baseline)
+            # Plot objective scores (baseline)
             ax.plot(
                 x,
-                neutral_scores[dim_key],
+                objective_scores[dim_key],
                 marker="o",
                 markersize=3.5,
                 linewidth=1.2,
                 color="#94A3B8",
                 alpha=0.7,
-                label="Neutral (No Persona)",
+                label="Objective (Research)",
                 linestyle="--",
             )
 
@@ -1281,15 +1284,15 @@ class RouteVisualizer:
                 linewidth=1.5,
                 color=config["color"],
                 alpha=0.9,
-                label="Persona-Aware",
+                label="Persona-Aware (Final)",
                 linestyle="-",
             )
 
             # Highlight significant differences with arrows
             for i in range(len(waypoint_ids)):
-                n_score = neutral_scores[dim_key][i]
+                obj_score = objective_scores[dim_key][i]
                 p_score = persona_scores[dim_key][i]
-                delta = p_score - n_score
+                delta = p_score - obj_score
 
                 if abs(delta) >= 1.0:  # Significant adjustment threshold
                     color = "#10B981" if delta > 0 else "#EF4444"
@@ -1326,12 +1329,12 @@ class RouteVisualizer:
             )
 
             # Add statistics text box
-            n_mean = np.mean(neutral_scores[dim_key])
+            obj_mean = np.mean(objective_scores[dim_key])
             p_mean = np.mean(persona_scores[dim_key])
-            delta_mean = p_mean - n_mean
+            delta_mean = p_mean - obj_mean
             stats_text = (
                 f"Avg Δ: {delta_mean:+.2f}\n"
-                f"Neutral: {n_mean:.2f}\n"
+                f"Objective: {obj_mean:.2f}\n"
                 f"Persona: {p_mean:.2f}"
             )
             ax.text(
@@ -1356,15 +1359,15 @@ class RouteVisualizer:
     def plot_persona_neutral_overview(
         self,
         waypoint_results: Sequence[Mapping[str, Any]],
-        title: str = "Neutral vs Persona Overview",
+        title: str = "Objective vs Persona Overview",
         save_path: Optional[Path] = None,
         dimensions: Optional[Sequence[str]] = None,
     ) -> plt.Figure:
         """
-        Plot neutral vs persona averages alongside a delta heatmap.
+        Plot objective vs persona averages alongside a delta heatmap.
 
-        This combines the line + heatmap view from the legacy visualizater script
-        into the reusable RouteVisualizer API.
+        This combines the line + heatmap view showing the difference between
+        objective (research) and persona-aware (final) evaluations.
         """
         dim_keys = self._infer_dimension_keys(
             dimensions=dimensions, waypoint_results=waypoint_results
@@ -1378,30 +1381,32 @@ class RouteVisualizer:
             return getattr(obj, key, default)
 
         waypoint_ids: List[str] = []
-        neutral_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+        objective_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
         persona_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
 
         for idx, result in enumerate(waypoint_results):
             waypoint_id = _get(result, "waypoint_id", idx)
             waypoint_ids.append(str(waypoint_id))
 
-            neutral = (
-                _get(result, "neutral_scores")
+            # Try new field names first, fallback to old for backward compatibility
+            objective = (
+                _get(result, "objective_scores")
+                or _get(result, "neutral_scores")
                 or _get(result, "system1_scores")
                 or {}
             )
-            persona = _get(result, "scores") or neutral
+            persona = _get(result, "persona_scores") or _get(result, "scores") or objective
 
             for dim in dim_keys:
-                neutral_scores[dim].append(float(neutral.get(dim, 0) or 0.0))
+                objective_scores[dim].append(float(objective.get(dim, 0) or 0.0))
                 persona_scores[dim].append(float(persona.get(dim, 0) or 0.0))
 
         n_points = len(waypoint_ids)
         if n_points == 0:
             raise ValueError("No waypoint results provided for persona overview plot.")
 
-        avg_neutral = [
-            float(np.mean([neutral_scores[dim][i] for dim in dim_keys]))
+        avg_objective = [
+            float(np.mean([objective_scores[dim][i] for dim in dim_keys]))
             for i in range(n_points)
         ]
         avg_persona = [
@@ -1412,7 +1417,7 @@ class RouteVisualizer:
         delta_matrix = np.array(
             [
                 [
-                    persona_scores[dim][i] - neutral_scores[dim][i]
+                    persona_scores[dim][i] - objective_scores[dim][i]
                     for i in range(n_points)
                 ]
                 for dim in dim_keys
@@ -1426,13 +1431,13 @@ class RouteVisualizer:
         x = np.arange(n_points)
         axes[0].plot(
             x,
-            avg_neutral,
+            avg_objective,
             marker="o",
             markersize=3.5,
             linewidth=1.4,
             color="#94A3B8",
             alpha=0.9,
-            label="Neutral (No Persona)",
+            label="Objective (Research)",
             linestyle="--",
         )
         axes[0].plot(
@@ -1443,12 +1448,12 @@ class RouteVisualizer:
             linewidth=1.6,
             color="#EF4444",
             alpha=0.95,
-            label="Persona-Aware",
+            label="Persona-Aware (Final)",
         )
 
         axes[0].fill_between(
             x,
-            avg_neutral,
+            avg_objective,
             avg_persona,
             color="#EF4444",
             alpha=0.12,
@@ -2195,34 +2200,36 @@ def regenerate_visualizations(
             if _get(r, "system2_triggered", False)
         ]
 
-        neutral_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+        objective_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
         persona_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
 
         for result in analyses:
-            neutral = (
-                _get(result, "neutral_scores")
+            # Try new field names first, fallback to old for backward compatibility
+            objective = (
+                _get(result, "objective_scores")
+                or _get(result, "neutral_scores")
                 or _get(result, "system1_scores")
                 or {}
             )
-            persona = _get(result, "scores") or neutral
+            persona = _get(result, "persona_scores") or _get(result, "scores") or objective
 
             for dim in dim_keys:
-                neutral_scores[dim].append(float(neutral.get(dim, 0) or 0.0))
+                objective_scores[dim].append(float(objective.get(dim, 0) or 0.0))
                 persona_scores[dim].append(float(persona.get(dim, 0) or 0.0))
 
         comparison_path = viz_dir / "persona_comparison.png"
         viz.plot_persona_comparison(
             waypoint_results=analyses,
-            title=f"Neutral vs Persona-Aware Evaluation ({personality})",
+            title=f"Objective vs Persona-Aware Evaluation ({personality})",
             save_path=comparison_path,
             dimensions=dim_keys,
         )
         viz_paths["persona_comparison"] = comparison_path
 
-        overview_path = viz_dir / "persona_neutral_overview.png"
+        overview_path = viz_dir / "persona_objective_overview.png"
         viz.plot_persona_neutral_overview(
             waypoint_results=analyses,
-            title=f"Neutral vs Persona Overview ({personality})",
+            title=f"Objective vs Persona Overview ({personality})",
             save_path=overview_path,
             dimensions=dim_keys,
         )
@@ -2244,16 +2251,16 @@ def regenerate_visualizations(
         )
         viz_paths["persona_delta"] = delta_path
 
-        neutral_path = viz_dir / "scores_neutral.png"
+        objective_path = viz_dir / "scores_objective.png"
         viz.plot_scores_with_trends(
-            scores=neutral_scores,
+            scores=objective_scores,
             waypoint_ids=waypoint_ids,
-            title="Neutral Evaluation (No Persona Bias)",
-            save_path=neutral_path,
+            title="Objective Evaluation (Research)",
+            save_path=objective_path,
             dimensions=dim_keys,
             system2_triggered_waypoints=system2_triggers,
         )
-        viz_paths["neutral_scores"] = neutral_path
+        viz_paths["objective_scores"] = objective_path
 
         persona_path = viz_dir / "scores_persona_aware.png"
         viz.plot_scores_with_trends(
