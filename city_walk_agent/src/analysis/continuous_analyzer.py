@@ -81,6 +81,7 @@ class ContinuousAnalyzer:
         context_window: int = 3,
         enable_multi_image: bool = True,
         persona: Optional[Any] = None,
+        memory_manager: Optional[Any] = None,
     ):
         """
         Initialize continuous analyzer with VLM evaluator
@@ -90,6 +91,7 @@ class ContinuousAnalyzer:
             context_window: Number of previous waypoints to maintain in memory
             enable_multi_image: Enable/disable multi-image comparison feature
             persona: Optional EnhancedPersonalityConfig for persona-aware evaluation
+            memory_manager: Optional MemoryManager for STM integration
         """
         logger.info(f"Initializing ContinuousAnalyzer with framework: {framework_id}")
 
@@ -116,10 +118,14 @@ class ContinuousAnalyzer:
         # Store persona for dual evaluation
         self.persona = persona
 
+        # Memory manager for STM integration (Phase 2)
+        self.memory_manager = memory_manager
+
         logger.info(
             f"Analyzer initialized - context_window={context_window}, "
             f"multi_image: {'enabled' if enable_multi_image else 'disabled'}, "
-            f"persona_aware: {persona is not None}"
+            f"persona_aware: {persona is not None}, "
+            f"stm_enabled: {memory_manager is not None}"
         )
 
     def analyze_waypoint(
@@ -161,8 +167,18 @@ class ContinuousAnalyzer:
                 f"(phash_distance={distance_display})"
             )
 
-        # Build previous context if available
+        # Build previous context with STM integration (Phase 2)
         previous_context = None
+        stm_context = None
+
+        # Retrieve STM context if memory_manager is available
+        if self.memory_manager:
+            stm_context = self.memory_manager.stm.get_context()
+            logger.debug(
+                f"Retrieved STM context for waypoint {waypoint_id}: "
+                f"{len(stm_context.get('recent_scores', []))} recent waypoints"
+            )
+
         if self.analysis_history:
             prev_analysis = self.analysis_history[-1]
             previous_context = {
@@ -172,16 +188,37 @@ class ContinuousAnalyzer:
                 "summary": self._summarize_analysis(prev_analysis),
                 "phash_distance": phash_distance,
                 "visual_change_detected": visual_change_detected,
+                "stm_context": stm_context,  # Include STM context for temporal awareness
+            }
+        elif stm_context:
+            # No previous single analysis, but STM has context from earlier waypoints
+            previous_context = {
+                "stm_context": stm_context,
+                "visual_change_detected": visual_change_detected,
             }
 
         # Perform dual evaluation if persona is configured
         if self.persona:
-            logger.info(
-                f"🔶 Dual evaluation for waypoint {waypoint_id} "
-                f"(persona: {self.persona.name})"
-            )
+            # Multi-image evaluation trigger logic (Phase 2)
+            # When visual_change_detected = True: use multi-image VLM call (previous + current)
+            # When visual_change_detected = False: use single-image + text context from STM
+            use_multi_image = self.enable_multi_image and visual_change_detected and self.analysis_history
+
+            if use_multi_image:
+                logger.info(
+                    f"🔶 Dual evaluation with MULTI-IMAGE for waypoint {waypoint_id} "
+                    f"(persona: {self.persona.name}, visual change detected)"
+                )
+                self.multi_image_evaluations += 1
+            else:
+                context_type = "STM text context" if stm_context else "no prior context"
+                logger.info(
+                    f"🔶 Dual evaluation with SINGLE-IMAGE for waypoint {waypoint_id} "
+                    f"(persona: {self.persona.name}, using {context_type})"
+                )
 
             # Single call returns both objective and persona results
+            # Note: Multi-image evaluation is controlled by previous_context containing image info
             dual_results = self.evaluator.evaluate_image(
                 str(image_path),
                 previous_context=previous_context,
@@ -218,7 +255,17 @@ class ContinuousAnalyzer:
 
         else:
             # No persona - run objective evaluation only
-            logger.info(f"Objective-only evaluation for waypoint {waypoint_id}")
+            # Apply same multi-image logic
+            use_multi_image = self.enable_multi_image and visual_change_detected and self.analysis_history
+
+            if use_multi_image:
+                logger.info(
+                    f"Objective-only evaluation with MULTI-IMAGE for waypoint {waypoint_id} "
+                    f"(visual change detected)"
+                )
+                self.multi_image_evaluations += 1
+            else:
+                logger.info(f"Objective-only evaluation with SINGLE-IMAGE for waypoint {waypoint_id}")
 
             eval_results = self.evaluator.evaluate_image(
                 str(image_path),

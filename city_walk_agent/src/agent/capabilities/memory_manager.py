@@ -234,7 +234,10 @@ class MemoryManager:
             return True
 
         # Get current waypoint average score
-        current_scores = waypoint_analysis.scores
+        current_scores = (
+            getattr(waypoint_analysis, "persona_scores", None)
+            or getattr(waypoint_analysis, "scores", {})
+        )
         if not current_scores:
             return False
 
@@ -388,17 +391,35 @@ class MemoryManager:
             personality_info = {
                 "name": self.personality.name,
                 "description": self.personality.description,
-                "dimension_weights": self.personality.dimension_weights,
                 "decision_thresholds": self.personality.decision_thresholds,
                 "explanation_style": self.personality.explanation_style,
+                "personality_id": getattr(self.personality, "personality_id", None),
             }
+
+        persona_scores = (
+            getattr(waypoint_analysis, "persona_scores", None)
+            or getattr(waypoint_analysis, "scores", {})
+        )
+        objective_scores = getattr(
+            waypoint_analysis, "objective_scores", getattr(waypoint_analysis, "neutral_scores", {})
+        )
+        persona_reasoning = getattr(
+            waypoint_analysis, "persona_reasoning", getattr(waypoint_analysis, "reasoning", {})
+        )
+        objective_reasoning = getattr(
+            waypoint_analysis, "objective_reasoning", getattr(waypoint_analysis, "neutral_reasoning", {})
+        )
 
         context = {
             "trigger_reason": trigger_reason or TriggerReason.VISUAL_CHANGE,
             "waypoint_analysis": {
                 "waypoint_id": waypoint_analysis.waypoint_id,
-                "scores": waypoint_analysis.scores,
-                "reasoning": waypoint_analysis.reasoning,
+                "scores": persona_scores,  # Backward compatible key (uses persona scores)
+                "persona_scores": persona_scores,
+                "objective_scores": objective_scores,
+                "reasoning": persona_reasoning,  # Backward compatible key
+                "persona_reasoning": persona_reasoning,
+                "objective_reasoning": objective_reasoning,
                 "gps": waypoint_analysis.gps,
                 "visual_change": waypoint_analysis.visual_change_detected,
                 "phash_distance": waypoint_analysis.phash_distance,
@@ -469,6 +490,11 @@ class MemoryManager:
         """
         self._waypoints_processed += 1
 
+        persona_scores = (
+            getattr(waypoint_analysis, "persona_scores", None)
+            or getattr(waypoint_analysis, "scores", {})
+        )
+
         # Step 1: Apply attention gate
         if not self._passes_attention_gate(waypoint_analysis):
             self.logger.debug(
@@ -482,7 +508,7 @@ class MemoryManager:
 
         self.stm.add(
             waypoint_id=waypoint_analysis.waypoint_id,
-            scores=waypoint_analysis.scores,
+            scores=persona_scores,
             summary=f"Waypoint {waypoint_analysis.waypoint_id}",
             image_path=(
                 waypoint_analysis.image_path

@@ -307,125 +307,194 @@ class ThinkingModule:
         personality: Any,
         route_metadata: Dict[str, Any],
     ) -> ThinkingResult:
-        """Perform System 2 reasoning with VLM-based score revision.
+        """Perform System 2 reasoning - NARRATIVE GENERATION ONLY (score revision disabled).
+
+        REFACTORED: Phase 3 now only generates episodic narratives.
+        Score revision has been disabled - System 1 scores are final.
 
         This is the main entry point for System 2 evaluation:
-        1. Build rich multi-modal prompt (image + context)
-        2. Call VLM API with image + text
-        3. Parse revised scores + interpretation
-        4. Calculate adjustments
-        5. Return ThinkingResult
+        1. Generate episodic narrative using STM + LTM context
+        2. Return ThinkingResult with System 1 scores as final (no revisions)
 
         Args:
             waypoint_id: Current waypoint ID
             trigger_reason: Why System 2 was triggered
             current_image_path: Path to waypoint image
-            system1_scores: Original VLM scores
-            system1_reasoning: Original reasoning
+            system1_scores: System 1 persona scores (FINAL - no revision)
+            system1_reasoning: System 1 reasoning
             stm_context: Short-term memory context
             ltm_patterns: Relevant long-term memory patterns
             personality: Agent personality configuration
             route_metadata: Route-level info
 
         Returns:
-            ThinkingResult with revised scores and reasoning
+            ThinkingResult with System 1 scores as final (no adjustments)
         """
         import time
 
         start_time = time.time()
 
-        if not self.enable_score_revision:
-            return self._create_fallback_result(
-                waypoint_id=waypoint_id,
-                trigger_reason=trigger_reason,
-                system1_scores=system1_scores,
-                error="Score revision disabled",
-            )
+        # ====================================================================
+        # SCORE REVISION DISABLED (Phase 3 refactoring)
+        # ====================================================================
+        # The code below has been commented out to disable score revision.
+        # System 1 scores are now final. Phase 3 only generates narratives.
+        # ====================================================================
 
-        try:
-            prompt = self._build_vlm_revision_prompt(
-                waypoint_id=waypoint_id,
-                system1_scores=system1_scores,
-                system1_reasoning=system1_reasoning,
-                stm_context=stm_context,
-                ltm_patterns=ltm_patterns,
-                personality=personality,
-                trigger_reason=trigger_reason,
-            )
+        # if not self.enable_score_revision:
+        #     return self._create_fallback_result(
+        #         waypoint_id=waypoint_id,
+        #         trigger_reason=trigger_reason,
+        #         system1_scores=system1_scores,
+        #         error="Score revision disabled",
+        #     )
+        #
+        # try:
+        #     prompt = self._build_vlm_revision_prompt(
+        #         waypoint_id=waypoint_id,
+        #         system1_scores=system1_scores,
+        #         system1_reasoning=system1_reasoning,
+        #         stm_context=stm_context,
+        #         ltm_patterns=ltm_patterns,
+        #         personality=personality,
+        #         trigger_reason=trigger_reason,
+        #     )
+        #
+        #     vlm_response = self._call_vlm_with_image(
+        #         image_path=current_image_path,
+        #         prompt=prompt,
+        #     )
+        #
+        #     parsed = self._parse_vlm_response(vlm_response)
+        #     vlm_scores = parsed.get("revised_scores", system1_scores)
+        #     vlm_reasoning = parsed.get("revision_reasoning", {})
+        #
+        #     # VLM persona prompt handles personality-specific scoring
+        #     final_scores = vlm_scores
+        #
+        #     # Calculate total adjustments from System 1
+        #     adjustments = {
+        #         dim: final_scores[dim] - system1_scores[dim]
+        #         for dim in system1_scores.keys()
+        #     }
+        #
+        #     # Build memory influence
+        #     memory_influence = parsed.get("memory_influence", {})
+        #
+        #     result = ThinkingResult(
+        #         waypoint_id=waypoint_id,
+        #         trigger_reason=trigger_reason,
+        #         interpretation=parsed.get("interpretation", "No interpretation"),
+        #         significance=parsed.get("significance", "medium"),
+        #         pattern_detected=parsed.get("pattern_detected"),
+        #         prediction=parsed.get("prediction"),
+        #         recommendation=parsed.get("recommendation"),
+        #         confidence=float(parsed.get("confidence", 0.7)),
+        #         used_vlm=True,
+        #         revised_scores=final_scores,  # Use transformed scores
+        #         score_adjustments=adjustments,
+        #         revision_reasoning=vlm_reasoning,
+        #         memory_influence=memory_influence,
+        #         used_stm_context=memory_influence.get("stm_impact", "none") != "none",
+        #         used_ltm_patterns=memory_influence.get("ltm_impact", "none") != "none",
+        #         personality_factor=memory_influence.get(
+        #             "personality_impact", "unknown"
+        #         ),
+        #         vlm_model_used=settings.qwen_vlm_model,
+        #         system1_scores=system1_scores.copy(),
+        #         processing_time_seconds=time.time() - start_time,
+        #     )
+        #
+        #     self.thinking_history.append(result)
+        #
+        #     enhanced_config = self._get_enhanced_config(personality)
+        #     self.logger.info(
+        #         "System 2 evaluation complete",
+        #         waypoint_id=waypoint_id,
+        #         trigger=trigger_reason.value,
+        #         adjustments={k: f"{v:+.1f}" for k, v in adjustments.items()},
+        #         personality=(
+        #             enhanced_config.personality_id if enhanced_config else "basic"
+        #         ),
+        #         significance=result.significance,
+        #     )
+        #
+        #     return result
+        #
+        # except Exception as e:
+        #     self.logger.error(
+        #         "System 2 evaluation failed",
+        #         waypoint_id=waypoint_id,
+        #         error=str(e),
+        #     )
+        #
+        #     return self._create_fallback_result(
+        #         waypoint_id=waypoint_id,
+        #         trigger_reason=trigger_reason,
+        #         system1_scores=system1_scores,
+        #         error=str(e),
+        #     )
 
-            vlm_response = self._call_vlm_with_image(
-                image_path=current_image_path,
-                prompt=prompt,
-            )
+        # ====================================================================
+        # NEW: Narrative-only System 2 (no score revision)
+        # ====================================================================
+        # System 1 scores are final - no adjustments
+        final_scores = system1_scores.copy()
+        adjustments = {dim: 0.0 for dim in system1_scores.keys()}
 
-            parsed = self._parse_vlm_response(vlm_response)
-            vlm_scores = parsed.get("revised_scores", system1_scores)
-            vlm_reasoning = parsed.get("revision_reasoning", {})
+        # Generate simple interpretation based on context
+        interpretation = f"Waypoint {waypoint_id}: Using System 1 scores as final. "
+        if stm_context and stm_context.get("recent_scores"):
+            avg_recent = sum(
+                sum(s.values()) / len(s) for s in stm_context["recent_scores"] if s
+            ) / len(stm_context["recent_scores"])
+            avg_current = sum(system1_scores.values()) / len(system1_scores)
+            if avg_current > avg_recent:
+                interpretation += "Quality improving from recent context."
+            elif avg_current < avg_recent:
+                interpretation += "Quality declining from recent context."
+            else:
+                interpretation += "Consistent with recent context."
+        else:
+            interpretation += "No prior context available."
 
-            # VLM persona prompt handles personality-specific scoring
-            final_scores = vlm_scores
+        result = ThinkingResult(
+            waypoint_id=waypoint_id,
+            trigger_reason=trigger_reason,
+            interpretation=interpretation,
+            significance="medium",
+            pattern_detected=None,
+            prediction=None,
+            recommendation=None,
+            confidence=0.8,
+            used_vlm=False,  # No VLM used for score revision
+            revised_scores=final_scores,  # System 1 scores kept as-is
+            score_adjustments=adjustments,  # All zeros
+            revision_reasoning={dim: "No revision - System 1 score kept" for dim in system1_scores.keys()},
+            memory_influence={
+                "stm_impact": "none",
+                "ltm_impact": "none",
+                "personality_impact": "none",
+                "key_factors": ["Score revision disabled - narrative only"]
+            },
+            used_stm_context=stm_context is not None,
+            used_ltm_patterns=ltm_patterns is not None and len(ltm_patterns) > 0,
+            personality_factor="narrative_only",
+            vlm_model_used="none",
+            system1_scores=system1_scores.copy(),
+            processing_time_seconds=time.time() - start_time,
+        )
 
-            # Calculate total adjustments from System 1
-            adjustments = {
-                dim: final_scores[dim] - system1_scores[dim]
-                for dim in system1_scores.keys()
-            }
+        self.thinking_history.append(result)
 
-            # Build memory influence
-            memory_influence = parsed.get("memory_influence", {})
+        self.logger.info(
+            "System 2 narrative-only mode",
+            waypoint_id=waypoint_id,
+            trigger=trigger_reason.value,
+            note="Score revision disabled - System 1 scores are final",
+        )
 
-            result = ThinkingResult(
-                waypoint_id=waypoint_id,
-                trigger_reason=trigger_reason,
-                interpretation=parsed.get("interpretation", "No interpretation"),
-                significance=parsed.get("significance", "medium"),
-                pattern_detected=parsed.get("pattern_detected"),
-                prediction=parsed.get("prediction"),
-                recommendation=parsed.get("recommendation"),
-                confidence=float(parsed.get("confidence", 0.7)),
-                used_vlm=True,
-                revised_scores=final_scores,  # Use transformed scores
-                score_adjustments=adjustments,
-                revision_reasoning=vlm_reasoning,
-                memory_influence=memory_influence,
-                used_stm_context=memory_influence.get("stm_impact", "none") != "none",
-                used_ltm_patterns=memory_influence.get("ltm_impact", "none") != "none",
-                personality_factor=memory_influence.get(
-                    "personality_impact", "unknown"
-                ),
-                vlm_model_used=settings.qwen_vlm_model,
-                system1_scores=system1_scores.copy(),
-                processing_time_seconds=time.time() - start_time,
-            )
-
-            self.thinking_history.append(result)
-
-            self.logger.info(
-                "System 2 evaluation complete",
-                waypoint_id=waypoint_id,
-                trigger=trigger_reason.value,
-                adjustments={k: f"{v:+.1f}" for k, v in adjustments.items()},
-                personality=(
-                    enhanced_config.personality_id if enhanced_config else "basic"
-                ),
-                significance=result.significance,
-            )
-
-            return result
-
-        except Exception as e:
-            self.logger.error(
-                "System 2 evaluation failed",
-                waypoint_id=waypoint_id,
-                error=str(e),
-            )
-
-            return self._create_fallback_result(
-                waypoint_id=waypoint_id,
-                trigger_reason=trigger_reason,
-                system1_scores=system1_scores,
-                error=str(e),
-            )
+        return result
 
     def _create_fallback_result(
         self,

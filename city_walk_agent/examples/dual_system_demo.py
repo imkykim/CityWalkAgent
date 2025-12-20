@@ -301,6 +301,13 @@ What This Demo Shows:
         help="pHash threshold for System 2 trigger and multi-image evaluation (default: 30). "
         "Lower values = more sensitive to visual changes.",
     )
+    parser.add_argument(
+        "--system1-only",
+        "--skip-thinking",
+        action="store_true",
+        help="Run Phase 1 and Phase 2 only (skip Phase 3 ThinkingModule). "
+        "System 1 scores are final - no narrative generation or score revision.",
+    )
     args = parser.parse_args()
 
     # Configuration
@@ -378,21 +385,27 @@ What This Demo Shows:
         if route_folder:
             logger.info("Starting dual VLM evaluation with existing route images")
             logger.info(f"Route folder: {route_folder}")
+            if args.system1_only:
+                logger.info("⚠️ System 1 only mode: Phase 3 (ThinkingModule) will be SKIPPED")
 
             result = agent.run_with_memory_from_folder(
                 route_folder=route_folder,
                 output_dir=output_dir,
+                skip_thinking=args.system1_only,
             )
         else:
             logger.info("Starting dual VLM evaluation with new route")
             logger.info(f"Route: {start} → {end}")
             logger.info(f"Interval: {interval}m")
+            if args.system1_only:
+                logger.info("⚠️ System 1 only mode: Phase 3 (ThinkingModule) will be SKIPPED")
 
             result = agent.run_with_memory(
                 start=start,
                 end=end,
                 interval=interval,
                 output_dir=output_dir,
+                skip_thinking=args.system1_only,
             )
 
         analysis_results = result.get("analysis_results", [])

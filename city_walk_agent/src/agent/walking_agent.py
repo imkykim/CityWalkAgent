@@ -432,6 +432,7 @@ class WalkingAgent(BaseAgent):
                 context_window=3,
                 enable_multi_image=True,
                 persona=enhanced_persona,
+                memory_manager=self.memory_manager,  # Pass memory_manager for STM integration
             )
         return self._continuous_analyzer
 
@@ -853,13 +854,14 @@ class WalkingAgent(BaseAgent):
         end: Tuple[float, float],
         interval: int = 50,
         output_dir: Optional[Path] = None,
+        skip_thinking: bool = False,
     ) -> Dict[str, Any]:
         """Run agent with full memory system integration.
 
         This method provides waypoint-level analysis with the complete memory pipeline:
         1. ContinuousAnalyzer - per-waypoint VLM evaluation with pHash detection
         2. ShortTermMemory - sliding window context for recent waypoints
-        3. ThinkingModule - triggered LLM-based reasoning at key moments
+        3. ThinkingModule - triggered LLM-based reasoning at key moments (optional)
         4. LongTermMemory - curated key moments and pattern extraction
 
         This is separate from run() to maintain backward compatibility. Use this
@@ -870,6 +872,7 @@ class WalkingAgent(BaseAgent):
             end: Destination GPS coordinates (lat, lon).
             interval: Sampling interval in meters (default: 50).
             output_dir: Optional directory to save memory artifacts.
+            skip_thinking: If True, skip Phase 3 (ThinkingModule) and use only Phase 2 scores.
 
         Returns:
             Dictionary containing:
@@ -1027,9 +1030,12 @@ class WalkingAgent(BaseAgent):
         )
 
         # ====================================================================
-        # Phase 3: Thinking with Short-Term Memory
+        # Phase 3: Thinking with Short-Term Memory (Optional - can be skipped)
         # ====================================================================
-        self.logger.info("Phase 3: Processing with short-term memory and thinking")
+        if skip_thinking:
+            self.logger.info("Phase 3: SKIPPED (--system1-only mode) - using System 1 scores as final")
+        else:
+            self.logger.info("Phase 3: Processing with short-term memory and thinking")
 
         thinking_results = []
         memory_manager = self.memory_manager
@@ -1063,7 +1069,8 @@ class WalkingAgent(BaseAgent):
 
             thinking_result = None
 
-            if context is not None:
+            # Only run ThinkingModule if skip_thinking is False
+            if not skip_thinking and context is not None:
                 # Ensure route metadata includes route info
                 route_meta = context.get("route_metadata", {}) or {}
                 route_meta.setdefault("route_id", route_id)
@@ -1373,6 +1380,7 @@ class WalkingAgent(BaseAgent):
         *,
         metadata_filename: str = "collection_metadata.json",
         output_dir: Optional[Path] = None,
+        skip_thinking: bool = False,
     ) -> Dict[str, Any]:
         """Run memory pipeline using pre-existing folder of route imagery.
 
@@ -1384,6 +1392,7 @@ class WalkingAgent(BaseAgent):
             route_folder: Path to folder containing waypoint images and metadata.
             metadata_filename: Name of the JSON metadata file (default: "collection_metadata.json").
             output_dir: Optional directory to save memory artifacts.
+            skip_thinking: If True, skip Phase 3 (ThinkingModule) and use only Phase 2 scores.
 
         Returns:
             Dictionary containing analysis results, thinking results, narrative, etc.
@@ -1638,7 +1647,8 @@ class WalkingAgent(BaseAgent):
 
             thinking_result = None
 
-            if context is not None:
+            # Only run ThinkingModule if skip_thinking is False
+            if not skip_thinking and context is not None:
                 # Ensure route metadata includes route info
                 route_meta = context.get("route_metadata", {}) or {}
                 route_meta.setdefault("route_id", route_id)
