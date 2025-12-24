@@ -7,6 +7,10 @@ This demo showcases the dual VLM evaluation system that compares:
 The system makes TWO independent VLM calls per waypoint to reveal how persona
 interpretation influences perception and scoring of walking environments.
 
+Supports multiple frameworks:
+- streetagent_5d: StreetAgent Core Framework (Cullen, Kaplan, Lynch, Gibson)
+- ewing_handy_5d: Ewing & Handy Urban Design Qualities (2010)
+
 Examples:
     # Run with parent personality to see safety bias
     python examples/dual_system_demo.py --personality parent_with_kids
@@ -14,9 +18,16 @@ Examples:
     # Run photographer personality to see aesthetics bias
     python examples/dual_system_demo.py --personality photographer
 
+    # Use Ewing & Handy framework
+    python examples/dual_system_demo.py --framework-id ewing_handy_5d --personality photographer
+
     # Compare runner vs elderly walker
     python examples/dual_system_demo.py --personality runner
     python examples/dual_system_demo.py --personality elderly_walker --output-dir outputs/elderly_demo
+
+    # Compare frameworks with same personality
+    python examples/dual_system_demo.py --framework-id streetagent_5d --personality runner
+    python examples/dual_system_demo.py --framework-id ewing_handy_5d --personality runner --output-dir outputs/ewing_runner
 
     # Use existing route images
     python examples/dual_system_demo.py --route-folder data/images/singapore/ --personality homebuyer
@@ -115,17 +126,24 @@ def generate_persona_visualizations(
 
     # Extract objective and persona scores
     waypoint_ids = [str(r["waypoint_id"]) for r in analysis_results]
-    system2_triggers = [str(r["waypoint_id"]) for r in analysis_results if r.get("system2_triggered")]
+    system2_triggers = [
+        str(r["waypoint_id"]) for r in analysis_results if r.get("system2_triggered")
+    ]
 
     # Get dimensions from first result
     first_result = analysis_results[0]
-    objective_scores_dict = first_result.get("objective_scores", first_result.get("neutral_scores", first_result.get("system1_scores", {})))
+    objective_scores_dict = first_result.get(
+        "objective_scores",
+        first_result.get("neutral_scores", first_result.get("system1_scores", {})),
+    )
     dimensions = list(objective_scores_dict.keys())
 
     # Build objective scores dict
     objective_scores = {dim: [] for dim in dimensions}
     for r in analysis_results:
-        obj_scores = r.get("objective_scores", r.get("neutral_scores", r.get("system1_scores", {})))
+        obj_scores = r.get(
+            "objective_scores", r.get("neutral_scores", r.get("system1_scores", {}))
+        )
         for dim in dimensions:
             objective_scores[dim].append(obj_scores.get(dim, 0))
 
@@ -221,8 +239,16 @@ def compute_persona_statistics(analysis_results: list) -> dict:
         "mean_adjustment": float(np.mean(all_adjustments)),
         "median_adjustment": float(np.median(all_adjustments)),
         "std_adjustment": float(np.std(all_adjustments)),
-        "max_positive": float(np.max(positive_adjustments)) if len(positive_adjustments) > 0 else 0.0,
-        "max_negative": float(np.min(negative_adjustments)) if len(negative_adjustments) > 0 else 0.0,
+        "max_positive": (
+            float(np.max(positive_adjustments))
+            if len(positive_adjustments) > 0
+            else 0.0
+        ),
+        "max_negative": (
+            float(np.min(negative_adjustments))
+            if len(negative_adjustments) > 0
+            else 0.0
+        ),
         "positive_count": int(np.sum(all_adjustments > 0.1)),
         "negative_count": int(np.sum(all_adjustments < -0.1)),
         "neutral_count": int(np.sum(np.abs(all_adjustments) <= 0.1)),
@@ -235,6 +261,12 @@ def main() -> None:
         description="Dual VLM evaluation demo: Objective vs Persona-Aware scoring",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Evaluation Frameworks Available:
+  - streetagent_5d: StreetAgent Core Framework (Cullen, Kaplan, Lynch, Gibson)
+      Dimensions: spatial_sequence, visual_coherence, sensory_complexity, spatial_legibility, functional_quality
+  - ewing_handy_5d: Ewing & Handy Urban Design Qualities (2010)
+      Dimensions: imageability, enclosure, human_scale, transparency, complexity
+
 Enhanced Personalities Available:
   - homebuyer: Family residence evaluation (focus: safety, convenience, amenities)
   - runner: Running route suitability (focus: smooth surfaces, width, air quality)
@@ -248,7 +280,15 @@ What This Demo Shows:
   2. Persona-aware evaluation (persona interprets dimensions, for final decisions)
 
   Visualizations reveal how persona interpretation influences perception and scoring.
-        """
+
+Examples:
+  # Use Ewing & Handy framework with photographer personality
+  python examples/dual_system_demo.py --framework-id ewing_handy_5d --personality photographer
+
+  # Compare frameworks with same personality
+  python examples/dual_system_demo.py --framework-id streetagent_5d --personality runner
+  python examples/dual_system_demo.py --framework-id ewing_handy_5d --personality runner --output-dir outputs/ewing_runner
+        """,
     )
     parser.add_argument(
         "--output-dir",
@@ -264,12 +304,19 @@ What This Demo Shows:
     parser.add_argument(
         "--framework-id",
         default="streetagent_5d",
-        help="Evaluation framework to use.",
+        choices=["streetagent_5d", "ewing_handy_5d", "sagai_2025"],
+        help="Evaluation framework to use (default: streetagent_5d).",
     )
     parser.add_argument(
         "--personality",
         default="homebuyer",
-        choices=["homebuyer", "runner", "parent_with_kids", "photographer", "elderly_walker"],
+        choices=[
+            "homebuyer",
+            "runner",
+            "parent_with_kids",
+            "photographer",
+            "elderly_walker",
+        ],
         help="Enhanced personality to use (default: homebuyer).",
     )
     parser.add_argument(
@@ -311,8 +358,10 @@ What This Demo Shows:
     args = parser.parse_args()
 
     # Configuration
-    start = tuple(map(float, args.start.split(','))) if args.start else (22.3298, 114.1630)
-    end = tuple(map(float, args.end.split(','))) if args.end else (22.3250, 114.1550)
+    start = (
+        tuple(map(float, args.start.split(","))) if args.start else (22.3298, 114.1630)
+    )
+    end = tuple(map(float, args.end.split(","))) if args.end else (22.3250, 114.1550)
     interval = args.interval
     output_dir = args.output_dir
     framework_id = args.framework_id
@@ -342,15 +391,22 @@ What This Demo Shows:
             print(f"Description: {enhanced_config.description}")
 
             # Show persona hint
-            if hasattr(enhanced_config, 'system1_persona_hint') and enhanced_config.system1_persona_hint:
+            if (
+                hasattr(enhanced_config, "system1_persona_hint")
+                and enhanced_config.system1_persona_hint
+            ):
                 print(f"\nPersona Hint Preview:")
-                hint_preview = enhanced_config.system1_persona_hint.strip().split('\n')[0]
+                hint_preview = enhanced_config.system1_persona_hint.strip().split("\n")[
+                    0
+                ]
                 print(f"  {hint_preview}...")
 
             # Show VLM persona prompt preview
             if enhanced_config.vlm_persona_prompt:
                 print(f"\nVLM Persona Prompt Preview:")
-                prompt_preview = enhanced_config.vlm_persona_prompt.strip().split('\n')[0][:80]
+                prompt_preview = enhanced_config.vlm_persona_prompt.strip().split("\n")[
+                    0
+                ][:80]
                 print(f"  {prompt_preview}...")
         except ValueError as e:
             print(f"Error loading personality: {e}")
@@ -362,7 +418,9 @@ What This Demo Shows:
         print("  1. 🔷 Objective: Framework-only evaluation (research/comparison)")
         print("  2. 🔶 Persona: Persona interprets dimensions (final decisions)")
         print("  ")
-        print("  This reveals how persona interpretation shifts perception and scoring.")
+        print(
+            "  This reveals how persona interpretation shifts perception and scoring."
+        )
         print("=" * 70 + "\n")
 
         # Initialize agent
@@ -375,9 +433,7 @@ What This Demo Shows:
         agent.set_thresholds(
             phash_threshold=phash_threshold,
         )
-        logger.info(
-            f"Threshold configured: phash={phash_threshold}"
-        )
+        logger.info(f"Threshold configured: phash={phash_threshold}")
 
         # NOTE: The dual VLM calls are now automatic in ContinuousAnalyzer!
         # No additional configuration needed - it will make both calls by default.
@@ -386,7 +442,9 @@ What This Demo Shows:
             logger.info("Starting dual VLM evaluation with existing route images")
             logger.info(f"Route folder: {route_folder}")
             if args.system1_only:
-                logger.info("⚠️ System 1 only mode: Phase 3 (ThinkingModule) will be SKIPPED")
+                logger.info(
+                    "⚠️ System 1 only mode: Phase 3 (ThinkingModule) will be SKIPPED"
+                )
 
             result = agent.run_with_memory_from_folder(
                 route_folder=route_folder,
@@ -398,7 +456,9 @@ What This Demo Shows:
             logger.info(f"Route: {start} → {end}")
             logger.info(f"Interval: {interval}m")
             if args.system1_only:
-                logger.info("⚠️ System 1 only mode: Phase 3 (ThinkingModule) will be SKIPPED")
+                logger.info(
+                    "⚠️ System 1 only mode: Phase 3 (ThinkingModule) will be SKIPPED"
+                )
 
             result = agent.run_with_memory(
                 start=start,
@@ -443,11 +503,17 @@ What This Demo Shows:
             dim_stats = stats.get("dimension_stats", {})
             if dim_stats:
                 print(f"\n🎯 Per-Dimension Impact:")
-                for dim, ds in sorted(dim_stats.items(), key=lambda x: abs(x[1]["mean"]), reverse=True):
+                for dim, ds in sorted(
+                    dim_stats.items(), key=lambda x: abs(x[1]["mean"]), reverse=True
+                ):
                     print(f"  {dim}:")
-                    print(f"    Mean: {ds['mean']:+.2f}, Range: [{ds['min']:.2f}, {ds['max']:.2f}]")
+                    print(
+                        f"    Mean: {ds['mean']:+.2f}, Range: [{ds['min']:.2f}, {ds['max']:.2f}]"
+                    )
         else:
-            print("\n⚠️  No persona adjustments detected (persona hint may not be configured)")
+            print(
+                "\n⚠️  No persona adjustments detected (persona hint may not be configured)"
+            )
 
     # Generate visualizations
     print("\n" + "=" * 70)
@@ -477,6 +543,7 @@ What This Demo Shows:
         narrative_json = output_dir / "narrative_chapters.json"
         if narrative_json.exists():
             import json
+
             with open(narrative_json, "r", encoding="utf-8") as f:
                 narrative_chapters = json.load(f)
             print(f"Loaded {len(narrative_chapters)} narrative chapters")
@@ -492,7 +559,13 @@ What This Demo Shows:
 
         print("\n📁 All visualizations saved:")
         print("\nPersona Impact (Objective vs Persona-Aware):")
-        for name in ["persona_comparison", "persona_radar", "persona_delta", "objective_scores", "persona_scores"]:
+        for name in [
+            "persona_comparison",
+            "persona_radar",
+            "persona_delta",
+            "objective_scores",
+            "persona_scores",
+        ]:
             if name in viz_paths:
                 print(f"  ✓ {viz_paths[name].name}")
 

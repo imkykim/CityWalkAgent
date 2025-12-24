@@ -1,50 +1,80 @@
 {
   "framework_id": "streetagent_5d",
   "framework_name": "StreetAgent Core Framework",
-  "framework_name_cn": "StreetAgent Core Framework",
-  "description": "Integrated architectural theory framework blending Cullen, Lynch, and Norberg-Schulz.",
-  "theory_base": "Serial Vision, Image of the City, Genius Loci",
+  "framework_name_cn": "StreetAgent 核心框架",
+  "description": "Integrated walkability framework combining Cullen, Kaplan, Lynch, and Gibson theories for comprehensive pedestrian experience assessment.",
+  "theory_base": "Serial Vision (Cullen), Environmental Preference (Kaplan), Image of the City (Lynch), Ecological Psychology (Gibson)",
   "num_dimensions": 5,
   "dimensions": [
     {
       "id": "spatial_sequence",
       "name_en": "Spatial Sequence",
-      "name_cn": "Spatial Sequence",
-      "theory_base": "Cullen's Serial Vision - visual change while walking.",
-      "description": "Assess the rhythm, unfolding, and transitions along a walking route.",
-      "vlm_prompt": "Please evaluate the **Spatial Sequence** quality of this street view image (Cullen's Serial Vision).\n\nFocus on:\n- Visual layers: Are foreground, middle-ground, and background articulated?\n- Spatial rhythm: Does the space open and close with a perceivable cadence?\n- Anticipation: Does the scene hint at interesting changes ahead?\n- Turning points: Are there elements that guide views or redirect movement?\n\nRate the scene from 1-10 (1 = monotonous, 10 = sequence-rich) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
+      "name_cn": "空间序列",
+      "theory_base": "Cullen's Serial Vision (1961) - The urban experience unfolds as a sequence of visual events. Walking through a city is like watching a movie: each step reveals new scenes, creating rhythm through compression and release of space.",
+      "description": "Assess visual change, spatial unfolding, and rhythmic experience while walking.",
+      "measurement_focus": [
+        "Visual continuity during movement",
+        "Spatial reveal moments (Here-There relationship)",
+        "Rhythm of spatial compression and expansion",
+        "Anticipation of what comes next"
+      ],
+      "vlm_prompt": "Evaluate **Spatial Sequence** of this street view image.\n\n**Theoretical lens**: Cullen's Serial Vision (1961) suggests walking is a cinematic experience. Each step reveals new visual scenes, and good urban spaces create rhythm through alternating compression (narrow passages) and release (open plazas).\n\n**Consider**:\n- Visual layers: Are foreground, middle-ground, and background articulated?\n- Spatial rhythm: Does the space open and close with a perceivable cadence?\n- Anticipation: Does the scene hint at interesting changes ahead?\n- Turning points: Are there elements that guide views or redirect movement?\n\nRate from 1-10 (1 = monotonous, 10 = sequence-rich) and explain in 2-3 sentences.\n\nRespond in JSON:\n{\"score\": <1-10>, \"reasoning\": \"<explanation>\"}"
     },
     {
       "id": "visual_coherence",
       "name_en": "Visual Coherence",
-      "name_cn": "Visual Coherence",
-      "theory_base": "Lynch Legibility - consistency and recognizability.",
-      "description": "Assess how unified, legible, and memorable the street composition is.",
-      "vlm_prompt": "Please evaluate the **Visual Coherence** of this street view image (Lynch's legibility lens).\n\nFocus on:\n- Consistency: Do style, materials, and colors feel coordinated?\n- Recognizability: Does the place have clear visual signatures?\n- Wayfinding: Are directions and paths intuitively communicated?\n- Wholeness: Do the pieces combine into a harmonious whole?\n\nRate the scene from 1-10 (1 = disordered, 10 = highly coherent) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
+      "name_cn": "视觉连贯性",
+      "theory_base": "Kaplan's Coherence (1989) - Humans prefer environments that are organized and easy to understand. Coherence comes from repeating elements, consistent materials, and unified visual language that makes a scene 'hang together' as a comprehensible whole.",
+      "description": "Assess orderliness, unity, and visual organization of the streetscape.",
+      "measurement_focus": [
+        "Architectural language consistency",
+        "Color and material harmony",
+        "Spatial organization clarity",
+        "Visual unity (does it feel like ONE place?)"
+      ],
+      "vlm_prompt": "Evaluate **Visual Coherence** of this street view image.\n\n**Theoretical lens**: Kaplan's Coherence (1989) from environmental psychology suggests humans prefer organized, understandable environments. Coherence emerges when visual elements 'belong together' - through consistent materials, unified architectural language, and harmonious composition.\n\n**Consider**:\n- Consistency: Do style, materials, and colors feel coordinated?\n- Recognizability: Does the place have clear visual signatures?\n- Organization: Is the spatial arrangement easy to comprehend?\n- Wholeness: Do the pieces combine into a harmonious whole?\n\nRate from 1-10 (1 = disordered, 10 = highly coherent) and explain in 2-3 sentences.\n\nRespond in JSON:\n{\"score\": <1-10>, \"reasoning\": \"<explanation>\"}"
     },
     {
       "id": "sensory_complexity",
       "name_en": "Sensory Complexity",
-      "name_cn": "Sensory Complexity",
-      "theory_base": "Kaplan Complexity - richness of environmental stimuli.",
-      "description": "Assess how many sensory cues (visual, implied auditory/tactile) are present.",
-      "vlm_prompt": "Please evaluate the **Sensory Complexity** of this street view image (Kaplan complexity lens).\n\nFocus on:\n- Visual richness: Are colors, textures, and elements diverse?\n- Detail layers: Are there multiple scales of detail to discover?\n- Activity cues: Does the scene suggest sounds, smells, or tactile experiences?\n- Engagement: Does the environment avoid monotony and stay stimulating?\n\nRate the scene from 1-10 (1 = dull, 10 = richly stimulating) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
+      "name_cn": "感官复杂性",
+      "theory_base": "Kaplan's Complexity + Mystery (1989) - Engaging environments balance richness with intrigue. Complexity is 'how much is going on' - variety of elements at multiple scales. Mystery is the 'promise of more information' - partially hidden views that invite exploration.",
+      "description": "Assess richness, diversity, and exploration-inviting qualities of the environment.",
+      "measurement_focus": [
+        "Architectural type diversity",
+        "Color and texture variation",
+        "Detail richness at multiple scales",
+        "Hidden spaces that invite exploration (Mystery)"
+      ],
+      "vlm_prompt": "Evaluate **Sensory Complexity** of this street view image.\n\n**Theoretical lens**: Kaplan's Complexity + Mystery (1989) suggests engaging environments have rich variety (Complexity) and hidden elements that promise discovery (Mystery). The interplay creates curiosity - too little is boring, but well-balanced complexity invites exploration.\n\n**Consider**:\n- Visual richness: Are colors, textures, and elements diverse?\n- Detail layers: Are there multiple scales of detail to discover?\n- Mystery: Are there partially hidden spaces or paths that beckon?\n- Activity cues: Does the scene suggest sounds, smells, or tactile experiences?\n\nRate from 1-10 (1 = dull, 10 = richly stimulating) and explain in 2-3 sentences.\n\nRespond in JSON:\n{\"score\": <1-10>, \"reasoning\": \"<explanation>\"}"
     },
     {
       "id": "spatial_legibility",
       "name_en": "Spatial Legibility",
-      "name_cn": "Spatial Legibility",
-      "theory_base": "Norberg-Schulz existential space - clarity and sense of place.",
-      "description": "Assess boundaries, locus, and clarity of purpose.",
-      "vlm_prompt": "Please evaluate the **Spatial Legibility** of this street view image (Norberg-Schulz inspired).\n\nFocus on:\n- Boundaries: Are the extents of the space clearly framed or enclosed?\n- Genius loci: Does the place communicate a distinctive spirit or identity?\n- Scale awareness: Can a pedestrian sense their position and proportion?\n- Functional cues: Is the intended use or behavior clearly expressed?\n\nRate the scene from 1-10 (1 = ambiguous, 10 = crystal clear) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
+      "name_cn": "空间可读性",
+      "theory_base": "Lynch's Imageability (1960) - Memorable cities have strong visual identity. Imageability is the quality that makes a place vivid and recognizable - through distinctive landmarks, clear paths, and unique character that helps people form mental maps.",
+      "description": "Assess memorability, landmarks, and distinctive identity of the place.",
+      "measurement_focus": [
+        "Landmark presence and distinctiveness",
+        "Reference points for orientation",
+        "Spatial structure clarity",
+        "Unique identity (could you recognize this place again?)"
+      ],
+      "vlm_prompt": "Evaluate **Spatial Legibility** of this street view image.\n\n**Theoretical lens**: Lynch's Imageability (1960) describes how memorable places have strong visual identity. A legible environment is one you can easily form a mental map of - through distinctive landmarks, clear spatial structure, and unique character that makes it recognizable.\n\n**Consider**:\n- Landmarks: Are there distinctive features that stand out?\n- Identity: Does the place communicate a unique spirit or character?\n- Orientation: Can a pedestrian sense their position clearly?\n- Memorability: Would this place be easy to remember and describe?\n\nRate from 1-10 (1 = generic/forgettable, 10 = highly distinctive) and explain in 2-3 sentences.\n\nRespond in JSON:\n{\"score\": <1-10>, \"reasoning\": \"<explanation>\"}"
     },
     {
       "id": "functional_quality",
       "name_en": "Functional Quality",
-      "name_cn": "Functional Quality",
-      "theory_base": "Gehl's Life Between Buildings - practicality of walking environments.",
-      "description": "Assess utility, comfort, and support for pedestrian life.",
-      "vlm_prompt": "Please evaluate the **Functional Quality** of this street view image (Gehl framework).\n\nFocus on:\n- Sidewalk condition: Surface quality, width, and accessibility.\n- Amenities: Seating, lighting, shade, planting, or other supportive features.\n- Safety: Separation from traffic, visibility, and potential hazards.\n- Comfort: Would people feel inclined to stay, linger, or socialize?\n\nRate the scene from 1-10 (1 = functionally poor, 10 = highly supportive) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
+      "name_cn": "功能质量",
+      "theory_base": "Gibson's Affordance (1979) - Environments 'afford' certain actions. A bench affords sitting, a wide sidewalk affords comfortable walking, shade affords lingering. Functional quality is about what the physical environment enables or invites people to DO.",
+      "description": "Assess usability, comfort, and support for pedestrian activities.",
+      "measurement_focus": [
+        "Walking comfort (sidewalk quality, width)",
+        "Sitting opportunities (benches, ledges, steps)",
+        "Lingering support (shade, shelter, pleasant spots)",
+        "Social interaction support"
+      ],
+      "vlm_prompt": "Evaluate **Functional Quality** of this street view image.\n\n**Theoretical lens**: Gibson's Affordance Theory (1979) suggests environments 'afford' actions - a bench affords sitting, a wide sidewalk affords walking, shade affords lingering. Good functional quality means the space actively supports what pedestrians want to do.\n\n**Consider**:\n- Sidewalk condition: Surface quality, width, and accessibility\n- Amenities: Seating, lighting, shade, planting, or other supportive features\n- Safety: Separation from traffic, visibility, and potential hazards\n- Comfort: Would people feel inclined to stay, linger, or socialize?\n\nRate from 1-10 (1 = functionally poor, 10 = highly supportive) and explain in 2-3 sentences.\n\nRespond in JSON:\n{\"score\": <1-10>, \"reasoning\": \"<explanation>\"}"
     }
   ]
 }

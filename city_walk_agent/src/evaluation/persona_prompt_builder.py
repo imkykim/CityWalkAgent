@@ -41,9 +41,7 @@ class PersonaPromptBuilder:
     """
 
     def __init__(
-        self,
-        framework: Dict,
-        persona: Optional[EnhancedPersonalityConfig] = None
+        self, framework: Dict, persona: Optional[EnhancedPersonalityConfig] = None
     ):
         """Initialize the prompt builder.
 
@@ -109,6 +107,8 @@ class PersonaPromptBuilder:
         # Extract dimension information
         dim_name = dimension.get("name", dimension_id)
         dim_description = dimension.get("description", "")
+        theory_base = dimension.get("theory_base", "")
+        vlm_prompt = dimension.get("vlm_prompt", "")
 
         # Build persona-aware prompt using template
         prompt = f"""# YOUR IDENTITY
@@ -117,9 +117,14 @@ class PersonaPromptBuilder:
 # DIMENSION: {dim_name}
 {dim_description}
 
+# THEORETICAL CONTEXT
+{theory_base}
+
 # EVALUATION APPROACH
 As a {self.persona.name}, consider what "{dim_name}" means for YOUR specific needs.
 Your priorities should naturally guide how you interpret and weight this dimension.
+Now evaluate this dimension from YOUR perspective:
+{vlm_prompt}
 
 Score based on YOUR needs, not objective architectural merit.
 
