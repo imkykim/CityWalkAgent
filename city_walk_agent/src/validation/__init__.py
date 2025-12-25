@@ -3,5 +3,6 @@
 from .clip_extractor import CLIPExtractor
 from .knn_predictor import KNNPredictor
 from .place_pulse_loader import PlacePulseLoader
+from .score_normalizer import ScoreNormalizer
 
-__all__ = ["PlacePulseLoader", "CLIPExtractor", "KNNPredictor"]
+__all__ = ["PlacePulseLoader", "CLIPExtractor", "KNNPredictor", "ScoreNormalizer"]
