@@ -8,6 +8,7 @@ The system makes TWO independent VLM calls per waypoint to reveal how persona
 interpretation influences perception and scoring of walking environments.
 
 Supports multiple frameworks:
+- place_pulse_2.0: Place Pulse perception dimensions (default)
 - streetagent_5d: StreetAgent Core Framework (Cullen, Kaplan, Lynch, Gibson)
 - ewing_handy_5d: Ewing & Handy Urban Design Qualities (2010)
 
@@ -45,6 +46,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
+from src.config import DEFAULT_FRAMEWORK_ID
 from src.agent.walking_agent import WalkingAgent
 from src.utils.visualization import RouteVisualizer
 from src.utils.logging import get_logger
@@ -303,9 +305,9 @@ Examples:
     )
     parser.add_argument(
         "--framework-id",
-        default="streetagent_5d",
-        choices=["streetagent_5d", "ewing_handy_5d", "sagai_2025"],
-        help="Evaluation framework to use (default: streetagent_5d).",
+        default=DEFAULT_FRAMEWORK_ID,
+        choices=["place_pulse_2.0", "streetagent_5d", "ewing_handy_5d", "sagai_2025"],
+        help=f"Evaluation framework to use (default: {DEFAULT_FRAMEWORK_ID}).",
     )
     parser.add_argument(
         "--personality",

@@ -36,7 +36,7 @@ from src.agent.capabilities import (
 from src.agent.cognitive_controller import CognitiveController
 from src.agent.config import AgentPersonality, get_preset
 from src.pipeline import WalkingAgentPipeline
-from src.config import settings
+from src.config import DEFAULT_FRAMEWORK_ID, settings
 from src.utils.data_models import Route, Waypoint
 from src.utils.logging import get_logger
 
@@ -100,7 +100,7 @@ class WalkingAgent(BaseAgent):
 
         # Store personality configuration
         self.personality = personality
-        self.framework_id = framework_id or "streetagent_5d"
+        self.framework_id = framework_id or DEFAULT_FRAMEWORK_ID
         self.enable_memory = enable_memory
         self._cognitive_controller: Optional[CognitiveController] = None
 
@@ -134,7 +134,7 @@ class WalkingAgent(BaseAgent):
     def from_preset(
         cls,
         preset_name: str,
-        framework_id: str,
+        framework_id: str = DEFAULT_FRAMEWORK_ID,
         agent_id: Optional[str] = None,
     ) -> "WalkingAgent":
         """Create agent from a personality preset.

@@ -1,0 +1,66 @@
+{
+  "framework_id": "place_pulse",
+  "framework_name": "MIT Place Pulse 2.0",
+  "framework_name_cn": "MIT Place Pulse 2.0 城市感知框架",
+  "description": "Crowdsourced urban perception framework with four perceptual dimensions. Based on 1.17 million pairwise comparisons from 81,630 volunteers across 56 cities worldwide.",
+  "theory_base": "Crowdsourced Urban Perception (Dubey et al., ECCV 2016)",
+  "num_dimensions": 4,
+  "dimensions": [
+    {
+      "id": "safety",
+      "name_en": "Safety",
+      "name_cn": "安全感",
+      "theory_base": "Perceived safety from crime and environmental hazards. Core dimension with high correlation to other positive perceptions (R² with Beautiful: 0.83, Lively: 0.80).",
+      "description": "Evaluate how safe the street environment feels - freedom from perceived threats and hazards.",
+      "measurement_focus": [
+        "Crime perception and signs of disorder",
+        "Environmental hazards and maintenance",
+        "Natural surveillance and 'eyes on the street'",
+        "Defensible space qualities"
+      ],
+      "vlm_prompt": "Evaluate **Safety** of this street view image.\n\n**Theoretical lens**: Place Pulse research shows perceived safety strongly correlates with other positive urban qualities. Safe-feeling environments typically show signs of care, maintenance, natural surveillance, and social presence.\n\n**Consider**:\n- Order: Are there signs of disorder, vandalism, or neglect?\n- Maintenance: Is the environment well-kept and cared for?\n- Surveillance: Are there people present? Do buildings have 'eyes on the street'?\n- Hazards: Is the path well-lit and free from physical dangers?\n\nRate from 1-10 (1 = feels very unsafe, 10 = feels very safe) and explain in 2-3 sentences.\n\nRespond in JSON:\n{\"score\": <1-10>, \"reasoning\": \"<explanation>\"}"
+    },
+    {
+      "id": "lively",
+      "name_en": "Lively",
+      "name_cn": "活力感",
+      "theory_base": "Perceived vitality, energy, and social activity. Captures urban buzz, street life, and the sense that a place is active and inhabited.",
+      "description": "Evaluate how vibrant and energetic the street environment feels.",
+      "measurement_focus": [
+        "Human activity and social interaction",
+        "Commercial vitality and active frontages",
+        "Movement and energy indicators",
+        "Temporal activity patterns"
+      ],
+      "vlm_prompt": "Evaluate **Liveliness** of this street view image.\n\n**Theoretical lens**: Lively urban environments attract people and activity. Liveliness emerges from active street frontages, social presence, commercial vitality, and signs that a place is well-used throughout the day.\n\n**Consider**:\n- Activity: Are there signs of people, social interaction, or street life?\n- Commerce: Are there active shops, cafes, markets, or businesses?\n- Energy: Does the scene suggest bustle, movement, and dynamism?\n- Use patterns: Does the environment attract people throughout the day?\n\nRate from 1-10 (1 = feels dead/empty, 10 = feels very lively) and explain in 2-3 sentences.\n\nRespond in JSON:\n{\"score\": <1-10>, \"reasoning\": \"<explanation>\"}"
+    },
+    {
+      "id": "beautiful",
+      "name_en": "Beautiful",
+      "name_cn": "美观度",
+      "theory_base": "Aesthetic quality and visual appeal. Strongly correlated with perceived safety (R²=0.83), suggesting beauty and order are psychologically linked.",
+      "description": "Evaluate the beauty and visual appeal of the street environment.",
+      "measurement_focus": [
+        "Visual harmony and composition",
+        "Maintenance and cleanliness",
+        "Architectural and landscape quality",
+        "Sensory appeal and pleasantness"
+      ],
+      "vlm_prompt": "Evaluate **Beauty** of this street view image.\n\n**Theoretical lens**: Beautiful urban environments combine visual harmony, careful maintenance, and aesthetic quality. Research shows beauty perception correlates strongly with safety perception - well-maintained, orderly places feel both safer and more beautiful.\n\n**Consider**:\n- Harmony: Do buildings, trees, and street elements work well together?\n- Maintenance: Is the environment clean, well-kept, and cared for?\n- Quality: Are there pleasing architectural features, greenery, or design elements?\n- Appeal: Does the scene evoke a sense of visual pleasure?\n\nRate from 1-10 (1 = ugly/unappealing, 10 = very beautiful) and explain in 2-3 sentences.\n\nRespond in JSON:\n{\"score\": <1-10>, \"reasoning\": \"<explanation>\"}"
+    },
+    {
+      "id": "wealthy",
+      "name_en": "Wealthy",
+      "name_cn": "富裕感",
+      "theory_base": "Perceived socioeconomic status and affluence. Indicates visible investment, infrastructure quality, and economic vitality of the neighborhood.",
+      "description": "Evaluate how affluent or prosperous the street environment appears.",
+      "measurement_focus": [
+        "Building quality and materials",
+        "Infrastructure condition",
+        "Property upkeep and maintenance",
+        "Signs of investment and prosperity"
+      ],
+      "vlm_prompt": "Evaluate **Wealth/Affluence** of this street view image.\n\n**Theoretical lens**: Perceived wealth reflects visible investment in the built environment. Affluent-appearing areas typically show quality construction, well-maintained infrastructure, and signs of ongoing economic investment.\n\n**Consider**:\n- Buildings: Are structures well-maintained with quality materials?\n- Infrastructure: Is the street well-paved with quality lighting and amenities?\n- Upkeep: Are properties and public spaces carefully maintained?\n- Investment: Does the area show signs of economic prosperity?\n\nRate from 1-10 (1 = appears impoverished, 10 = appears very affluent) and explain in 2-3 sentences.\n\nRespond in JSON:\n{\"score\": <1-10>, \"reasoning\": \"<explanation>\"}"
+    }
+  ]
+}

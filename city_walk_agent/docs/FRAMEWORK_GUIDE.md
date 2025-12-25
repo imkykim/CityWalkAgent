@@ -13,15 +13,17 @@ StreetAgent uses a **framework-agnostic architecture** that supports multiple wa
 
 ## Default Framework
 
-**Current Default**: `streetagent_5d`
+**Current Default**: `place_pulse_2.0`
 
-All components (WalkingAgent, ThinkingModule, RouteVisualizer) default to `streetagent_5d` unless explicitly specified otherwise.
+All components (WalkingAgent, ThinkingModule, RouteVisualizer) default to `place_pulse_2.0` unless explicitly specified otherwise.
+
+Default dimensions: safety, lively, beautiful, wealthy (Place Pulse 2.0).
 
 ---
 
 ## Supported Frameworks
 
-### 1. **StreetAgent 5D** (`streetagent_5d`) - DEFAULT
+### 1. **StreetAgent 5D** (`streetagent_5d`)
 
 **Dimensions**: 5
 **Focus**: Comprehensive spatial and experiential walkability
@@ -454,15 +456,15 @@ agent = WalkingAgent.from_preset(
 
 ## Usage Examples
 
-### Default Framework (StreetAgent 5D)
+### Default Framework (Place Pulse 2.0)
 
 ```python
 from src.agent.walking_agent import WalkingAgent
 
-# Uses streetagent_5d by default
+# Uses place_pulse_2.0 by default
 agent = WalkingAgent.from_preset("balanced")
-assert agent.framework_id == "streetagent_5d"
-assert len(agent.thinking_module.dimension_ids) == 5
+assert agent.framework_id == "place_pulse_2.0"
+assert len(agent.thinking_module.dimension_ids) == 4
 ```
 
 ---
@@ -485,7 +487,7 @@ explorer_agent = WalkingAgent.from_preset("explorer", "kaplan_4d")
 ### Multi-Framework Comparison
 
 ```python
-frameworks = ["streetagent_5d", "sagai_2025", "kaplan_4d"]
+frameworks = ["place_pulse_2.0", "streetagent_5d", "sagai_2025", "kaplan_4d"]
 agents = {
     fw: WalkingAgent.from_preset("balanced", fw, f"agent_{fw}")
     for fw in frameworks
@@ -609,11 +611,11 @@ All existing code using `sagai_2025` continues to work unchanged. Framework-agno
 # Old (still works)
 agent = WalkingAgent.from_preset("balanced", "sagai_2025")
 
-# New (uses streetagent_5d)
-agent = WalkingAgent.from_preset("balanced", "streetagent_5d")
+# New (uses place_pulse_2.0)
+agent = WalkingAgent.from_preset("balanced", "place_pulse_2.0")
 
 # Or rely on default
-agent = WalkingAgent.from_preset("balanced")  # Uses streetagent_5d
+agent = WalkingAgent.from_preset("balanced")  # Uses place_pulse_2.0
 ```
 
 ---
@@ -623,8 +625,8 @@ agent = WalkingAgent.from_preset("balanced")  # Uses streetagent_5d
 ```
 START: What's your primary goal?
 │
-├─ Comprehensive spatial + experiential analysis?
-│  └─> streetagent_5d
+├─ Comprehensive spatial + experiential analysis with empirical grounding?
+│  └─> place_pulse_2.0
 │
 ├─ Traditional safety/comfort focus?
 │  └─> sagai_2025

@@ -31,6 +31,7 @@ from typing import (
     Union,
 )
 
+from src.config import DEFAULT_FRAMEWORK_ID
 try:
     import matplotlib
 
@@ -75,7 +76,7 @@ class RouteVisualizer:
         self,
         figsize: Tuple[int, int] = (14, 6),
         dpi: int = 100,
-        framework_id: str = "streetagent_5d",
+        framework_id: str = DEFAULT_FRAMEWORK_ID,
     ):
         """
         Initialize visualizer with framework-agnostic dimension support.
@@ -83,7 +84,7 @@ class RouteVisualizer:
         Args:
             figsize: Figure size in inches (width, height)
             dpi: Resolution for saved figures
-            framework_id: Evaluation framework ID to load dimensions from (default: streetagent_5d)
+            framework_id: Evaluation framework ID to load dimensions from (default: DEFAULT_FRAMEWORK_ID)
         """
         self.figsize = figsize
         self.dpi = dpi
@@ -1146,7 +1147,7 @@ class RouteVisualizer:
             ax.set_yticks([2, 4, 6, 8, 10])
             ax.set_yticklabels(["2", "4", "6", "8", "10"], fontsize=8, alpha=0.7)
             ax.grid(True, linestyle=":", linewidth=0.4, alpha=0.3)
-            ax.set_title("System 1 vs System 2", fontsize=13, fontweight="bold", pad=20)
+            ax.set_title("Objective vs Persona", fontsize=13, fontweight="bold", pad=20)
             ax.legend(loc="upper right", bbox_to_anchor=(1.25, 1.05))
             fig.savefig(path, dpi=self.dpi, bbox_inches="tight")
             plt.close(fig)
@@ -1159,6 +1160,9 @@ class RouteVisualizer:
             )
             sys1_scores = _prepare_scores(wp_result, "system1_scores")
             sys2_scores = _prepare_scores(wp_result, "system2_scores")
+            obj_scores = _prepare_scores(wp_result, "objective_scores")
+            per_scores = _prepare_scores(wp_result, "persona_scores")
+
             fallback = (
                 wp_result.get("scores", {})
                 if isinstance(wp_result, Mapping)
@@ -1180,7 +1184,7 @@ class RouteVisualizer:
                 "#EF4444",
             )
             _plot_overlay(
-                overlay_dir / f"radar_overlay_wp_{wp_id}.png", sys1_scores, sys2_scores
+                overlay_dir / f"radar_overlay_wp_{wp_id}.png", obj_scores, per_scores
             )
 
         return {
@@ -1200,7 +1204,8 @@ class RouteVisualizer:
         Plot objective scores vs persona-aware scores for dual VLM evaluation.
 
         This visualization shows the difference between objective (framework-only)
-        and persona-aware evaluations in the dual evaluation system.
+        and persona-aware evaluations in the dual evaluation system using area fill
+        to highlight differences between the two evaluation systems.
 
         Args:
             waypoint_results: Sequence of waypoint result dicts containing:
@@ -1245,7 +1250,9 @@ class RouteVisualizer:
                 per_scores = getattr(r, "persona_scores", {})
                 # Fallback to old field names for backward compatibility
                 if not obj_scores:
-                    obj_scores = getattr(r, "neutral_scores", getattr(r, "system1_scores", {}))
+                    obj_scores = getattr(
+                        r, "neutral_scores", getattr(r, "system1_scores", {})
+                    )
                 if not per_scores:
                     per_scores = getattr(r, "scores", {})
 
@@ -1253,70 +1260,66 @@ class RouteVisualizer:
                 objective_scores[dim].append(float(obj_scores.get(dim, 0) or 0))
                 persona_scores[dim].append(float(per_scores.get(dim, 0) or 0))
 
-        # Create 2x2 subplot for first 4 dimensions
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12), dpi=self.dpi)
+        # Create 3x2 subplot for dimensions
+        fig, axes = plt.subplots(3, 2, figsize=(16, 16), dpi=self.dpi)
         axes = axes.flatten()
         x = np.arange(len(waypoint_ids))
 
-        for idx, dim_key in enumerate(dim_keys[:4]):  # Limit to 4 dimensions
+        # Colors for the two evaluation types (matching reference image style)
+        objective_color = "#94A3B8"  # Gray for objective/System 1
+        persona_color = "#EF4444"  # Red for persona-aware/System 2
+        fill_color = "#EF4444"  # Red fill for difference area
+
+        for idx, dim_key in enumerate(dim_keys[:5]):  # Limit to 5 dimensions
             ax = axes[idx]
             config = dim_config[dim_key]
 
-            # Plot objective scores (baseline)
-            ax.plot(
-                x,
-                objective_scores[dim_key],
-                marker="o",
-                markersize=3.5,
-                linewidth=1.2,
-                color="#94A3B8",
-                alpha=0.7,
-                label="Objective (Research)",
-                linestyle="--",
-            )
+            obj_data = np.array(objective_scores[dim_key])
+            per_data = np.array(persona_scores[dim_key])
 
-            # Plot persona-aware scores
+            # Plot objective scores (solid line, no markers for cleaner look)
             ax.plot(
                 x,
-                persona_scores[dim_key],
-                marker="s",
+                obj_data,
+                marker="o",
                 markersize=4,
                 linewidth=1.5,
-                color=config["color"],
+                color=objective_color,
                 alpha=0.9,
-                label="Persona-Aware (Final)",
-                linestyle="-",
+                label="Objective",
+                linestyle="-",  # Solid line instead of dashed
             )
 
-            # Highlight significant differences with arrows
-            for i in range(len(waypoint_ids)):
-                obj_score = objective_scores[dim_key][i]
-                p_score = persona_scores[dim_key][i]
-                delta = p_score - obj_score
+            # Plot persona-aware scores (solid line with different marker)
+            ax.plot(
+                x,
+                per_data,
+                marker="x",
+                markersize=5,
+                linewidth=1.5,
+                color=persona_color,
+                alpha=0.9,
+                label="Persona-Aware",
+                linestyle="-",  # Solid line
+            )
 
-                if abs(delta) >= 1.0:  # Significant adjustment threshold
-                    color = "#10B981" if delta > 0 else "#EF4444"
-                    ax.annotate(
-                        "",
-                        xy=(i, p_score),
-                        xytext=(i, n_score),
-                        arrowprops=dict(
-                            arrowstyle="->",
-                            color=color,
-                            alpha=0.6,
-                            lw=1.5,
-                        ),
-                    )
+            # Fill area between the two lines to show difference
+            ax.fill_between(
+                x,
+                obj_data,
+                per_data,
+                color=fill_color,
+                alpha=0.15,
+                label="Difference",
+            )
 
             ax.set_title(
-                f"{config['label']} - Persona Impact",
-                fontsize=12,
-                fontweight="bold"
+                f"{config['label']} - Persona Impact", fontsize=12, fontweight="bold"
             )
             ax.set_xlabel("Waypoint ID", fontsize=10)
             ax.set_ylabel("Score", fontsize=10)
             ax.set_ylim(0, 10.5)
-            ax.legend(loc="best", fontsize=9)
+            ax.legend(loc="upper right", fontsize=9)
 
             # X-axis formatting
             tick_step = max(1, len(waypoint_ids) // 10)
@@ -1329,8 +1332,8 @@ class RouteVisualizer:
             )
 
             # Add statistics text box
-            obj_mean = np.mean(objective_scores[dim_key])
-            p_mean = np.mean(persona_scores[dim_key])
+            obj_mean = np.mean(obj_data)
+            p_mean = np.mean(per_data)
             delta_mean = p_mean - obj_mean
             stats_text = (
                 f"Avg Δ: {delta_mean:+.2f}\n"
@@ -1346,6 +1349,10 @@ class RouteVisualizer:
                 verticalalignment="top",
                 bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
             )
+
+        # Hide unused subplot if dimensions < 6
+        if len(dim_keys) < 6:
+            axes[5].set_visible(False)
 
         plt.suptitle(title, fontsize=14, fontweight="bold", y=0.995)
         plt.tight_layout()
@@ -1395,7 +1402,9 @@ class RouteVisualizer:
                 or _get(result, "system1_scores")
                 or {}
             )
-            persona = _get(result, "persona_scores") or _get(result, "scores") or objective
+            persona = (
+                _get(result, "persona_scores") or _get(result, "scores") or objective
+            )
 
             for dim in dim_keys:
                 objective_scores[dim].append(float(objective.get(dim, 0) or 0.0))
@@ -1471,9 +1480,7 @@ class RouteVisualizer:
         axes[0].set_xlabel("Waypoint ID", fontsize=11, fontweight="bold")
         axes[0].set_ylabel("Average Score", fontsize=11, fontweight="bold")
         axes[0].set_ylim(0, 10.5)
-        axes[0].set_title(
-            f"{title} – Averages", fontsize=13, fontweight="bold", pad=12
-        )
+        axes[0].set_title(f"{title} – Averages", fontsize=13, fontweight="bold", pad=12)
         axes[0].legend(loc="best", fontsize=10)
 
         if delta_matrix.size:
@@ -1566,14 +1573,16 @@ class RouteVisualizer:
 
             for r in waypoint_results:
                 if isinstance(r, Mapping):
-                    n_scores = r.get("neutral_scores", r.get("system1_scores", {}))
-                    p_scores = r.get("scores", {})
+                    obj_scores = r.get("neutral_scores", r.get("system1_scores", {}))
+                    per_scores = r.get("scores", {})
                 else:
-                    n_scores = getattr(r, "neutral_scores", getattr(r, "system1_scores", {}))
-                    p_scores = getattr(r, "scores", {})
+                    obj_scores = getattr(
+                        r, "neutral_scores", getattr(r, "system1_scores", {})
+                    )
+                    per_scores = getattr(r, "scores", {})
 
-                neutral_vals.append(float(n_scores.get(dim, 0) or 0))
-                persona_vals.append(float(p_scores.get(dim, 0) or 0))
+                neutral_vals.append(float(obj_scores.get(dim, 0) or 0))
+                persona_vals.append(float(per_scores.get(dim, 0) or 0))
 
             neutral_avgs.append(np.mean(neutral_vals))
             persona_avgs.append(np.mean(persona_vals))
@@ -1777,7 +1786,9 @@ class RouteVisualizer:
             )
 
             # Color boxes
-            for idx, (patch, dim) in enumerate(zip(bp["boxes"], dim_keys[:len(box_data)])):
+            for idx, (patch, dim) in enumerate(
+                zip(bp["boxes"], dim_keys[: len(box_data)])
+            ):
                 config = dim_config.get(dim, {})
                 color = config.get("color", "#94A3B8")
                 patch.set_facecolor(color)
@@ -1894,7 +1905,7 @@ def plot_dual_system_analysis(
     narrative_chapters: Optional[List[Dict[str, Any]]] = None,
     output_dir: Path = Path("."),
     dimensions: Optional[Sequence[str]] = None,
-    framework_id: str = "streetagent_5d",
+    framework_id: str = DEFAULT_FRAMEWORK_ID,
     generate_radar_sets: bool = False,
 ) -> Dict[str, Path]:
     """Generate complete dual-system analysis visualizations."""
@@ -2157,7 +2168,7 @@ def plot_analysis_results(
 
 def regenerate_visualizations(
     output_dir: Path,
-    framework_id: str = "streetagent_5d",
+    framework_id: str = DEFAULT_FRAMEWORK_ID,
     personality: str = "unknown",
     only: str = "all",
     radar_charts: bool = False,
@@ -2190,10 +2201,10 @@ def regenerate_visualizations(
         return getattr(obj, key, default)
 
     if only in ("persona", "all"):
-        dim_keys = viz._infer_dimension_keys(
-            dimensions=None, waypoint_results=analyses
-        )
-        waypoint_ids = [str(_get(r, "waypoint_id", idx)) for idx, r in enumerate(analyses)]
+        dim_keys = viz._infer_dimension_keys(dimensions=None, waypoint_results=analyses)
+        waypoint_ids = [
+            str(_get(r, "waypoint_id", idx)) for idx, r in enumerate(analyses)
+        ]
         system2_triggers = [
             str(_get(r, "waypoint_id", idx))
             for idx, r in enumerate(analyses)
@@ -2211,7 +2222,9 @@ def regenerate_visualizations(
                 or _get(result, "system1_scores")
                 or {}
             )
-            persona = _get(result, "persona_scores") or _get(result, "scores") or objective
+            persona = (
+                _get(result, "persona_scores") or _get(result, "scores") or objective
+            )
 
             for dim in dim_keys:
                 objective_scores[dim].append(float(objective.get(dim, 0) or 0.0))
@@ -2409,7 +2422,7 @@ def main():
     parser.add_argument(
         "-f",
         "--framework-id",
-        default="streetagent_5d",
+        default=DEFAULT_FRAMEWORK_ID,
         help="Framework id to use for labels/colors when inferring dimensions",
     )
     args = parser.parse_args()
@@ -2429,7 +2442,9 @@ def main():
         return
 
     if args.input is None:
-        raise SystemExit("Either provide an input file to plot or --regenerate-output-dir.")
+        raise SystemExit(
+            "Either provide an input file to plot or --regenerate-output-dir."
+        )
 
     input_path: Path = args.input
     if not input_path.exists():

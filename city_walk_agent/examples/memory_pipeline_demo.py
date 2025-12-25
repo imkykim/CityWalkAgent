@@ -47,6 +47,7 @@ from src.agent.capabilities import (
     TriggerReason,
     LongTermMemory,
 )
+from src.config import DEFAULT_FRAMEWORK_ID
 from src.utils.exporters import export_evaluations_csv
 from src.utils.visualization import plot_analysis_results
 from src.utils.logging import get_logger
@@ -721,8 +722,8 @@ Examples:
     parser.add_argument(
         "--framework",
         type=str,
-        default="streetagent_5d",
-        help="Evaluation framework to use (default: sagai_2025)",
+        default=DEFAULT_FRAMEWORK_ID,
+        help=f"Evaluation framework to use (default: {DEFAULT_FRAMEWORK_ID})",
     )
 
     args = parser.parse_args()

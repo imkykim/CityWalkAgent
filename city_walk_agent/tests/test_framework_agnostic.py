@@ -4,19 +4,20 @@ Tests that ThinkingModule, RouteVisualizer, and WalkingAgent work correctly
 with all supported evaluation frameworks.
 """
 
-import pytest
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
+import pytest
 
 from src.agent.capabilities.thinking import ThinkingModule, TriggerReason
 from src.utils.visualization import RouteVisualizer
 from src.agent.walking_agent import WalkingAgent
 from src.agent.config import get_preset
-from src.config import load_framework
+from src.config import DEFAULT_FRAMEWORK_ID, load_framework
 
 
 # All supported frameworks
 FRAMEWORKS = [
+    DEFAULT_FRAMEWORK_ID,
     "sagai_2025",
     "streetagent_5d",
     "ewing_handy_5d",
@@ -273,23 +274,23 @@ class TestFrameworkSwitching:
 
 
 class TestBackwardCompatibility:
-    """Test that default framework is streetagent_5d."""
+    """Test that default framework follows DEFAULT_FRAMEWORK_ID."""
 
-    def test_thinking_module_defaults_to_streetagent_5d(self):
-        """Test that ThinkingModule defaults to streetagent_5d."""
+    def test_thinking_module_defaults_to_default_framework(self):
+        """Test that ThinkingModule defaults to configured default."""
         thinking = ThinkingModule()
-        assert thinking.framework_id == "streetagent_5d"
+        assert thinking.framework_id == DEFAULT_FRAMEWORK_ID
 
-    def test_visualizer_defaults_to_streetagent_5d(self):
-        """Test that RouteVisualizer defaults to streetagent_5d."""
+    def test_visualizer_defaults_to_default_framework(self):
+        """Test that RouteVisualizer defaults to configured default."""
         viz = RouteVisualizer()
-        assert viz.framework_id == "streetagent_5d"
+        assert viz.framework_id == DEFAULT_FRAMEWORK_ID
 
-    def test_agent_defaults_to_streetagent_5d(self):
-        """Test that WalkingAgent defaults to streetagent_5d when not specified."""
-        personality = get_preset("balanced", "streetagent_5d")
+    def test_agent_defaults_to_default_framework(self):
+        """Test that WalkingAgent defaults to default framework when not specified."""
+        personality = get_preset("balanced", DEFAULT_FRAMEWORK_ID)
         agent = WalkingAgent(agent_id="test", personality=personality)
-        assert agent.framework_id == "streetagent_5d"
+        assert agent.framework_id == DEFAULT_FRAMEWORK_ID
 
 
 class TestDimensionCounts:
@@ -304,6 +305,11 @@ class TestDimensionCounts:
         """Test that streetagent_5d has 5 dimensions."""
         framework = load_framework("streetagent_5d")
         assert len(framework["dimensions"]) == 5
+
+    def test_place_pulse_has_4_dimensions(self):
+        """Test that place_pulse_2.0 has 4 dimensions."""
+        framework = load_framework("place_pulse_2.0")
+        assert len(framework["dimensions"]) == 4
 
     def test_ewing_handy_5d_has_5_dimensions(self):
         """Test that ewing_handy_5d has 5 dimensions."""

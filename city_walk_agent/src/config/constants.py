@@ -20,7 +20,7 @@ MAX_IMAGE_SIZE_MB: Final[int] = 5
 MIN_SCORE: Final[int] = 1
 MAX_SCORE: Final[int] = 10
 SCORE_DECIMAL_PLACES: Final[int] = 1
-DEFAULT_FRAMEWORK_ID: Final[str] = "streetagent_5d"
+DEFAULT_FRAMEWORK_ID: Final[str] = "place_pulse_2.0"
 
 # Multi-Image Evaluation
 DEFAULT_PHASH_THRESHOLD: Final[float] = 15.0  # Visual change detection and multi-image trigger threshold

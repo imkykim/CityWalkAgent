@@ -29,7 +29,7 @@ from src.agent.config import (
     get_enhanced_personality,
     EnhancedPersonalityConfig,
 )
-from src.config import settings
+from src.config import DEFAULT_FRAMEWORK_ID, settings
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -130,7 +130,7 @@ class ThinkingModule:
 
     def __init__(
         self,
-        framework_id: str = "streetagent_5d",
+        framework_id: str = DEFAULT_FRAMEWORK_ID,
         llm_api_url: Optional[str] = None,
         llm_api_key: Optional[str] = None,
         vlm_api_url: Optional[str] = None,
@@ -144,7 +144,7 @@ class ThinkingModule:
         """Initialize thinking module with LLM/VLM configuration.
 
         Args:
-            framework_id: Evaluation framework to use (default: streetagent_5d).
+            framework_id: Evaluation framework to use (default: DEFAULT_FRAMEWORK_ID).
             llm_api_url: API URL for LLM calls (defaults to settings.qwen_vlm_api_url).
             llm_api_key: API key for LLM.
             vlm_api_url: API URL for VLM deep dives (optional).

@@ -56,7 +56,7 @@ StreetAgent is an AI-powered pedestrian experience analysis platform that uses a
 
 **Key Properties**:
 
-- `framework_id`: Evaluation framework (e.g., "streetagent_5d")
+- `framework_id`: Evaluation framework (e.g., "place_pulse_2.0")
 - `personality`: Agent personality (e.g., "safety", "scenic")
 - `memory_manager`: Lazy-loaded memory coordination
 - `thinking_module`: Lazy-loaded System 2 reasoning
@@ -293,7 +293,7 @@ class ThinkingResult:
 **Process**:
 
 1. Receives street-level image
-2. Applies evaluation framework (e.g., streetagent_5d)
+2. Applies evaluation framework (e.g., place_pulse_2.0)
 3. VLM generates initial scores (System 1)
 4. Computes pHash for visual change detection
 5. Returns WaypointAnalysis
@@ -719,13 +719,14 @@ StreetAgent supports **any evaluation framework** through dynamic configuration 
 
 **Supported Frameworks**:
 
-1. **sagai_2025** (4D): safety, comfort, interest, aesthetics
-2. **streetagent_5d** (5D): functional_quality, spatial_legibility, visual_coherence, sensory_complexity, spatial_sequence
-3. **ewing_handy_5d** (5D): imageability, enclosure, human_scale, transparency, complexity
-4. **kaplan_4d** (4D): coherence, complexity, legibility, mystery
-5. **phenomenology_3d** (3D): atmosphere, embodiment, place_identity
+1. **place_pulse_2.0** (4D, default): safety, lively, beautiful, wealthy
+2. **sagai_2025** (4D): safety, comfort, interest, aesthetics
+3. **streetagent_5d** (5D): functional_quality, spatial_legibility, visual_coherence, sensory_complexity, spatial_sequence
+4. **ewing_handy_5d** (5D): imageability, enclosure, human_scale, transparency, complexity
+5. **kaplan_4d** (4D): coherence, complexity, legibility, mystery
+6. **phenomenology_3d** (3D): atmosphere, embodiment, place_identity
 
-**Default**: `streetagent_5d` (richer 5-dimensional assessment)
+**Default**: `place_pulse_2.0` (empirically validated perceptual assessment)
 
 ### Component Framework Integration
 
