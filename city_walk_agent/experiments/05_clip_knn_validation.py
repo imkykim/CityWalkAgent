@@ -27,9 +27,13 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-# Add src to path
-src_path = Path(__file__).parent.parent / "src"
-sys.path.insert(0, str(src_path))
+# Add project root and src to path so both `src.*` and top-level imports work
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SRC_DIR = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 # Check dependencies
 try:
@@ -125,7 +129,10 @@ Examples:
     )
 
     parser.add_argument(
-        "--k", type=int, default=DEFAULT_K, help=f"Number of neighbors for K-NN (default: {DEFAULT_K})"
+        "--k",
+        type=int,
+        default=DEFAULT_K,
+        help=f"Number of neighbors for K-NN (default: {DEFAULT_K})",
     )
 
     parser.add_argument(
@@ -246,12 +253,21 @@ def extract_vlm_scores(
 
     for result in vlm_results:
         # Try different possible structures
-        evaluation = result.get("evaluation", result.get("scores", {}))
+        evaluation = result.get("evaluation", result.get("scores", {})) or {}
 
         if score_type == "objective":
-            score_data = evaluation.get("objective_scores", {})
+            score_data = (
+                evaluation.get("objective_scores") or evaluation.get("scores") or {}
+            )
+            # Fallback to top-level fields from recent pipelines
+            if not score_data:
+                score_data = result.get("objective_scores")
         else:
-            score_data = evaluation.get("persona_scores", {})
+            score_data = evaluation.get("persona_scores") or {}
+            if not score_data:
+                score_data = (
+                    result.get("persona_scores") or result.get("system2_scores") or {}
+                )
 
         # Map dimension names (handle different naming conventions)
         dimension_mapping = {
@@ -300,7 +316,9 @@ def get_image_paths(vlm_results: List[Dict]) -> List[Path]:
 
     for result in vlm_results:
         # Try different possible keys
-        image_path = result.get("image_path") or result.get("image") or result.get("path")
+        image_path = (
+            result.get("image_path") or result.get("image") or result.get("path")
+        )
 
         if image_path:
             image_paths.append(Path(image_path))
@@ -430,11 +448,12 @@ def main():
     )
     print()
 
-    cache_path = settings.place_pulse_dir / f"clip_features_{args.model.replace('/', '_')}.npy"
+    cache_path = (
+        settings.place_pulse_dir / f"clip_features_{args.model.replace('/', '_')}.npy"
+    )
 
     anchor_image_paths = [
-        pp_loader.get_image_path(img_id)
-        for img_id in anchor_scores["image_id"]
+        pp_loader.get_image_path(img_id) for img_id in anchor_scores["image_id"]
     ]
 
     anchor_features = clip_extractor.extract_and_cache(
@@ -506,9 +525,9 @@ def main():
 
     print("Validation Results Summary:")
     print(
-        results_df[["dimension", "spearman_rho", "spearman_p", "pearson_r", "r2"]].to_string(
-            index=False
-        )
+        results_df[
+            ["dimension", "spearman_rho", "spearman_p", "pearson_r", "r2"]
+        ].to_string(index=False)
     )
 
     print()
@@ -564,7 +583,9 @@ def main():
 
     # Save results DataFrame
     results_df.to_csv(output_dir / "validation_metrics.csv", index=False)
-    results_df.to_json(output_dir / "validation_metrics.json", orient="records", indent=2)
+    results_df.to_json(
+        output_dir / "validation_metrics.json", orient="records", indent=2
+    )
 
     # Save summary statistics
     summary = {
@@ -591,12 +612,8 @@ def main():
     print(f"✅ Results saved to: {output_dir}")
     print()
     print("Key Findings:")
-    print(
-        f"  • Average Spearman ρ: {summary['overall_spearman_rho']:.3f}"
-    )
-    print(
-        f"  • Significant dimensions: {summary['significant_dimensions']}/4"
-    )
+    print(f"  • Average Spearman ρ: {summary['overall_spearman_rho']:.3f}")
+    print(f"  • Significant dimensions: {summary['significant_dimensions']}/4")
     print()
 
     best_dim = results_df.loc[results_df["spearman_rho"].idxmax()]
