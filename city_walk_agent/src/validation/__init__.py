@@ -1,6 +1,7 @@
 """Validation module for comparing VLM scores against human perception data."""
 
 from .clip_extractor import CLIPExtractor
+from .knn_predictor import KNNPredictor
 from .place_pulse_loader import PlacePulseLoader
 
-__all__ = ["PlacePulseLoader", "CLIPExtractor"]
+__all__ = ["PlacePulseLoader", "CLIPExtractor", "KNNPredictor"]
