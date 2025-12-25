@@ -15,7 +15,6 @@ Implement parallel Objective + Persona-aware evaluation in System 1, removing we
 
 ## Phase 1: Simplify EnhancedPersonalityConfig
 
-
 **File:** `src/agent/config/personalities.py`
 
 Remove from `EnhancedPersonalityConfig`:
