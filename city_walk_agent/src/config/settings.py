@@ -79,6 +79,17 @@ class Settings(BaseSettings):
         default_factory=lambda: Path(__file__).parent.parent.parent.parent / "VIRL"
     )
 
+    # Place Pulse 2.0 Dataset (for validation)
+    place_pulse_dir: Path = Field(
+        default_factory=lambda: Path(__file__).parent.parent.parent / "data" / "place_pulse"
+    )
+    place_pulse_image_dir: Path = Field(
+        default_factory=lambda: Path(__file__).parent.parent.parent / "data" / "place_pulse" / "images"
+    )
+    place_pulse_scores_file: Path = Field(
+        default_factory=lambda: Path(__file__).parent.parent.parent / "data" / "place_pulse" / "scores.csv"
+    )
+
     # Evaluation Settings
     default_framework_id: str = Field(
         default=DEFAULT_FRAMEWORK_ID,
