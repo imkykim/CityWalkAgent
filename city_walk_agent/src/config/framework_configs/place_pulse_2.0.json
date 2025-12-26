@@ -2,65 +2,156 @@
   "framework_id": "place_pulse",
   "framework_name": "MIT Place Pulse 2.0",
   "framework_name_cn": "MIT Place Pulse 2.0 城市感知框架",
-  "description": "Crowdsourced urban perception framework with four perceptual dimensions. Based on 1.17 million pairwise comparisons from 81,630 volunteers across 56 cities worldwide.",
-  "theory_base": "Crowdsourced Urban Perception (Dubey et al., ECCV 2016)",
+  "description": "Crowdsourced urban perception framework with four positive perceptual dimensions. Developed by MIT Media Lab based on 1.17 million pairwise comparisons from 81,630 online volunteers across 56 cities worldwide.",
+  "description_cn": "基于众包的城市感知框架，包含四个正向感知维度。由MIT媒体实验室开发，基于来自56个城市81,630名在线志愿者的117万次成对比较。",
+  "theory_base": "Crowdsourced Urban Perception + Deep Learning (Dubey et al., 2016)",
+  "paper_reference": "Dubey, A., Naik, N., Parikh, D., Raskar, R., & Hidalgo, C. (2016). Deep Learning the City: Quantifying Urban Perception at a Global Scale. ECCV 2016.",
+  "year": 2016,
   "num_dimensions": 4,
+  "method": {
+    "type": "pairwise_comparison",
+    "description": "Users compare pairs of street-level images and select which one better represents each perceptual attribute",
+    "requires_fine_tuning": false,
+    "model_approach": "Siamese-like CNN architecture trained on pairwise comparisons with joint classification and ranking loss"
+  },
+  "aggregation_method": {
+    "point_level": "Individual image score (1-10)",
+    "street_level_mean": "mean(all_point_scores)",
+    "route_level": "mean(all_street_segments)",
+    "description": "TrueSkill algorithm converts pairwise comparisons to ranked scores",
+    "description_cn": "TrueSkill算法将成对比较转换为排名分数"
+  },
+  "validation_metrics": {
+    "dataset_size": "110,988 images from 56 cities",
+    "comparisons": "1,170,000 pairwise comparisons",
+    "volunteers": "81,630 online participants",
+    "geographic_coverage": "28 countries across 6 continents",
+    "notes": "Gold standard for urban perception research, widely validated across cultures"
+  },
   "dimensions": [
     {
       "id": "safety",
       "name_en": "Safety",
       "name_cn": "安全感",
-      "theory_base": "Perceived safety from crime and environmental hazards. Core dimension with high correlation to other positive perceptions (R² with Beautiful: 0.83, Lively: 0.80).",
-      "description": "Evaluate how safe the street environment feels - freedom from perceived threats and hazards.",
-      "measurement_focus": [
-        "Crime perception and signs of disorder",
-        "Environmental hazards and maintenance",
-        "Natural surveillance and 'eyes on the street'",
-        "Defensible space qualities"
-      ],
-      "vlm_prompt": "Evaluate **Safety** of this street view image.\n\n**Theoretical lens**: Place Pulse research shows perceived safety strongly correlates with other positive urban qualities. Safe-feeling environments typically show signs of care, maintenance, natural surveillance, and social presence.\n\n**Consider**:\n- Order: Are there signs of disorder, vandalism, or neglect?\n- Maintenance: Is the environment well-kept and cared for?\n- Surveillance: Are there people present? Do buildings have 'eyes on the street'?\n- Hazards: Is the path well-lit and free from physical dangers?\n\nRate from 1-10 (1 = feels very unsafe, 10 = feels very safe) and explain in 2-3 sentences.\n\nRespond in JSON:\n{\"score\": <1-10>, \"reasoning\": \"<explanation>\"}"
+      "theory_base": "Perceived walking safety encompassing physical hazards, traffic conditions, and environmental quality that affect pedestrian comfort and security.",
+      "description": "Evaluate how safe the street environment feels for pedestrians - considering physical hazards, traffic safety, environmental quality, and social surveillance.",
+      "vlm_prompt": "Please evaluate the **Walking Safety** of this street view image.\n\nCompare to an average urban street (which would score 5-6). Consider:\n- Physical hazards: Uneven pavement, obstacles, construction, tripping risks\n- Traffic safety: Vehicle proximity, crossing conditions, pedestrian separation from traffic\n- Environmental quality: Lighting, cleanliness, maintenance level, signs of neglect\n- Social safety: Visibility, presence of other people, 'eyes on the street'\n\nScoring guide:\n- 1-3: Notably unsafe (dark, isolated, poor infrastructure, hazards present)\n- 4-5: Below average safety\n- 5-6: Average urban street\n- 7-8: Above average (well-lit, maintained, good pedestrian infrastructure)\n- 9-10: Exceptionally safe (rare - requires outstanding conditions)\n\nBe precise with decimal scores (e.g., 5.5, 6.5) rather than whole numbers.\n\nRespond in JSON:\n{\"score\": <number 1.0-10.0>, \"reasoning\": \"<English explanation>\"}"
     },
     {
       "id": "lively",
       "name_en": "Lively",
       "name_cn": "活力感",
-      "theory_base": "Perceived vitality, energy, and social activity. Captures urban buzz, street life, and the sense that a place is active and inhabited.",
-      "description": "Evaluate how vibrant and energetic the street environment feels.",
-      "measurement_focus": [
-        "Human activity and social interaction",
-        "Commercial vitality and active frontages",
-        "Movement and energy indicators",
-        "Temporal activity patterns"
-      ],
-      "vlm_prompt": "Evaluate **Liveliness** of this street view image.\n\n**Theoretical lens**: Lively urban environments attract people and activity. Liveliness emerges from active street frontages, social presence, commercial vitality, and signs that a place is well-used throughout the day.\n\n**Consider**:\n- Activity: Are there signs of people, social interaction, or street life?\n- Commerce: Are there active shops, cafes, markets, or businesses?\n- Energy: Does the scene suggest bustle, movement, and dynamism?\n- Use patterns: Does the environment attract people throughout the day?\n\nRate from 1-10 (1 = feels dead/empty, 10 = feels very lively) and explain in 2-3 sentences.\n\nRespond in JSON:\n{\"score\": <1-10>, \"reasoning\": \"<explanation>\"}"
+      "theory_base": "Perceived vitality, energy, and social activity in the urban environment. Captures urban buzz and street life.",
+      "description": "Evaluate how vibrant and energetic the street environment feels - presence of activity, social life, and urban buzz.",
+      "vlm_prompt": "Please evaluate the **Liveliness** of this street view image.\n\nFocus on:\n- Human activity: Are there signs of people, social interaction, or street life?\n- Commercial vitality: Are there active shops, cafes, markets, or businesses?\n- Movement indicators: Does the scene suggest bustle, energy, and dynamism?\n- Temporal activity: Does the environment look like it attracts people throughout the day?\n\nRate the scene from 1-10 (1 = feels dead/empty, 10 = feels very lively and vibrant) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
     },
     {
       "id": "beautiful",
       "name_en": "Beautiful",
       "name_cn": "美观度",
-      "theory_base": "Aesthetic quality and visual appeal. Strongly correlated with perceived safety (R²=0.83), suggesting beauty and order are psychologically linked.",
-      "description": "Evaluate the beauty and visual appeal of the street environment.",
-      "measurement_focus": [
-        "Visual harmony and composition",
-        "Maintenance and cleanliness",
-        "Architectural and landscape quality",
-        "Sensory appeal and pleasantness"
-      ],
-      "vlm_prompt": "Evaluate **Beauty** of this street view image.\n\n**Theoretical lens**: Beautiful urban environments combine visual harmony, careful maintenance, and aesthetic quality. Research shows beauty perception correlates strongly with safety perception - well-maintained, orderly places feel both safer and more beautiful.\n\n**Consider**:\n- Harmony: Do buildings, trees, and street elements work well together?\n- Maintenance: Is the environment clean, well-kept, and cared for?\n- Quality: Are there pleasing architectural features, greenery, or design elements?\n- Appeal: Does the scene evoke a sense of visual pleasure?\n\nRate from 1-10 (1 = ugly/unappealing, 10 = very beautiful) and explain in 2-3 sentences.\n\nRespond in JSON:\n{\"score\": <1-10>, \"reasoning\": \"<explanation>\"}"
+      "theory_base": "Aesthetic quality and visual appeal of the urban environment. Strongly correlated with perceived safety (R²=0.83).",
+      "description": "Evaluate the beauty and visual appeal of the street environment - harmony, maintenance, and aesthetic pleasure.",
+      "vlm_prompt": "Please evaluate the **Beauty** of this street view image.\n\nFocus on:\n- Visual harmony: Do the elements (buildings, trees, street furniture) work well together?\n- Maintenance: Is the environment clean, well-kept, and cared for?\n- Aesthetic quality: Are there pleasing architectural features, greenery, or design elements?\n- Sensory appeal: Does the scene evoke a sense of beauty or visual pleasure?\n\nRate the scene from 1-10 (1 = ugly/unappealing, 10 = very beautiful) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
     },
     {
       "id": "wealthy",
       "name_en": "Wealthy",
       "name_cn": "富裕感",
-      "theory_base": "Perceived socioeconomic status and affluence. Indicates visible investment, infrastructure quality, and economic vitality of the neighborhood.",
-      "description": "Evaluate how affluent or prosperous the street environment appears.",
-      "measurement_focus": [
-        "Building quality and materials",
-        "Infrastructure condition",
-        "Property upkeep and maintenance",
-        "Signs of investment and prosperity"
-      ],
-      "vlm_prompt": "Evaluate **Wealth/Affluence** of this street view image.\n\n**Theoretical lens**: Perceived wealth reflects visible investment in the built environment. Affluent-appearing areas typically show quality construction, well-maintained infrastructure, and signs of ongoing economic investment.\n\n**Consider**:\n- Buildings: Are structures well-maintained with quality materials?\n- Infrastructure: Is the street well-paved with quality lighting and amenities?\n- Upkeep: Are properties and public spaces carefully maintained?\n- Investment: Does the area show signs of economic prosperity?\n\nRate from 1-10 (1 = appears impoverished, 10 = appears very affluent) and explain in 2-3 sentences.\n\nRespond in JSON:\n{\"score\": <1-10>, \"reasoning\": \"<explanation>\"}"
+      "theory_base": "Perceived socioeconomic status and affluence of the neighborhood. Indicates investment and economic vitality.",
+      "description": "Evaluate how affluent or prosperous the street environment appears - quality of infrastructure, buildings, and upkeep.",
+      "vlm_prompt": "Please evaluate the **Wealth/Affluence** of this street view image.\n\nFocus on:\n- Building quality: Are structures well-maintained with quality materials and finishes?\n- Infrastructure: Is the street well-paved, with quality lighting and amenities?\n- Upkeep: Are properties and public spaces carefully maintained?\n- Investment indicators: Does the area show signs of economic investment and prosperity?\n\nRate the scene from 1-10 (1 = appears impoverished, 10 = appears very affluent) and explain the score in 2-3 English sentences.\n\nRespond in JSON:\n{\"score\": <number 1-10>, \"reasoning\": \"<English explanation>\"}"
     }
-  ]
+  ],
+  "dimension_correlations": {
+    "note": "From Dubey et al. (2016) analysis - high intercorrelation among positive dimensions",
+    "safety_beautiful": 0.83,
+    "safety_lively": 0.8,
+    "safety_wealthy": 0.65,
+    "description": "Strong correlations suggest these dimensions capture related aspects of urban quality"
+  },
+  "comparison_notes": {
+    "vs_original_place_pulse": "Original has 6 dimensions including boring/depressing; this version uses 4 positive dimensions for efficiency",
+    "vs_sagai_2025": "Similar 4-dimension structure; Place Pulse uses 'wealthy' instead of 'interest', empirically validated at global scale",
+    "vs_streetagent_5d": "StreetAgent uses theory-grounded dimensions (Lynch, Gibson, Cullen); Place Pulse uses empirically-derived perceptual categories",
+    "vs_ewing_handy": "Ewing & Handy focuses on urban design qualities; Place Pulse focuses on subjective perception",
+    "use_case": "Global urban perception studies, perception prediction models, cross-cultural urban analysis, walkability assessment"
+  },
+  "scoring_range": {
+    "min": 1,
+    "max": 10,
+    "type": "continuous",
+    "interpretation": "All dimensions are positive - higher scores indicate better quality"
+  },
+  "features": {
+    "confidence_tracking": false,
+    "sequential_analysis": false,
+    "transition_detection": false,
+    "volatility_measurement": false,
+    "hidden_barrier_detection": false,
+    "spatial_weighting": false,
+    "point_aggregation_only": true,
+    "cross_cultural_validation": true,
+    "uniform_polarity": true
+  },
+  "cost_effectiveness": {
+    "api_calls_per_route": "n_waypoints * 4",
+    "processing_time": "Efficient (4 dimensions per waypoint)",
+    "cost_vs_6dim": "33% reduction compared to full 6-dimension version",
+    "suitable_for": [
+      "Global urban perception studies",
+      "Cross-cultural urban analysis",
+      "Perception prediction model training",
+      "Large-scale urban audits",
+      "Academic research validation",
+      "Real-time walkability assessment"
+    ]
+  },
+  "limitations": {
+    "sequential_gaps": "Cannot detect hidden barriers or sudden quality drops",
+    "transition_blind": "Misses important spatial transitions and experience shifts",
+    "aggregation_bias": "Mean score may hide problematic segments",
+    "no_context": "Each point evaluated independently without route context",
+    "reduced_dimensions": "Does not capture boredom/depression aspects of original Place Pulse"
+  },
+  "advantages": {
+    "empirical_grounding": "Based on 1.17M human judgments across 56 cities",
+    "cross_cultural": "Validated across 28 countries on 6 continents",
+    "uniform_polarity": "All dimensions positive - simpler interpretation and visualization",
+    "efficient": "4 dimensions vs 6 = faster processing and lower cost",
+    "reproducible": "Well-documented methodology with public dataset",
+    "benchmark": "Gold standard for urban perception research"
+  },
+  "recommended_persona_weights": {
+    "description": "Suggested dimension weights for different user personas",
+    "safety_guardian": {
+      "safety": 2.0,
+      "lively": 1.0,
+      "beautiful": 0.8,
+      "wealthy": 1.2
+    },
+    "aesthetic_explorer": {
+      "beautiful": 2.0,
+      "lively": 1.5,
+      "safety": 1.0,
+      "wealthy": 0.8
+    },
+    "balanced": {
+      "safety": 1.0,
+      "lively": 1.0,
+      "beautiful": 1.0,
+      "wealthy": 1.0
+    },
+    "homebuyer": {
+      "safety": 1.8,
+      "wealthy": 1.8,
+      "beautiful": 1.3,
+      "lively": 0.7
+    },
+    "tourist": {
+      "lively": 1.8,
+      "beautiful": 1.6,
+      "safety": 1.2,
+      "wealthy": 0.8
+    }
+  }
 }
