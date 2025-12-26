@@ -5,10 +5,10 @@ because VLM direct scoring and Place Pulse TrueSkill scores have different
 statistical properties.
 """
 
-from typing import Dict, Optional
+from typing import Dict, Tuple
 
 import numpy as np
-from scipy import stats
+from scipy import interpolate, stats
 
 
 class ScoreNormalizer:
@@ -75,45 +75,6 @@ class ScoreNormalizer:
         self.knn_stats["range_utilization"] = knn_range / 10.0
 
         self._is_fitted = True
-
-    def zscore_normalize(self, vlm_scores: np.ndarray) -> np.ndarray:
-        """Z-score normalize VLM scores and rescale to K-NN distribution.
-
-        Transforms VLM scores to have the same mean and std as K-NN scores.
-
-        Formula:
-            z = (vlm - vlm_mean) / vlm_std
-            normalized = z * knn_std + knn_mean
-
-        Args:
-            vlm_scores: VLM scores to normalize, shape (N,) or (N, D)
-
-        Returns:
-            Normalized scores with same shape as input
-
-        Raises:
-            RuntimeError: If normalizer hasn't been fitted yet
-        """
-        if not self._is_fitted:
-            raise RuntimeError(
-                "Normalizer must be fitted before normalizing scores. "
-                "Call fit() first."
-            )
-
-        vlm_scores = np.asarray(vlm_scores)
-
-        # Handle edge case where std is 0
-        if self.vlm_stats["std"] == 0:
-            # If all VLM scores are the same, return KNN mean
-            return np.full_like(vlm_scores, self.knn_stats["mean"])
-
-        # Z-score normalization
-        z_scores = (vlm_scores - self.vlm_stats["mean"]) / self.vlm_stats["std"]
-
-        # Rescale to K-NN distribution
-        normalized = z_scores * self.knn_stats["std"] + self.knn_stats["mean"]
-
-        return normalized
 
     def rank_transform(self, scores: np.ndarray) -> np.ndarray:
         """Convert scores to ranks (1 to N).
@@ -319,26 +280,26 @@ class ScoreNormalizer:
         ax.set_title("Q-Q Plot")
         ax.grid(alpha=0.3)
 
-        # Normalized comparison
+        # Normalized comparison (K-NN → VLM scale)
         ax = axes[1, 1]
-        normalized_vlm = self.zscore_normalize(vlm_scores)
+        knn_normalized = zscore_normalize_knn_to_vlm(vlm_scores, knn_scores)
         ax.hist(
-            normalized_vlm.flatten(),
+            vlm_scores.flatten(),
             bins=30,
             alpha=0.6,
-            label="VLM (normalized)",
+            label="VLM",
+            color="blue",
+        )
+        ax.hist(
+            knn_normalized.flatten(),
+            bins=30,
+            alpha=0.6,
+            label="K-NN (normalized)",
             color="green",
         )
-        ax.hist(
-            knn_scores.flatten(),
-            bins=30,
-            alpha=0.6,
-            label="K-NN",
-            color="orange",
-        )
-        ax.set_xlabel("Score")
+        ax.set_xlabel("Score (VLM scale)")
         ax.set_ylabel("Frequency")
-        ax.set_title("After Z-Score Normalization")
+        ax.set_title("After Z-Score Normalization (K-NN → VLM)")
         ax.legend()
         ax.grid(alpha=0.3)
 
@@ -347,3 +308,200 @@ class ScoreNormalizer:
         plt.close()
 
         print(f"✓ Distribution plot saved to: {output_path}")
+
+
+class QuantileMatchingNormalizer:
+    """
+    Normalize scores using Quantile Matching.
+
+    Transforms source distribution to match target distribution
+    while preserving relative rankings.
+    """
+
+    def __init__(self):
+        self.fitted = False
+        self.source_sorted = None
+        self.target_sorted = None
+        self.score_to_percentile = None
+        self.percentile_to_target = None
+
+    def fit(self, source_scores: np.ndarray, target_scores: np.ndarray):
+        """
+        Fit the quantile matching transformation.
+
+        Args:
+            source_scores: VLM scores (to be transformed)
+            target_scores: K-NN scores (target distribution)
+        """
+        self.source_sorted = np.sort(source_scores)
+        self.target_sorted = np.sort(target_scores)
+
+        # Create percentile mappings
+        n_source = len(self.source_sorted)
+        n_target = len(self.target_sorted)
+
+        source_percentiles = np.linspace(0, 100, n_source)
+        target_percentiles = np.linspace(0, 100, n_target)
+
+        # Source score → percentile
+        self.score_to_percentile = interpolate.interp1d(
+            self.source_sorted,
+            source_percentiles,
+            bounds_error=False,
+            fill_value=(0, 100),
+        )
+
+        # Percentile → target score
+        self.percentile_to_target = interpolate.interp1d(
+            target_percentiles,
+            self.target_sorted,
+            bounds_error=False,
+            fill_value=(self.target_sorted[0], self.target_sorted[-1]),
+        )
+
+        self.fitted = True
+
+        return self
+
+    def transform(self, scores: np.ndarray) -> np.ndarray:
+        """
+        Transform scores using fitted quantile matching.
+
+        Args:
+            scores: Scores to transform
+
+        Returns:
+            Transformed scores matching target distribution
+        """
+        if not self.fitted:
+            raise ValueError("Normalizer not fitted. Call fit() first.")
+
+        scores = np.asarray(scores)
+
+        # Source → percentile → target
+        percentiles = self.score_to_percentile(scores)
+        matched = self.percentile_to_target(percentiles)
+
+        return matched
+
+    def fit_transform(self, source_scores: np.ndarray, target_scores: np.ndarray) -> np.ndarray:
+        """Fit and transform in one step."""
+        self.fit(source_scores, target_scores)
+        return self.transform(source_scores)
+
+    def get_stats(self) -> Dict:
+        """Return distribution statistics for reporting."""
+        if not self.fitted:
+            return {}
+
+        return {
+            "source_min": float(self.source_sorted[0]),
+            "source_max": float(self.source_sorted[-1]),
+            "source_median": float(np.median(self.source_sorted)),
+            "target_min": float(self.target_sorted[0]),
+            "target_max": float(self.target_sorted[-1]),
+            "target_median": float(np.median(self.target_sorted)),
+        }
+
+
+def quantile_match_scores(vlm_scores: np.ndarray, knn_scores: np.ndarray) -> Tuple[np.ndarray, Dict]:
+    """
+    Convenience function for quantile matching.
+
+    Args:
+        vlm_scores: VLM scores to transform
+        knn_scores: K-NN scores (target distribution)
+
+    Returns:
+        Tuple of (matched_scores, stats_dict)
+    """
+    normalizer = QuantileMatchingNormalizer()
+    matched = normalizer.fit_transform(vlm_scores, knn_scores)
+    stats_dict = normalizer.get_stats()
+
+    return matched, stats_dict
+
+
+class ZScoreNormalizer:
+    """Z-Score normalization: K-NN → VLM scale."""
+
+    def __init__(self):
+        self.fitted = False
+        self.knn_mean = None
+        self.knn_std = None
+        self.vlm_mean = None
+        self.vlm_std = None
+
+    def fit(self, vlm_scores: np.ndarray, knn_scores: np.ndarray):
+        """
+        Fit normalizer parameters.
+
+        Args:
+            vlm_scores: VLM scores (target scale, typically 1-10)
+            knn_scores: K-NN predicted scores (to be transformed)
+        """
+        vlm_scores = np.asarray(vlm_scores)
+        knn_scores = np.asarray(knn_scores)
+
+        self.vlm_mean = float(np.mean(vlm_scores))
+        self.vlm_std = float(np.std(vlm_scores))
+        self.knn_mean = float(np.mean(knn_scores))
+        self.knn_std = float(np.std(knn_scores))
+        self.fitted = True
+        return self
+
+    def transform(self, knn_scores: np.ndarray) -> np.ndarray:
+        """
+        Transform K-NN scores to VLM scale.
+
+        Args:
+            knn_scores: K-NN scores to transform
+
+        Returns:
+            K-NN scores normalized to VLM scale
+        """
+        if not self.fitted:
+            raise ValueError("Normalizer not fitted. Call fit() first.")
+
+        knn_scores = np.asarray(knn_scores)
+
+        if self.knn_std == 0:
+            return np.full_like(knn_scores, self.vlm_mean, dtype=float)
+
+        z = (knn_scores - self.knn_mean) / self.knn_std
+        knn_normalized = z * self.vlm_std + self.vlm_mean
+
+        return knn_normalized
+
+    def fit_transform(self, vlm_scores: np.ndarray, knn_scores: np.ndarray) -> np.ndarray:
+        """Fit and transform in one step."""
+        self.fit(vlm_scores, knn_scores)
+        return self.transform(knn_scores)
+
+    def get_stats(self) -> Dict:
+        """Return normalization statistics."""
+        if not self.fitted:
+            return {}
+
+        return {
+            "vlm_mean": self.vlm_mean,
+            "vlm_std": self.vlm_std,
+            "knn_mean": self.knn_mean,
+            "knn_std": self.knn_std,
+            "direction": "K-NN → VLM scale",
+        }
+
+
+def zscore_normalize_knn_to_vlm(vlm_scores: np.ndarray, knn_scores: np.ndarray) -> np.ndarray:
+    """
+    Convenience function: normalize K-NN scores to VLM scale.
+
+    Args:
+        vlm_scores: VLM scores (target distribution)
+        knn_scores: K-NN scores (to be transformed)
+
+    Returns:
+        K-NN scores on VLM scale
+    """
+    normalizer = ZScoreNormalizer()
+    return normalizer.fit_transform(vlm_scores, knn_scores)

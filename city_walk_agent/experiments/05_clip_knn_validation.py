@@ -15,14 +15,16 @@ Pipeline:
 Usage:
     python experiments/05_clip_knn_validation.py --input results/analysis_results.json
     python experiments/05_clip_knn_validation.py --input results/analysis_results.json --k 10 --use-cache
+    python experiments/05_clip_knn_validation.py --input results/route1.json results/route2.json --k 10
 """
 
 import argparse
 import json
 import sys
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import numpy as np
 import pandas as pd
@@ -109,6 +111,9 @@ Examples:
   # Use different CLIP model
   python experiments/05_clip_knn_validation.py --input results/analysis_results.json --clip-model ViT-L/14
 
+  # Merge multiple analysis files
+  python experiments/05_clip_knn_validation.py --input results/route1.json results/route2.json --k 10
+
   # Skip plots (faster)
   python experiments/05_clip_knn_validation.py --input results/analysis_results.json --skip-plots
         """,
@@ -117,8 +122,9 @@ Examples:
     parser.add_argument(
         "--input",
         type=str,
+        nargs="+",
         required=True,
-        help="Path to VLM analysis results JSON file",
+        help="Path(s) to VLM analysis results JSON file(s). Multiple files will be merged.",
     )
 
     parser.add_argument(
@@ -147,6 +153,14 @@ Examples:
         choices=["objective", "persona"],
         default="objective",
         help="Which VLM scores to use (default: objective)",
+    )
+
+    parser.add_argument(
+        "--normalization",
+        type=str,
+        default="zscore",
+        choices=["quantile", "zscore", "none"],
+        help="Score normalization method for secondary metrics",
     )
 
     parser.add_argument(
@@ -189,11 +203,12 @@ Examples:
 # ============================================================================
 
 
-def load_vlm_results(input_path: Path) -> List[Dict]:
+def load_vlm_results(input_path: Path, quiet: bool = False) -> List[Dict]:
     """Load VLM evaluation results.
 
     Args:
         input_path: Path to analysis results JSON
+        quiet: Suppress progress printing when True
 
     Returns:
         List of waypoint evaluation results
@@ -207,7 +222,8 @@ def load_vlm_results(input_path: Path) -> List[Dict]:
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
-    print(f"📂 Loading VLM results from: {input_path}")
+    if not quiet:
+        print(f"📂 Loading VLM results from: {input_path}")
 
     with open(input_path, "r") as f:
         data = json.load(f)
@@ -230,9 +246,54 @@ def load_vlm_results(input_path: Path) -> List[Dict]:
     else:
         raise ValueError(f"Invalid data format: {type(data)}")
 
-    print(f"✓ Loaded {len(results)} waypoint evaluations")
+    if not quiet:
+        print(f"✓ Loaded {len(results)} waypoint evaluations")
 
     return results
+
+
+def load_and_merge_vlm_results(input_paths: List[str]) -> List[Dict]:
+    """
+    Load and merge multiple VLM analysis result files.
+
+    Args:
+        input_paths: List of paths to analysis result JSON files
+
+    Returns:
+        Merged list of waypoint results with source tracking and reassigned IDs
+    """
+    all_results: List[Dict] = []
+
+    for path_str in input_paths:
+        path = Path(path_str)
+        if not path.exists():
+            print(f"⚠️  File not found: {path}")
+            continue
+
+        try:
+            data = load_vlm_results(path, quiet=True)
+        except Exception as e:
+            print(f"⚠️  Failed to load {path}: {e}")
+            continue
+
+        # Add source tracking
+        for item in data:
+            merged_item = dict(item)
+            merged_item["_source_file"] = path.name
+            all_results.append(merged_item)
+
+        print(f"  ✓ Loaded {len(data)} waypoints from {path.name}")
+
+    # Reassign waypoint_ids to avoid conflicts
+    for i, item in enumerate(all_results):
+        item["_original_waypoint_id"] = item.get("waypoint_id", i)
+        item["waypoint_id"] = i
+
+    print(
+        f"\n📊 Total merged: {len(all_results)} waypoints from {len(input_paths)} file(s)"
+    )
+
+    return all_results
 
 
 def extract_vlm_scores(
@@ -337,6 +398,45 @@ def get_image_paths(vlm_results: List[Dict]) -> List[Path]:
     return image_paths
 
 
+def generate_output_dir(args) -> Path:
+    """Generate output directory name with file info."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base_dir = (
+        Path(args.output_dir)
+        if args.output_dir
+        else Path(__file__).parent / "results" / "validation"
+    )
+
+    if len(args.input) == 1:
+        source_name = Path(args.input[0]).stem
+    else:
+        source_name = f"merged_{len(args.input)}files"
+
+    output_dir = base_dir / f"validation_{source_name}_{timestamp}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    return output_dir
+
+
+def save_merge_metadata(
+    output_dir: Path, input_paths: List[str], vlm_results: List[Dict]
+):
+    """Save metadata about merged files."""
+    metadata = {
+        "merged_files": input_paths,
+        "file_counts": {},
+        "total_waypoints": len(vlm_results),
+        "merge_timestamp": datetime.now().isoformat(),
+    }
+
+    for result in vlm_results:
+        source = result.get("_source_file", "unknown")
+        metadata["file_counts"][source] = metadata["file_counts"].get(source, 0) + 1
+
+    with open(output_dir / "merge_metadata.json", "w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2)
+
+
 # ============================================================================
 # MAIN PIPELINE
 # ============================================================================
@@ -347,7 +447,7 @@ def main():
     args = parse_args()
 
     print("=" * 70)
-    print("         CLIP + K-NN Validation Experiment")
+    print("        CLIP + K-NN Validation for VLM Walkability Scores")
     print("=" * 70)
     print()
 
@@ -360,21 +460,34 @@ def main():
         print("❌ Cannot proceed without scipy")
         sys.exit(1)
 
-    # Setup output directory
-    if args.output_dir:
-        output_dir = Path(args.output_dir)
+    # Load and merge VLM results
+    print("📂 Loading VLM evaluation results...")
+    if len(args.input) == 1:
+        print(f"  Single file: {args.input[0]}")
     else:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = Path(__file__).parent / "results" / "validation" / timestamp
+        print(f"  Merging {len(args.input)} files:")
+        for f in args.input:
+            print(f"    - {f}")
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"📁 Output directory: {output_dir}")
+    vlm_results = load_and_merge_vlm_results(args.input)
+
+    if not vlm_results:
+        print("❌ No valid results loaded. Exiting.")
+        sys.exit(1)
+
+    source_counts = Counter(
+        result.get("_source_file", "unknown") for result in vlm_results
+    )
+
+    # Setup output directory
+    output_dir = generate_output_dir(args)
+    print(f"\n📁 Output directory: {output_dir}")
     print()
 
     # Save experiment configuration
     config = {
         "timestamp": datetime.now().isoformat(),
-        "input_file": str(args.input),
+        "input_files": args.input,
         "k": args.k,
         "clip_model": args.clip_model,
         "batch_size": args.batch_size,
@@ -382,18 +495,22 @@ def main():
         "use_cache": args.use_cache,
         "force_recompute": args.force_recompute,
         "anchor_subset": args.anchor_subset,
+        "source_counts": dict(source_counts),
+        "total_waypoints": len(vlm_results),
+        "normalization": args.normalization,
     }
 
-    with open(output_dir / "experiment_config.json", "w") as f:
+    with open(output_dir / "experiment_config.json", "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
 
-    # Step 1: Load VLM evaluation results
+    save_merge_metadata(output_dir, args.input, vlm_results)
+
+    # Step 1: Process VLM evaluation results
     print("=" * 70)
-    print("Step 1: Load VLM Evaluation Results")
+    print("Step 1: Process VLM Evaluation Results")
     print("=" * 70)
     print()
 
-    vlm_results = load_vlm_results(args.input)
     vlm_scores = extract_vlm_scores(vlm_results, score_type=args.score_type)
     image_paths = get_image_paths(vlm_results)
 
@@ -518,6 +635,7 @@ def main():
         vlm_scores=vlm_scores,
         knn_predictions=knn_predictions,
         image_ids=image_ids,
+        normalization_method=args.normalization,
     )
 
     # Analyze all dimensions
@@ -538,7 +656,24 @@ def main():
     print("=" * 70)
     print()
 
-    report = analyzer.generate_report()
+    report = analyzer.generate_report(k_value=args.k)
+    if source_counts:
+        total_waypoints = sum(source_counts.values())
+        sources_section = [
+            "Data Sources:",
+            *[f"  • {src}: {count} waypoints" for src, count in source_counts.items()],
+            f"  • Total: {total_waypoints} waypoints",
+            "",
+        ]
+        report_lines = report.splitlines()
+        insert_idx = next(
+            (i + 1 for i, line in enumerate(report_lines) if line.strip() == ""),
+            0,
+        )
+        report = "\n".join(
+            report_lines[:insert_idx] + sources_section + report_lines[insert_idx:]
+        )
+
     print(report)
 
     print()
@@ -555,16 +690,20 @@ def main():
 
         analyzer.plot_all_dimensions(plots_dir)
 
-        # Also create distribution comparison plots
-        from validation.score_normalizer import ScoreNormalizer
+        dimensions = ["safe", "lively", "beautiful", "wealthy"]
 
-        for dim in ["safe", "lively", "beautiful", "wealthy"]:
-            normalizer = analyzer.normalizers[dim]
-            vlm_vals = vlm_scores[dim].values
-            knn_vals = knn_predictions[dim].values
+        if args.normalization == "quantile":
+            for dim in dimensions:
+                qm_plot_path = plots_dir / f"{dim}_quantile_matching.png"
+                analyzer.plot_quantile_matching(dim, qm_plot_path)
+        else:
+            for dim in dimensions:
+                normalizer = analyzer.normalizers[dim]
+                vlm_vals = vlm_scores[dim].values
+                knn_vals = knn_predictions[dim].values
 
-            dist_plot_path = plots_dir / f"{dim}_distribution.png"
-            normalizer.plot_distributions(vlm_vals, knn_vals, str(dist_plot_path))
+                dist_plot_path = plots_dir / f"{dim}_distribution.png"
+                normalizer.plot_distributions(vlm_vals, knn_vals, str(dist_plot_path))
 
         print()
 
@@ -579,7 +718,7 @@ def main():
     print()
 
     # Export validation results
-    analyzer.export_results(output_dir)
+    analyzer.export_results(output_dir, k_value=args.k)
 
     # Save results DataFrame
     results_df.to_csv(output_dir / "validation_metrics.csv", index=False)
@@ -594,12 +733,15 @@ def main():
         "k": args.k,
         "clip_model": args.clip_model,
         "score_type": args.score_type,
+        "normalization": args.normalization,
+        "input_files": args.input,
+        "source_counts": dict(source_counts),
         "overall_spearman_rho": float(results_df["spearman_rho"].mean()),
         "significant_dimensions": int(results_df["spearman_significant"].sum()),
         "dimensions": results_df.to_dict(orient="records"),
     }
 
-    with open(output_dir / "validation_summary.json", "w") as f:
+    with open(output_dir / "validation_summary.json", "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
     print()
