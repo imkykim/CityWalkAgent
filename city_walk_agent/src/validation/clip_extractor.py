@@ -7,7 +7,7 @@ which are used for finding visually similar images via K-NN.
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 import torch
@@ -16,26 +16,49 @@ from tqdm import tqdm
 from transformers import CLIPModel, CLIPProcessor
 
 
+CLIP_MODELS = {
+    "ViT-B/32": {
+        "name": "openai/clip-vit-base-patch32",
+        "dim": 512,
+        "description": "Fast, good accuracy",
+    },
+    "ViT-L/14": {
+        "name": "openai/clip-vit-large-patch14",
+        "dim": 768,
+        "description": "Slower, better accuracy",
+    },
+    "ViT-L/14@336": {
+        "name": "openai/clip-vit-large-patch14-336",
+        "dim": 768,
+        "description": "Highest accuracy, slowest (336px input)",
+    },
+}
+
+
 class CLIPExtractor:
     """Extract CLIP embeddings from images."""
 
     def __init__(
         self,
-        model_name: str = "openai/clip-vit-base-patch32",
+        model_name: str = "ViT-B/32",
         device: str = "auto",
         batch_size: int = 32,
     ):
         """Initialize CLIP model and processor.
 
         Args:
-            model_name: HuggingFace model identifier
-                       Default: "openai/clip-vit-base-patch32" (512-dim)
-                       Alternative: "openai/clip-vit-large-patch14" (768-dim)
+            model_name: Model key (e.g., "ViT-B/32", "ViT-L/14", "ViT-L/14@336")
             device: Device to use ("cpu", "cuda", "mps", or "auto")
-            batch_size: Number of images to process at once
+            batch_size: Number of images to process at once (auto-reduced for large models)
         """
+        if model_name not in CLIP_MODELS:
+            raise ValueError(
+                f"Unknown model: {model_name}. Choose from {list(CLIP_MODELS.keys())}"
+            )
+
+        model_info = CLIP_MODELS[model_name]
         self.model_name = model_name
-        self.batch_size = batch_size
+        self.feature_dim = model_info["dim"]
 
         # Auto-detect device
         if device == "auto":
@@ -48,19 +71,24 @@ class CLIPExtractor:
         else:
             self.device = device
 
-        print(f"Initializing CLIP model: {model_name}")
+        print(f"Initializing CLIP model: {model_name} ({model_info['name']})")
         print(f"Using device: {self.device}")
 
         # Load model and processor
-        self.model = CLIPModel.from_pretrained(model_name)
-        self.processor = CLIPProcessor.from_pretrained(model_name)
+        self.model = CLIPModel.from_pretrained(model_info["name"])
+        self.processor = CLIPProcessor.from_pretrained(model_info["name"])
+
+        # Adjust batch size for larger models
+        if model_name == "ViT-L/14@336":
+            self.batch_size = min(batch_size, 8)
+        elif "L/14" in model_name:
+            self.batch_size = min(batch_size, 16)
+        else:
+            self.batch_size = batch_size
 
         # Move model to device
         self.model = self.model.to(self.device)
         self.model.eval()  # Set to evaluation mode
-
-        # Get feature dimension
-        self.feature_dim = self.model.config.projection_dim
 
         print(f"Feature dimension: {self.feature_dim}")
 
@@ -173,6 +201,12 @@ class CLIPExtractor:
         features = np.vstack(features_list)
 
         return features
+
+    def get_cache_path(self, base_path: Path) -> Path:
+        """Generate cache path with model name."""
+        model_suffix = self.model_name.replace("/", "-").replace("@", "-")
+        base_path = Path(base_path)
+        return base_path.parent / f"{base_path.stem}_{model_suffix}.npy"
 
     def extract_and_cache(
         self,

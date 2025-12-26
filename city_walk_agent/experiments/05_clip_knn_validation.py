@@ -84,7 +84,7 @@ from validation import (
 # ============================================================================
 
 DEFAULT_K = 10
-DEFAULT_CLIP_MODEL = "openai/clip-vit-base-patch32"
+DEFAULT_CLIP_MODEL = "ViT-B/32"
 DEFAULT_BATCH_SIZE = 32
 
 
@@ -107,7 +107,7 @@ Examples:
   python experiments/05_clip_knn_validation.py --input results/analysis_results.json --k 15 --use-cache
 
   # Use different CLIP model
-  python experiments/05_clip_knn_validation.py --input results/analysis_results.json --model openai/clip-vit-large-patch14
+  python experiments/05_clip_knn_validation.py --input results/analysis_results.json --clip-model ViT-L/14
 
   # Skip plots (faster)
   python experiments/05_clip_knn_validation.py --input results/analysis_results.json --skip-plots
@@ -150,10 +150,11 @@ Examples:
     )
 
     parser.add_argument(
-        "--model",
+        "--clip-model",
         type=str,
         default=DEFAULT_CLIP_MODEL,
-        help=f"CLIP model to use (default: {DEFAULT_CLIP_MODEL})",
+        choices=["ViT-B/32", "ViT-L/14", "ViT-L/14@336"],
+        help="CLIP model to use",
     )
 
     parser.add_argument(
@@ -375,7 +376,7 @@ def main():
         "timestamp": datetime.now().isoformat(),
         "input_file": str(args.input),
         "k": args.k,
-        "clip_model": args.model,
+        "clip_model": args.clip_model,
         "batch_size": args.batch_size,
         "score_type": args.score_type,
         "use_cache": args.use_cache,
@@ -442,15 +443,14 @@ def main():
     print()
 
     clip_extractor = CLIPExtractor(
-        model_name=args.model,
+        model_name=args.clip_model,
         device="auto",
         batch_size=args.batch_size,
     )
     print()
 
-    cache_path = (
-        settings.place_pulse_dir / f"clip_features_{args.model.replace('/', '_')}.npy"
-    )
+    base_cache_path = settings.place_pulse_dir / "clip_features.npy"
+    cache_path = clip_extractor.get_cache_path(base_cache_path)
 
     anchor_image_paths = [
         pp_loader.get_image_path(img_id) for img_id in anchor_scores["image_id"]
@@ -592,7 +592,7 @@ def main():
         "n_samples": len(vlm_scores),
         "n_anchors": len(anchor_scores),
         "k": args.k,
-        "clip_model": args.model,
+        "clip_model": args.clip_model,
         "score_type": args.score_type,
         "overall_spearman_rho": float(results_df["spearman_rho"].mean()),
         "significant_dimensions": int(results_df["spearman_significant"].sum()),

@@ -1,0 +1,34 @@
+# CLIP + K-NN Validation Pipeline Requirements
+# Install with: pip install -r requirements_validation.txt
+
+# Core dependencies
+torch>=2.0.0
+transformers>=4.30.0
+Pillow>=9.0.0
+
+# Scientific computing
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+scikit-learn>=1.3.0
+
+# Visualization
+matplotlib>=3.7.0
+
+# Progress bars
+tqdm>=4.65.0
+
+# Fast similarity search (choose one)
+faiss-cpu>=1.7.4  # For CPU-only systems
+# faiss-gpu>=1.7.4  # For GPU acceleration (uncomment and comment faiss-cpu)
+
+# Optional: For better image handling
+opencv-python>=4.8.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Development
+black>=23.0.0
+flake8>=6.0.0
