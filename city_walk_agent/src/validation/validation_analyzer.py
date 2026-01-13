@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+import seaborn as sns
+from matplotlib import pyplot as plt
 from scipy.stats import pearsonr, spearmanr
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
@@ -75,8 +77,7 @@ class ValidationAnalyzer:
         for dim in self.DIMENSIONS:
             normalizer = ScoreNormalizer()
             normalizer.fit(
-                self.vlm_scores[dim].values,
-                self.knn_predictions[dim].values
+                self.vlm_scores[dim].values, self.knn_predictions[dim].values
             )
             self.normalizers[dim] = normalizer
 
@@ -98,8 +99,7 @@ class ValidationAnalyzer:
         """
         if dimension not in self.DIMENSIONS:
             raise ValueError(
-                f"Unknown dimension: {dimension}. "
-                f"Must be one of {self.DIMENSIONS}"
+                f"Unknown dimension: {dimension}. " f"Must be one of {self.DIMENSIONS}"
             )
 
         vlm = self.vlm_scores[dimension].values
@@ -138,7 +138,14 @@ class ValidationAnalyzer:
         pearson_r, pearson_p = pearsonr(metric_pred, metric_true)
         mae = mean_absolute_error(metric_true, metric_pred)
         rmse = np.sqrt(mean_squared_error(metric_true, metric_pred))
-        r2 = r2_score(metric_true, metric_pred)
+
+        # Regression-based R² (fits best linear mapping instead of identity line)
+        if np.std(metric_pred) == 0:
+            r2 = 0.0
+        else:
+            slope, intercept = np.polyfit(metric_pred, metric_true, 1)
+            reg_pred = slope * metric_pred + intercept
+            r2 = r2_score(metric_true, reg_pred)
 
         # Get distribution statistics
         dist_stats = normalizer.get_distribution_stats()
@@ -234,12 +241,16 @@ class ValidationAnalyzer:
         report.append("─" * 70)
         report.append("                PRIMARY METRIC: Spearman Correlation")
         report.append("─" * 70)
-        report.append(f"{'Dimension':<15} │ {'ρ (rho)':<10} │ {'p-value':<10} │ {'Significant':<12}")
+        report.append(
+            f"{'Dimension':<15} │ {'ρ (rho)':<10} │ {'p-value':<10} │ {'Significant':<12}"
+        )
         report.append("─" * 15 + "┼" + "─" * 12 + "┼" + "─" * 12 + "┼" + "─" * 12)
 
         for _, row in results_df.iterrows():
             sig = "✓" if row["spearman_significant"] else "✗"
-            p_str = "<0.001" if row["spearman_p"] < 0.001 else f"{row['spearman_p']:.3f}"
+            p_str = (
+                "<0.001" if row["spearman_p"] < 0.001 else f"{row['spearman_p']:.3f}"
+            )
             report.append(
                 f"{row['dimension'].capitalize():<15} │ "
                 f"{row['spearman_rho']:>10.3f} │ "
@@ -264,7 +275,9 @@ class ValidationAnalyzer:
         report.append(
             f"{'Dimension':<15} │ {'Pearson r':<10} │ {'MAE':<8} │ {'RMSE':<8} │ {'R²':<8}"
         )
-        report.append("─" * 15 + "┼" + "─" * 12 + "┼" + "─" * 10 + "┼" + "─" * 10 + "┼" + "─" * 8)
+        report.append(
+            "─" * 15 + "┼" + "─" * 12 + "┼" + "─" * 10 + "┼" + "─" * 10 + "┼" + "─" * 8
+        )
 
         for _, row in results_df.iterrows():
             report.append(
@@ -329,9 +342,7 @@ class ValidationAnalyzer:
 
         # Overall significance
         if n_significant == len(results_df):
-            report.append(
-                "✓ All dimensions show statistically significant correlation"
-            )
+            report.append("✓ All dimensions show statistically significant correlation")
             report.append("  with human perception (p < 0.05)")
         elif n_significant > 0:
             report.append(
@@ -339,9 +350,7 @@ class ValidationAnalyzer:
                 "statistically significant correlation"
             )
         else:
-            report.append(
-                "✗ No dimensions show statistically significant correlation"
-            )
+            report.append("✗ No dimensions show statistically significant correlation")
 
         report.append("")
 
@@ -380,7 +389,9 @@ class ValidationAnalyzer:
             f"(ρ={worst_dim['spearman_rho']:.3f})"
         )
         if worst_dim["dimension"] == "lively":
-            report.append("  - Temporal/social activity harder to infer from static images")
+            report.append(
+                "  - Temporal/social activity harder to infer from static images"
+            )
 
         report.append("")
 
@@ -441,7 +452,9 @@ class ValidationAnalyzer:
         fig, ax = plt.subplots(figsize=(8, 8))
 
         # Scatter plot
-        ax.scatter(x_scores, y_scores, alpha=0.6, s=50, edgecolors="black", linewidths=0.5)
+        ax.scatter(
+            x_scores, y_scores, alpha=0.6, s=50, edgecolors="black", linewidths=0.5
+        )
 
         # Add regression line
         z = np.polyfit(x_scores, y_scores, 1)
@@ -523,9 +536,7 @@ class ValidationAnalyzer:
         axes[0, 0].hist(
             vlm_original, bins=20, alpha=0.7, label="VLM (original)", color="blue"
         )
-        axes[0, 0].hist(
-            knn_scores, bins=20, alpha=0.7, label="K-NN", color="orange"
-        )
+        axes[0, 0].hist(knn_scores, bins=20, alpha=0.7, label="K-NN", color="orange")
         axes[0, 0].set_title("Before Quantile Matching")
         axes[0, 0].legend()
         axes[0, 0].set_xlabel("Score")
@@ -535,9 +546,7 @@ class ValidationAnalyzer:
         axes[0, 1].hist(
             vlm_matched, bins=20, alpha=0.7, label="VLM (matched)", color="green"
         )
-        axes[0, 1].hist(
-            knn_scores, bins=20, alpha=0.7, label="K-NN", color="orange"
-        )
+        axes[0, 1].hist(knn_scores, bins=20, alpha=0.7, label="K-NN", color="orange")
         axes[0, 1].set_title("After Quantile Matching")
         axes[0, 1].legend()
         axes[0, 1].set_xlabel("Score")
@@ -616,7 +625,9 @@ class ValidationAnalyzer:
                 y_scores = vlm
 
             # Scatter plot
-            ax.scatter(x_scores, y_scores, alpha=0.6, s=30, edgecolors="black", linewidths=0.5)
+            ax.scatter(
+                x_scores, y_scores, alpha=0.6, s=30, edgecolors="black", linewidths=0.5
+            )
 
             # Regression line
             z = np.polyfit(x_scores, y_scores, 1)
@@ -664,6 +675,118 @@ class ValidationAnalyzer:
         plt.close()
 
         print(f"✓ Saved combined plot: {combined_path}")
+
+    def plot_distribution_reproduction(self, output_path: Path):
+        """첨부된 첫 번째 이미지(Z-scored Distribution) 스타일 재현"""
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+
+        sns.set_theme(style="whitegrid")
+        fig, axes = plt.subplots(2, 2, figsize=(16, 13))
+
+        for i, dim in enumerate(self.DIMENSIONS):
+            ax = axes.flatten()[i]
+
+            # 데이터 추출 및 Z-score 계산
+            vlm_raw = self.vlm_scores[dim].values
+            knn_raw = self.knn_predictions[dim].values
+
+            vlm_z = (vlm_raw - np.mean(vlm_raw)) / (np.std(vlm_raw) + 1e-8)
+            knn_z = (knn_raw - np.mean(knn_raw)) / (np.std(knn_raw) + 1e-8)
+
+            # KDE Plot (색상 및 투명도 재현)
+            sns.kdeplot(
+                vlm_z,
+                fill=True,
+                label="VLM (Z-score)",
+                ax=ax,
+                color="#4c72b0",
+                alpha=0.3,
+            )
+            sns.kdeplot(
+                knn_z,
+                fill=True,
+                label="KNN (Z-score)",
+                ax=ax,
+                color="#dd8452",
+                alpha=0.3,
+            )
+
+            ax.set_title(f"Distribution: {dim.capitalize()} (Z-scored)", fontsize=14)
+            ax.set_xlabel("Z-score")
+            ax.set_ylabel("Density")
+            ax.legend()
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close()
+        print(f"✓ Saved reproduction distribution plot: {output_path}")
+
+    def plot_scatter_reproduction(self, output_path: Path):
+        """첨부된 두 번째 이미지(Regression & Identity Line) 스타일 재현"""
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        from scipy import stats
+
+        sns.set_theme(style="whitegrid")
+        fig, axes = plt.subplots(2, 2, figsize=(16, 14))
+
+        for i, dim in enumerate(self.DIMENSIONS):
+            ax = axes.flatten()[i]
+
+            vlm = self.vlm_scores[dim].values
+            knn = self.knn_predictions[dim].values
+
+            # 통계 지표 계산
+            result = self.analyze_dimension(dim)
+            rho = result["spearman_rho"]
+            r2 = result["r2"]
+
+            # Scatter Plot (색상: 연한 파랑)
+            sns.scatterplot(
+                x=vlm, y=knn, alpha=0.5, ax=ax, color="#7aa0ff", edgecolor="w", s=40
+            )
+
+            # Identity Line (y=x, 회색 실선)
+            ax.plot(
+                [0, 11],
+                [0, 11],
+                color="gray",
+                linestyle="-",
+                alpha=0.4,
+                label="Identity Line (y=x)",
+            )
+
+            # Regression Line (빨간색 점선)
+            slope, intercept, _, _, _ = stats.linregress(vlm, knn)
+            x_range = np.array([0, 11])
+            ax.plot(
+                x_range,
+                slope * x_range + intercept,
+                color="red",
+                linestyle="--",
+                linewidth=2.5,
+                label="Regression Line",
+            )
+
+            # 제목 및 라벨 설정 (Latex 수식 포함)
+            ax.set_title(
+                f"{dim.capitalize()}\n(Spearman $\\rho = {rho:.3f}$, $R^2 = {r2:.2f}$)",
+                fontsize=16,
+                fontweight="bold",
+            )
+            ax.set_xlabel("VLM Score (1-10)", fontsize=12)
+            ax.set_ylabel("K-NN Predicted Score (1-10)", fontsize=12)
+
+            # 축 범위 및 스타일 조정
+            ax.set_xlim(0.5, 10.5)
+            ax.set_ylim(0.5, 10.5)
+            ax.legend(loc="upper left")
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close()
+        print(f"✓ Saved reproduction scatter plot: {output_path}")
 
     def export_results(self, output_dir: Path, k_value: Optional[int] = None):
         """Export validation results to files.

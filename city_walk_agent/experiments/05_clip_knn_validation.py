@@ -29,6 +29,7 @@ from typing import Dict, List
 import numpy as np
 import pandas as pd
 
+
 # Add project root and src to path so both `src.*` and top-level imports work
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = REPO_ROOT / "src"
@@ -689,6 +690,8 @@ def main():
         plots_dir.mkdir(exist_ok=True)
 
         analyzer.plot_all_dimensions(plots_dir)
+        analyzer.plot_distribution_reproduction(plots_dir / "distribution_repro.png")
+        analyzer.plot_scatter_reproduction(plots_dir / "scatter_repro.png")
 
         dimensions = ["safe", "lively", "beautiful", "wealthy"]
 

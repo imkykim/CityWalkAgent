@@ -1,52 +1,71 @@
 """
 Visualization module for StreetAgent evaluation metrics.
-Generates multi-dimensional route analysis visualizations with trend lines.
+Refactored for clarity and maintainability.
 """
-
-import sys
-from pathlib import Path
-
-# When run as a script from src/utils, the script directory is sys.path[0].
-# That would shadow stdlib's logging with our src.utils.logging when matplotlib imports logging.
-if __name__ == "__main__":  # only adjust when invoked as a script
-    current_dir = Path(__file__).resolve().parent
-    if sys.path and sys.path[0] == str(current_dir):
-        sys.path.pop(0)
-        # Optionally add project root for convenience
-        project_root = current_dir.parent.parent
-        sys.path.insert(0, str(project_root))
 
 import json
 import csv
-from typing import (
-    Any,
-    Dict,
-    Iterable,
-    List,
-    Mapping,
-    Optional,
-    Sequence,
-    Set,
-    Tuple,
-    Union,
-)
+import sys
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+
+# Fix sys.path for script execution
+if __name__ == "__main__":
+    current_dir = Path(__file__).resolve().parent
+    if sys.path and sys.path[0] == str(current_dir):
+        sys.path.pop(0)
+        sys.path.insert(0, str(current_dir.parent.parent))
 
 from src.config import DEFAULT_FRAMEWORK_ID
+
 try:
     import matplotlib
 
-    # Non-interactive backend for batch/CLI usage
     matplotlib.use("Agg")
-
     import matplotlib.pyplot as plt
 except ImportError as exc:
     raise SystemExit(
-        "matplotlib is required for visualization. Install with `pip install matplotlib`."
+        "matplotlib is required. Install with `pip install matplotlib`."
     ) from exc
 
 import numpy as np
 
-# Shared palette used by pandas-style rendering example; fallbacks use matplotlib cycles.
+
+# =============================================================================
+# Constants & Configuration
+# =============================================================================
+
+
+class PlotConfig:
+    """Centralized plot configuration."""
+
+    # Colors
+    OBJECTIVE_COLOR = "#94A3B8"
+    PERSONA_COLOR = "#EF4444"
+    AVERAGE_COLOR = "#333333"
+    MARKER_COLOR = "gray"
+
+    # Alpha values
+    LINE_ALPHA = 0.8
+    FILL_ALPHA = 0.15
+    MARKER_ALPHA = 0.35
+
+    # Sizes
+    FIGSIZE_STANDARD = (14, 6)
+    FIGSIZE_LARGE = (16, 12)
+    FIGSIZE_RADAR = (8, 8)
+    DEFAULT_DPI = 100
+
+    # Axis
+    Y_LIMITS = (0, 10.5)
+    RADAR_YTICKS = [2, 4, 6, 8, 10]
+    MAX_XTICKS = 20
+
+    # Line styles
+    MARKER_SIZE = 3.5
+    LINE_WIDTH = 1.2
+
+
 DEFAULT_SCORE_COLORS = {
     "functional_quality": "#D97706",
     "sensory_complexity": "#60A5FA",
@@ -58,127 +77,266 @@ DEFAULT_SCORE_COLORS = {
     "interest": "#F18F01",
     "aesthetics": "#C73E1D",
 }
-DEFAULT_SCORE_ORDER: Tuple[str, ...] = tuple(DEFAULT_SCORE_COLORS.keys())
+
+
+# =============================================================================
+# Utility Functions
+# =============================================================================
+
+
+def _get(obj: Any, key: str, default: Any = None) -> Any:
+    """Universal getter for dict or object attributes."""
+    if isinstance(obj, Mapping):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    """Safely convert value to float."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _setup_xaxis(
+    ax: plt.Axes,
+    waypoint_ids: List[str],
+    max_ticks: int = PlotConfig.MAX_XTICKS,
+) -> None:
+    """Configure x-axis with appropriate tick spacing."""
+    n_points = len(waypoint_ids)
+    x = np.arange(n_points)
+    tick_step = max(1, n_points // max_ticks)
+    ax.set_xticks(x[::tick_step])
+    ax.set_xticklabels(waypoint_ids[::tick_step], rotation=45, ha="right", fontsize=8)
+    ax.set_xlabel("Waypoint ID", fontsize=11, fontweight="bold")
+
+
+def _draw_markers(
+    ax: plt.Axes,
+    indices: Sequence[int],
+    style: str = "solid",
+    color: str = PlotConfig.MARKER_COLOR,
+) -> None:
+    """Draw vertical marker lines at specified indices."""
+    linestyle = "-" if style == "solid" else "--"
+    alpha = PlotConfig.MARKER_ALPHA if style == "solid" else 0.3
+    for idx in indices:
+        ax.axvline(
+            x=idx, color=color, linestyle=linestyle, alpha=alpha, linewidth=1, zorder=0
+        )
+
+
+def _resolve_indices(
+    markers: Sequence[Any],
+    waypoint_ids: List[str],
+) -> List[int]:
+    """Convert waypoint IDs or indices to numeric indices."""
+    wp_to_idx = {str(wp): i for i, wp in enumerate(waypoint_ids)}
+    n_points = len(waypoint_ids)
+    indices = []
+
+    for marker in markers:
+        idx = wp_to_idx.get(str(marker))
+        if idx is not None:
+            indices.append(idx)
+        else:
+            try:
+                numeric = int(marker)
+                if 0 <= numeric < n_points:
+                    indices.append(numeric)
+            except (TypeError, ValueError):
+                continue
+
+    return sorted(set(indices))
+
+
+def _get_scores_from_result(
+    result: Mapping,
+    dim_keys: List[str],
+    mode: str = "persona",
+) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """
+    Extract objective and persona scores from a result record.
+
+    Args:
+        result: Single waypoint result
+        dim_keys: Dimension keys to extract
+        mode: "persona" or "system" for field name selection
+
+    Returns:
+        Tuple of (objective_scores, persona_scores) dicts
+    """
+    if mode == "system":
+        obj_source = _get(result, "system1_scores") or {}
+        per_source = (
+            _get(result, "system2_scores") or _get(result, "scores") or obj_source
+        )
+    else:
+        obj_source = (
+            _get(result, "objective_scores")
+            or _get(result, "neutral_scores")
+            or _get(result, "system1_scores")
+            or {}
+        )
+        per_source = (
+            _get(result, "persona_scores") or _get(result, "scores") or obj_source
+        )
+
+    obj_scores = {dim: _coerce_float(obj_source.get(dim, 0)) for dim in dim_keys}
+    per_scores = {dim: _coerce_float(per_source.get(dim, 0)) for dim in dim_keys}
+
+    return obj_scores, per_scores
+
+
+def _extract_all_scores(
+    waypoint_results: Sequence[Mapping],
+    dim_keys: List[str],
+    mode: str = "persona",
+) -> Tuple[Dict[str, List[float]], Dict[str, List[float]], List[str]]:
+    """
+    Extract scores from all waypoint results.
+
+    Returns:
+        Tuple of (objective_scores, persona_scores, waypoint_ids)
+    """
+    objective: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+    persona: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+    waypoint_ids: List[str] = []
+
+    for idx, result in enumerate(waypoint_results):
+        waypoint_ids.append(str(_get(result, "waypoint_id", idx)))
+        obj_scores, per_scores = _get_scores_from_result(result, dim_keys, mode)
+
+        for dim in dim_keys:
+            objective[dim].append(obj_scores[dim])
+            persona[dim].append(per_scores[dim])
+
+    return objective, persona, waypoint_ids
+
+
+def _apply_plot_style() -> None:
+    """Apply default matplotlib style settings."""
+    plt.style.use("default")
+    plt.rcParams.update(
+        {
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+            "axes.grid": True,
+            "grid.alpha": 0.3,
+            "grid.linewidth": 0.5,
+            "grid.linestyle": ":",
+            "axes.edgecolor": "#cccccc",
+            "axes.linewidth": 0.8,
+        }
+    )
+
+
+# =============================================================================
+# Data Loading
+# =============================================================================
+
+
+def load_analyses(path: Path) -> List[Mapping]:
+    """Load analysis results from JSON, CSV, or JSONL file."""
+    suffix = path.suffix.lower()
+
+    if suffix == ".json":
+        data = json.loads(path.read_text())
+        if isinstance(data, list):
+            return data
+        raise ValueError("Expected JSON array")
+
+    elif suffix == ".jsonl":
+        analyses = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    analyses.append(json.loads(line))
+        return analyses
+
+    elif suffix == ".csv":
+        by_waypoint: Dict[str, Dict] = {}
+        with path.open(newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                wp = row.get("image_id") or row.get("waypoint_id")
+                dim = row.get("dimension_id") or row.get("dimension_name")
+                score = row.get("score")
+                if not all([wp, dim, score]):
+                    continue
+                record = by_waypoint.setdefault(wp, {"waypoint_id": wp, "scores": {}})
+                try:
+                    record["scores"][dim] = float(score)
+                except ValueError:
+                    continue
+
+        return sorted(by_waypoint.values(), key=lambda x: x["waypoint_id"])
+
+    raise ValueError(f"Unsupported file format: {suffix}")
+
+
+# =============================================================================
+# RouteVisualizer Class
+# =============================================================================
 
 
 class RouteVisualizer:
-    """Visualizes evaluation scores along walking routes with trend analysis."""
-
-    # Legacy hardcoded dimensions (kept for backward compatibility)
-    DIMENSIONS = {
-        "safety": {"color": "#2E86AB", "label": "Safety"},
-        "comfort": {"color": "#A23B72", "label": "Comfort"},
-        "interest": {"color": "#F18F01", "label": "Interest"},
-        "aesthetics": {"color": "#C73E1D", "label": "Aesthetics"},
-    }
+    """Visualizes evaluation scores along walking routes."""
 
     def __init__(
         self,
-        figsize: Tuple[int, int] = (14, 6),
-        dpi: int = 100,
+        figsize: Tuple[int, int] = PlotConfig.FIGSIZE_STANDARD,
+        dpi: int = PlotConfig.DEFAULT_DPI,
         framework_id: str = DEFAULT_FRAMEWORK_ID,
     ):
-        """
-        Initialize visualizer with framework-agnostic dimension support.
-
-        Args:
-            figsize: Figure size in inches (width, height)
-            dpi: Resolution for saved figures
-            framework_id: Evaluation framework ID to load dimensions from (default: DEFAULT_FRAMEWORK_ID)
-        """
         self.figsize = figsize
         self.dpi = dpi
         self.framework_id = framework_id
 
-        # Use clean white background style
-        plt.style.use("default")
-        plt.rcParams.update(
-            {
-                "figure.facecolor": "white",
-                "axes.facecolor": "white",
-                "axes.grid": True,
-                "grid.alpha": 0.3,
-                "grid.linewidth": 0.5,
-                "grid.linestyle": ":",
-                "axes.edgecolor": "#cccccc",
-                "axes.linewidth": 0.8,
-            }
-        )
+        _apply_plot_style()
 
-        # Load framework and build dimension configuration
+        # Load framework dimensions
         from src.config import load_framework
 
         self.framework = load_framework(framework_id)
-        self.dimension_config = self._build_dimension_config_from_framework()
+        self.dim_config = self._build_dim_config_from_framework()
 
-    def _build_dimension_config_from_framework(self) -> Dict[str, Dict]:
-        """Build dimension configuration from loaded framework.
-
-        Returns:
-            Dict mapping dimension IDs to config dicts with 'color' and 'label' keys
-        """
+    def _build_dim_config_from_framework(self) -> Dict[str, Dict]:
+        """Build dimension config from framework."""
         config = {}
         palette = plt.cm.tab10.colors + plt.cm.Set3.colors
 
-        for idx, dim in enumerate(self.framework["dimensions"]):
+        for idx, dim in enumerate(self.framework.get("dimensions", [])):
             dim_id = dim["id"]
-
-            # Try to get color from DEFAULT_SCORE_COLORS, otherwise use palette
-            color = DEFAULT_SCORE_COLORS.get(dim_id, palette[idx % len(palette)])
-
             config[dim_id] = {
-                "color": color,
-                "label": dim["name_en"],  # Use English name from framework
+                "color": DEFAULT_SCORE_COLORS.get(dim_id, palette[idx % len(palette)]),
+                "label": dim["name_en"],
             }
-
         return config
 
-    def _build_dim_config(
-        self, dim_keys: Sequence[str], custom: Optional[Dict[str, Dict]] = None
-    ) -> Dict[str, Dict]:
-        """Merge default config with dynamic dimensions.
-
-        Args:
-            dim_keys: Dimension IDs to include in config
-            custom: Optional custom dimension config to override defaults
-
-        Returns:
-            Dict mapping dimension IDs to config dicts with 'color' and 'label' keys
-        """
-        # Use custom config if provided, otherwise use instance dimension config
-        base_config = custom or self.dimension_config
-
-        config = {k: v.copy() for k, v in base_config.items() if k in dim_keys}
-
-        # Fill in missing dimensions with auto-generated colors
+    def _get_dim_config(self, dim_keys: Sequence[str]) -> Dict[str, Dict]:
+        """Get dimension configuration with fallbacks."""
         palette = plt.cm.tab10.colors + plt.cm.Set3.colors
+        config = {}
+
         for idx, dim in enumerate(dim_keys):
-            if dim not in config:
-                color = palette[idx % len(palette)]
-                config[dim] = {"color": color, "label": dim}
+            if dim in self.dim_config:
+                config[dim] = self.dim_config[dim].copy()
             else:
-                # Ensure label and color exist
-                config[dim].setdefault("color", palette[idx % len(palette)])
-                config[dim].setdefault("label", dim)
+                config[dim] = {
+                    "color": DEFAULT_SCORE_COLORS.get(dim, palette[idx % len(palette)]),
+                    "label": dim,
+                }
         return config
 
-    def _infer_dimension_keys(
+    def _infer_dimensions(
         self,
         dimensions: Optional[Sequence[str]] = None,
         scores: Optional[Mapping[str, Sequence[float]]] = None,
-        waypoint_results: Optional[Sequence[Mapping[str, Any]]] = None,
+        waypoint_results: Optional[Sequence[Mapping]] = None,
     ) -> List[str]:
-        """
-        Resolve which dimensions to visualize, preferring explicit args, then data, then framework.
-
-        Args:
-            dimensions: Explicit dimension ids to plot
-            scores: Optional score mapping to inspect
-            waypoint_results: Optional waypoint result records to inspect
-
-        Returns:
-            Ordered list of dimension ids to plot
-        """
+        """Infer dimension keys from available data."""
         if dimensions:
             return list(dimensions)
 
@@ -187,2319 +345,1197 @@ class RouteVisualizer:
 
         if waypoint_results:
             for record in waypoint_results:
-                if isinstance(record, Mapping):
-                    for key in ("system2_scores", "system1_scores", "scores"):
-                        maybe_scores = record.get(key)
-                        if maybe_scores:
-                            return list(maybe_scores.keys())
-                else:
-                    for key in ("system2_scores", "system1_scores", "scores"):
-                        maybe_scores = getattr(record, key, None)
-                        if maybe_scores:
-                            return list(maybe_scores.keys())
+                for key in (
+                    "system2_scores",
+                    "system1_scores",
+                    "scores",
+                    "objective_scores",
+                    "persona_scores",
+                ):
+                    source = _get(record, key)
+                    if source:
+                        return list(source.keys())
 
-        if self.dimension_config:
-            return list(self.dimension_config.keys())
+        return list(self.dim_config.keys())
 
-        return list(DEFAULT_SCORE_ORDER)
+    # -------------------------------------------------------------------------
+    # Core Plot Methods
+    # -------------------------------------------------------------------------
 
-    def plot_scores_with_trends(
+    def plot_scores(
         self,
         scores: Dict[str, List[float]],
         waypoint_ids: Optional[List[str]] = None,
-        title: str = "Scores by Dimension with Overall Average",
-        show_legend: bool = True,
+        title: str = "Scores by Dimension",
         save_path: Optional[Path] = None,
         dimensions: Optional[Sequence[str]] = None,
-        visual_change_waypoints: Optional[Sequence[Union[str, int]]] = None,
-        system2_triggered_waypoints: Optional[Sequence[Union[str, int]]] = None,
+        markers: Optional[Sequence[Any]] = None,
+        marker_style: str = "solid",
+        show_average: bool = True,
     ) -> plt.Figure:
         """
-        Plot dimension scores with overall average line.
+        Plot dimension scores with optional markers and average line.
 
         Args:
-            scores: Dictionary mapping dimension names to score lists
-            waypoint_ids: Optional list of waypoint identifiers
+            scores: Dict mapping dimension names to score lists
+            waypoint_ids: Optional waypoint identifiers
             title: Plot title
-            show_legend: Whether to show legend
-            save_path: Optional path to save figure
-            dimensions: Optional ordered list of dimension ids to plot
-            visual_change_waypoints: Optional ids/indices for waypoints with visual changes
-            system2_triggered_waypoints: Optional ids/indices for waypoints where System 2 was triggered
-
-        Returns:
-            Matplotlib figure object
+            save_path: Path to save figure
+            dimensions: Dimension keys to plot
+            markers: Waypoint IDs/indices to highlight with vertical lines
+            marker_style: "solid" or "dashed" for marker lines
+            show_average: Whether to show overall average line
         """
         dim_keys = list(dimensions) if dimensions else list(scores.keys())
-        dim_config = self._build_dim_config(dim_keys)
+        dim_config = self._get_dim_config(dim_keys)
 
-        fig, ax = plt.subplots(figsize=self.figsize, dpi=self.dpi)
-
-        # Generate waypoint indices
         n_points = len(next(iter(scores.values())))
         if waypoint_ids is None:
             waypoint_ids = [str(i) for i in range(n_points)]
         x = np.arange(n_points)
 
+        fig, ax = plt.subplots(figsize=self.figsize, dpi=self.dpi)
+        all_scores = []
+
         # Plot each dimension
-        all_scores_array = []
-        for dim_key in dim_keys:
-            score_list = scores.get(dim_key)
-            if score_list is None:
+        for dim in dim_keys:
+            if dim not in scores:
                 continue
-
-            config = dim_config[dim_key]
-
-            # Plot raw scores with points and lines
+            cfg = dim_config[dim]
             ax.plot(
                 x,
-                score_list,
+                scores[dim],
                 marker="o",
-                markersize=3.5,
-                linewidth=1.2,
-                color=config["color"],
-                alpha=0.8,
-                label=config["label"],
+                markersize=PlotConfig.MARKER_SIZE,
+                linewidth=PlotConfig.LINE_WIDTH,
+                color=cfg["color"],
+                alpha=PlotConfig.LINE_ALPHA,
+                label=cfg["label"],
             )
+            all_scores.append(scores[dim])
 
-            # Collect scores for overall average
-            all_scores_array.append(score_list)
-
-        # Calculate and plot overall average across all dimensions
-        if all_scores_array:
-            overall_avg = np.mean(all_scores_array, axis=0)
+        # Overall average
+        if show_average and all_scores:
+            avg = np.mean(all_scores, axis=0)
             ax.plot(
                 x,
-                overall_avg,
+                avg,
                 linestyle="--",
                 linewidth=1.8,
-                color="#333333",
+                color=PlotConfig.AVERAGE_COLOR,
                 alpha=0.9,
                 label="Overall Average",
                 zorder=10,
             )
 
+        # Markers
+        if markers:
+            indices = _resolve_indices(markers, waypoint_ids)
+            _draw_markers(ax, indices, style=marker_style)
+
         # Formatting
-        ax.set_xlabel("Waypoint ID", fontsize=11, fontweight="bold")
         ax.set_ylabel("Score", fontsize=11, fontweight="bold")
         ax.set_title(title, fontsize=13, fontweight="bold", pad=15)
-        ax.set_ylim(0, 10.5)
-
-        # Set x-ticks with rotation for readability
-        tick_step = max(1, n_points // 20)  # Show ~20 labels max
-        ax.set_xticks(x[::tick_step])
-        ax.set_xticklabels(
-            waypoint_ids[::tick_step], rotation=45, ha="right", fontsize=8
-        )
-
-        # Highlight waypoints that triggered visual change detections
-        if visual_change_waypoints:
-            wp_to_idx = {str(wp_id): idx for idx, wp_id in enumerate(waypoint_ids)}
-            change_indices: List[int] = []
-            for wp in visual_change_waypoints:
-                idx = wp_to_idx.get(str(wp))
-                if idx is None:
-                    try:
-                        numeric_idx = int(wp)
-                    except (TypeError, ValueError):
-                        continue
-                    if 0 <= numeric_idx < n_points:
-                        change_indices.append(numeric_idx)
-                else:
-                    change_indices.append(idx)
-
-            for idx in sorted(set(change_indices)):
-                ax.axvline(
-                    x=idx,
-                    color="gray",
-                    linestyle="-",
-                    alpha=0.35,
-                    linewidth=1,
-                    zorder=0,
-                )
-
-        # Highlight waypoints where System 2 was triggered
-        if system2_triggered_waypoints:
-            wp_to_idx = {str(wp_id): idx for idx, wp_id in enumerate(waypoint_ids)}
-            trigger_indices: List[int] = []
-            for wp in system2_triggered_waypoints:
-                idx = wp_to_idx.get(str(wp))
-                if idx is None:
-                    try:
-                        numeric_idx = int(wp)
-                    except (TypeError, ValueError):
-                        continue
-                    if 0 <= numeric_idx < n_points:
-                        trigger_indices.append(numeric_idx)
-                else:
-                    trigger_indices.append(idx)
-
-            for idx in sorted(set(trigger_indices)):
-                ax.axvline(
-                    x=idx,
-                    color="gray",
-                    linestyle="--",
-                    alpha=0.3,
-                    linewidth=0.8,
-                    zorder=0,
-                )
-
-        if show_legend:
-            ax.legend(loc="best", framealpha=0.9, fontsize=10)
+        ax.set_ylim(*PlotConfig.Y_LIMITS)
+        ax.legend(loc="best", framealpha=0.9, fontsize=10)
+        _setup_xaxis(ax, waypoint_ids)
 
         plt.tight_layout()
-
         if save_path:
             fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
-            print(f"Saved visualization to {save_path}")
-
-        return fig
-
-    def plot_dimension_comparison(
-        self,
-        scores: Dict[str, List[float]],
-        waypoint_ids: Optional[List[str]] = None,
-        save_path: Optional[Path] = None,
-        dimensions: Optional[Sequence[str]] = None,
-    ) -> plt.Figure:
-        """
-        Create a 2x2 subplot comparing all dimensions individually.
-
-        Args:
-            scores: Dictionary mapping dimension names to score lists
-            waypoint_ids: Optional list of waypoint identifiers
-            save_path: Optional path to save figure
-            dimensions: Optional ordered list of dimension ids to plot
-
-        Returns:
-            Matplotlib figure object
-        """
-        dim_keys = list(dimensions) if dimensions else list(scores.keys())
-        dim_config = self._build_dim_config(dim_keys)
-
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10), dpi=self.dpi)
-        axes = axes.flatten()
-
-        n_points = len(next(iter(scores.values())))
-        if waypoint_ids is None:
-            waypoint_ids = [str(i) for i in range(n_points)]
-        x = np.arange(n_points)
-
-        for idx, dim_key in enumerate(dim_keys):
-            if idx >= 4:
-                continue
-
-            score_list = scores.get(dim_key)
-            if score_list is None:
-                continue
-
-            ax = axes[idx]
-            config = dim_config[dim_key]
-
-            # Plot scores
-            ax.plot(
-                x,
-                score_list,
-                marker="o",
-                markersize=5,
-                linewidth=2,
-                color=config["color"],
-                alpha=0.7,
-            )
-
-            # Add mean line
-            mean_score = np.mean(score_list)
-            ax.axhline(
-                mean_score,
-                color="red",
-                linestyle="--",
-                linewidth=1.5,
-                alpha=0.6,
-                label=f"Mean: {mean_score:.2f}",
-            )
-
-            # Formatting
-            ax.set_title(config["label"], fontsize=12, fontweight="bold")
-            ax.set_xlabel("Waypoint ID", fontsize=10)
-            ax.set_ylabel("Score", fontsize=10)
-            ax.set_ylim(0, 10.5)
-            ax.legend(loc="best", fontsize=9)
-
-            # Simplified x-ticks
-            tick_step = max(1, n_points // 10)
-            ax.set_xticks(x[::tick_step])
-            ax.set_xticklabels(
-                waypoint_ids[::tick_step], rotation=45, ha="right", fontsize=8
-            )
-
-        plt.suptitle(
-            "Dimension-wise Score Analysis", fontsize=14, fontweight="bold", y=0.995
-        )
-        plt.tight_layout()
-
-        if save_path:
-            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
-            print(f"Saved comparison to {save_path}")
-
         return fig
 
     def plot_heatmap(
         self,
-        scores: Dict[str, List[float]],
-        waypoint_ids: Optional[List[str]] = None,
+        data: np.ndarray,
+        row_labels: List[str],
+        col_labels: List[str],
+        title: str = "Score Heatmap",
         save_path: Optional[Path] = None,
-        dimensions: Optional[Sequence[str]] = None,
+        cmap: str = "RdYlGn",
+        vmin: float = 0,
+        vmax: float = 10,
+        vcenter: float = 6.0,
+        colorbar_label: str = "Score",
     ) -> plt.Figure:
         """
-        Create a heatmap visualization of scores across dimensions and waypoints.
+        Create a heatmap visualization with diverging colormap.
 
         Args:
-            scores: Dictionary mapping dimension names to score lists
-            waypoint_ids: Optional list of waypoint identifiers
-            save_path: Optional path to save figure
-            dimensions: Optional ordered list of dimension ids to plot
-
-        Returns:
-            Matplotlib figure object
+            data: 2D numpy array of values
+            row_labels: Labels for y-axis
+            col_labels: Labels for x-axis (waypoints)
+            title: Plot title
+            save_path: Path to save figure
+            cmap: Colormap name
+            vmin, vmax: Color scale limits
+            vcenter: Center value for diverging colormap (default 6.0 for yellow at 5-7 range)
+            colorbar_label: Label for colorbar
         """
-        dim_keys = list(dimensions) if dimensions else list(scores.keys())
-        dim_config = self._build_dim_config(dim_keys)
+        from matplotlib.colors import TwoSlopeNorm
 
-        # Prepare data matrix
-        dimensions = list(dim_config.keys())
-        data = np.array([scores[dim] for dim in dimensions if dim in scores])
-
-        n_points = data.shape[1]
-        if waypoint_ids is None:
-            waypoint_ids = [str(i) for i in range(n_points)]
-
-        # Create heatmap
         fig, ax = plt.subplots(figsize=(14, 4), dpi=self.dpi)
-        im = ax.imshow(data, aspect="auto", cmap="RdYlGn", vmin=0, vmax=10)
 
-        # Set ticks and labels
-        ax.set_yticks(np.arange(len(dimensions)))
-        ax.set_yticklabels([dim_config[d]["label"] for d in dimensions])
+        # Use diverging normalization to center yellow around vcenter
+        norm = TwoSlopeNorm(vmin=vmin, vcenter=vcenter, vmax=vmax)
+        im = ax.imshow(data, aspect="auto", cmap=cmap, norm=norm)
 
-        tick_step = max(1, n_points // 20)
-        ax.set_xticks(np.arange(0, n_points, tick_step))
-        ax.set_xticklabels(
-            waypoint_ids[::tick_step], rotation=45, ha="right", fontsize=8
-        )
+        ax.set_yticks(np.arange(len(row_labels)))
+        ax.set_yticklabels(row_labels)
 
-        # Add colorbar
+        n_cols = len(col_labels)
+        tick_step = max(1, n_cols // PlotConfig.MAX_XTICKS)
+        ax.set_xticks(np.arange(0, n_cols, tick_step))
+        ax.set_xticklabels(col_labels[::tick_step], rotation=45, ha="right", fontsize=8)
+
         cbar = plt.colorbar(im, ax=ax)
-        cbar.set_label("Score", rotation=270, labelpad=20, fontsize=10)
+        cbar.set_label(colorbar_label, rotation=270, labelpad=20)
 
         ax.set_xlabel("Waypoint ID", fontsize=11, fontweight="bold")
-        ax.set_title(
-            "Score Heatmap by Dimension", fontsize=13, fontweight="bold", pad=15
+        ax.set_title(title, fontsize=13, fontweight="bold", pad=15)
+
+        plt.tight_layout()
+        if save_path:
+            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
+        return fig
+
+    def plot_radar(
+        self,
+        scores: Dict[str, float],
+        title: str = "Radar Chart",
+        save_path: Optional[Path] = None,
+        color: str = "#2E86AB",
+        figsize: Tuple[int, int] = PlotConfig.FIGSIZE_RADAR,
+    ) -> plt.Figure:
+        """
+        Create a radar/spider chart.
+
+        Args:
+            scores: Dict mapping dimension names to single score values
+            title: Plot title
+            save_path: Path to save figure
+            color: Fill color
+            figsize: Figure size
+        """
+        labels = list(scores.keys())
+        values = list(scores.values())
+        num_vars = len(labels)
+
+        angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+        values = values + values[:1]
+        angles = angles + angles[:1]
+
+        fig, ax = plt.subplots(
+            figsize=figsize, subplot_kw=dict(projection="polar"), dpi=self.dpi
         )
 
+        # Plot with enhanced styling
+        ax.plot(angles, values, "o-", linewidth=3, color=color, markersize=8)
+        ax.fill(angles, values, alpha=0.3, color=color)
+
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(labels, fontsize=20, fontweight="bold")
+        ax.set_ylim(0, 10)
+        ax.set_yticks(PlotConfig.RADAR_YTICKS)
+        ax.set_yticklabels([])  # Hide radial tick labels
+        ax.grid(True, linestyle="-", linewidth=1.0, alpha=0.35, color="#999999")
+        ax.set_title(title, fontsize=16, fontweight="bold", pad=25)
+
+        plt.tight_layout()
+        if save_path:
+            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
+        return fig
+
+    def plot_radar_comparison(
+        self,
+        objective_scores: Dict[str, float],
+        persona_scores: Dict[str, float],
+        title: str = "Radar Chart Comparison",
+        save_path: Optional[Path] = None,
+        figsize: Tuple[int, int] = PlotConfig.FIGSIZE_RADAR,
+        mode: str = "persona",
+    ) -> plt.Figure:
+        """
+        Create a radar/spider chart comparing objective vs persona scores.
+
+        Args:
+            objective_scores: Dict mapping dimension names to objective score values
+            persona_scores: Dict mapping dimension names to persona score values
+            title: Plot title
+            save_path: Path to save figure
+            figsize: Figure size
+            mode: "persona" or "system" for labels
+        """
+        labels = list(objective_scores.keys())
+        obj_values = list(objective_scores.values())
+        per_values = list(persona_scores.values())
+        num_vars = len(labels)
+
+        angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+        obj_values = obj_values + obj_values[:1]
+        per_values = per_values + per_values[:1]
+        angles = angles + angles[:1]
+
+        label_obj = "System 1" if mode == "system" else "Objective"
+        label_per = "System 2" if mode == "system" else "Persona"
+
+        # Use clearer, more contrasting colors
+        color_obj = "#3B82F6"  # Bright blue
+        color_per = "#F97316"  # Bright orange
+
+        fig, ax = plt.subplots(
+            figsize=figsize, subplot_kw=dict(projection="polar"), dpi=self.dpi
+        )
+
+        # Plot objective scores with lower opacity for base layer
+        ax.plot(
+            angles,
+            obj_values,
+            "s-",
+            # "o--",
+            linewidth=3,
+            color=color_obj,
+            label=label_obj,
+            markersize=8,
+            alpha=0.9,
+        )
+        ax.fill(angles, obj_values, alpha=0.2, color=color_obj)
+
+        # Plot persona scores on top with higher opacity and solid line
+        ax.plot(
+            angles,
+            per_values,
+            "s-",
+            linewidth=3,
+            color=color_per,
+            label=label_per,
+            markersize=7,
+            alpha=0.99,
+        )
+        ax.fill(angles, per_values, alpha=0.2, color=color_per)
+
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(labels, fontsize=20, fontweight="bold")
+        ax.set_ylim(0, 10)
+        ax.set_yticks(PlotConfig.RADAR_YTICKS)
+        ax.set_yticklabels([])  # Hide radial tick labels
+        ax.grid(True, linestyle="-", linewidth=1.0, alpha=0.35, color="#999999")
+        ax.legend(
+            loc="upper right",
+            bbox_to_anchor=(1.35, 1.12),
+            fontsize=14,
+            frameon=True,
+            framealpha=0.95,
+            edgecolor="#CCCCCC",
+        )
+        ax.set_title(title, fontsize=16, fontweight="bold", pad=25)
+
+        plt.tight_layout()
+        if save_path:
+            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
+        return fig
+
+    def plot_comparison(
+        self,
+        waypoint_results: Sequence[Mapping],
+        title: str = "Objective vs Persona-Aware",
+        save_path: Optional[Path] = None,
+        dimensions: Optional[Sequence[str]] = None,
+        mode: str = "persona",
+    ) -> plt.Figure:
+        """
+        Plot comparison between two evaluation modes (objective vs persona/system1 vs system2).
+
+        Args:
+            waypoint_results: List of waypoint result dicts
+            title: Plot title
+            save_path: Path to save figure
+            dimensions: Dimension keys to plot
+            mode: "persona" or "system" for field selection
+        """
+        dim_keys = self._infer_dimensions(dimensions, waypoint_results=waypoint_results)
+        dim_config = self._get_dim_config(dim_keys)
+
+        objective, persona, waypoint_ids = _extract_all_scores(
+            waypoint_results, dim_keys, mode
+        )
+
+        # Determine triggered waypoints
+        triggered = [
+            i
+            for i, r in enumerate(waypoint_results)
+            if _get(r, "system2_triggered", False)
+        ]
+
+        n_dims = min(len(dim_keys), 6)
+        rows = (n_dims + 1) // 2
+        fig, axes = plt.subplots(rows, 2, figsize=(16, 4 * rows), dpi=self.dpi)
+        axes = axes.flatten() if n_dims > 1 else [axes]
+        x = np.arange(len(waypoint_ids))
+
+        label_obj = "System 1" if mode == "system" else "Objective"
+        label_per = "System 2" if mode == "system" else "Persona-Aware"
+
+        for idx, dim in enumerate(dim_keys[:n_dims]):
+            ax = axes[idx]
+            cfg = dim_config[dim]
+            obj_data = np.array(objective[dim])
+            per_data = np.array(persona[dim])
+
+            ax.plot(
+                x,
+                obj_data,
+                marker="o",
+                markersize=4,
+                linewidth=1.5,
+                color=PlotConfig.OBJECTIVE_COLOR,
+                alpha=0.9,
+                label=label_obj,
+                linestyle="--" if mode == "system" else "-",
+            )
+            ax.plot(
+                x,
+                per_data,
+                marker="x" if mode == "persona" else "s",
+                markersize=5 if mode == "persona" else 4,
+                linewidth=1.5,
+                color=PlotConfig.PERSONA_COLOR,
+                alpha=0.9,
+                label=label_per,
+            )
+            ax.fill_between(
+                x,
+                obj_data,
+                per_data,
+                color=PlotConfig.PERSONA_COLOR,
+                alpha=PlotConfig.FILL_ALPHA,
+            )
+
+            # Draw triggered markers
+            if triggered:
+                _draw_markers(ax, triggered, style="dashed")
+
+            ax.set_title(f"{cfg['label']}", fontsize=16, fontweight="bold")
+            ax.set_xlabel("Waypoint ID", fontsize=12)
+            ax.set_ylabel("Score", fontsize=12)
+            ax.set_ylim(*PlotConfig.Y_LIMITS)
+            ax.legend(loc="upper right", fontsize=11)
+
+            # Stats box
+            delta = np.mean(per_data) - np.mean(obj_data)
+            stats = f"Δ: {delta:+.2f}\n{label_obj}: {np.mean(obj_data):.2f}\n{label_per}: {np.mean(per_data):.2f}"
+            ax.text(
+                0.02,
+                0.98,
+                stats,
+                transform=ax.transAxes,
+                fontsize=9,
+                va="top",
+                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.4),
+            )
+
+            _setup_xaxis(ax, waypoint_ids, max_ticks=10)
+
+        # Hide unused subplots
+        for idx in range(n_dims, len(axes)):
+            axes[idx].set_visible(False)
+
+        plt.suptitle(title, fontsize=16, fontweight="bold", y=0.995)
         plt.tight_layout()
 
         if save_path:
             fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
-            print(f"Saved heatmap to {save_path}")
-
         return fig
 
     def plot_route_scatter(
         self,
-        data_points: List[Dict[str, float]],
+        waypoint_results: Sequence[Mapping],
         title: str = "Route Scatter Plot with Average Score",
         save_path: Optional[Path] = None,
+        dimensions: Optional[Sequence[str]] = None,
+        figsize: Tuple[int, int] = (10, 8),
+        cmap: str = "RdYlGn",
+        point_size: int = 75,
+        score_type: str = "persona",
+        mode: str = "persona",
     ) -> plt.Figure:
         """
-        Create a scatter plot of a route, with GPS path colored by average score.
+        Create GPS scatter plot colored by average score.
+
+        Uses fixed color scale (1-10) for cross-region comparison.
+        Default colormap: RdYlGn (Red-Yellow-Green) for intuitive quality visualization.
 
         Args:
-            data_points: List of dictionaries, each with 'lat', 'lon', and 'average_score'.
-            title: Plot title.
-            save_path: Optional path to save the figure.
+            waypoint_results: List of waypoint results with GPS coordinates
+            title: Plot title
+            save_path: Path to save figure
+            dimensions: Dimension keys for averaging (None = all)
+            figsize: Figure size
+            cmap: Colormap name (default: RdYlGn - red=low, green=high)
+            point_size: Scatter point size
+            score_type: "objective" or "persona" - which scores to use
+            mode: "persona" or "system" - for field name selection
 
         Returns:
-            Matplotlib figure object.
+            Matplotlib figure
         """
-        if not data_points:
-            raise ValueError("No data points provided for scatter plot.")
+        dim_keys = self._infer_dimensions(dimensions, waypoint_results=waypoint_results)
 
-        lats = [p["lat"] for p in data_points]
-        lons = [p["lon"] for p in data_points]
-        scores = [p["average_score"] for p in data_points]
+        lats, lons, avg_scores = [], [], []
 
-        fig, ax = plt.subplots(figsize=(10, 10), dpi=self.dpi)
+        for result in waypoint_results:
+            # Extract GPS coordinates
+            gps = _get(result, "gps") or _get(result, "coordinates")
+            lat = None
+            lon = None
 
-        # Create scatter plot
+            # Handle GPS as array [lat, lon]
+            if isinstance(gps, (list, tuple)) and len(gps) >= 2:
+                lat = gps[0]
+                lon = gps[1]
+            # Handle GPS as dict
+            elif isinstance(gps, dict):
+                lat = _get(gps, "lat") or _get(gps, "latitude")
+                lon = _get(gps, "lon") or _get(gps, "lng") or _get(gps, "longitude")
+            # Fallback to direct fields
+            else:
+                lat = _get(result, "lat") or _get(result, "latitude")
+                lon = _get(result, "lon") or _get(result, "longitude")
+
+            if lat is None or lon is None:
+                continue
+
+            # Calculate average score based on score_type
+            obj_scores, per_scores = _get_scores_from_result(result, dim_keys, mode)
+            scores = obj_scores if score_type == "objective" else per_scores
+            avg = np.mean([scores[d] for d in dim_keys if d in scores])
+
+            lats.append(float(lat))
+            lons.append(float(lon))
+            avg_scores.append(avg)
+
+        if not lats:
+            raise ValueError("No valid GPS coordinates found in waypoint results")
+
+        fig, ax = plt.subplots(figsize=figsize, dpi=self.dpi)
+
+        # Fixed color scale 1-10 for cross-region comparison
         scatter = ax.scatter(
             lons,
             lats,
-            c=scores,
-            cmap="viridis",
-            s=50,
-            vmin=0,
-            vmax=10,
-            alpha=0.8,
+            c=avg_scores,
+            cmap=cmap,
+            s=point_size,
+            vmin=1,  # Fixed minimum
+            vmax=10,  # Fixed maximum
+            alpha=1.0,
+            edgecolors="black",
+            linewidths=0.5,
+            zorder=10,
         )
 
-        # Add a color bar
-        cbar = plt.colorbar(scatter, ax=ax, shrink=0.8)
-        cbar.set_label("Average Score", fontsize=11, fontweight="bold")
+        # Enhanced colorbar with fixed scale
+        cbar = plt.colorbar(scatter, ax=ax, shrink=0.4, pad=0.08)
+        cbar.set_label("Average Score", fontsize=13, fontweight="bold", labelpad=15)
+        cbar.set_ticks([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+        cbar.ax.tick_params(labelsize=11)
 
         # Formatting
-        ax.set_xlabel("Longitude", fontsize=11, fontweight="bold")
-        ax.set_ylabel("Latitude", fontsize=11, fontweight="bold")
-        ax.set_title(title, fontsize=13, fontweight="bold", pad=15)
-        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlabel("Longitude", fontsize=13, fontweight="bold")
+        ax.set_ylabel("Latitude", fontsize=13, fontweight="bold")
+        ax.set_title(title, fontsize=15, fontweight="bold", pad=20)
+        # Keep figure size fixed - adjust data limits to maintain aspect ratio
+        ax.set_aspect("equal", adjustable="datalim")
+        ax.tick_params(axis="both", labelsize=10)
         ax.tick_params(axis="x", rotation=45)
 
+        # Add grid for better spatial reference
+        ax.grid(
+            True, alpha=0.4, linestyle=":", linewidth=0.8, color="#CCCCCC", zorder=0
+        )
+
         plt.tight_layout()
 
         if save_path:
             fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
-            print(f"Saved scatter plot to {save_path}")
-
         return fig
 
-    def plot_dual_system_comparison(
+    def plot_timeline(
         self,
-        waypoint_results: List[Dict[str, Any]],
-        title: str = "System 1 (Raw VLM) vs System 2 (Memory Context)",
+        scores: Dict[str, List[float]],
+        chapters: Optional[List[Dict[str, Any]]] = None,
+        title: str = "Score Timeline",
         save_path: Optional[Path] = None,
         dimensions: Optional[Sequence[str]] = None,
     ) -> plt.Figure:
-        """Plot System 1 vs System 2 scores to visualize memory influence."""
-        waypoint_ids = [r["waypoint_id"] for r in waypoint_results]
+        """
+        Visualize scores with optional narrative chapters.
 
-        system1_scores: Dict[str, List[float]] = {}
-        system2_scores: Dict[str, List[float]] = {}
+        Args:
+            scores: Dict mapping dimensions to score lists
+            chapters: Optional narrative chapter data
+            title: Plot title
+            save_path: Path to save figure
+            dimensions: Dimension keys to plot
+        """
+        dim_keys = list(dimensions) if dimensions else list(scores.keys())
+        dim_config = self._get_dim_config(dim_keys)
 
-        dim_keys = self._infer_dimension_keys(
-            dimensions=dimensions, waypoint_results=waypoint_results
+        has_chapters = bool(chapters)
+        height_ratios = [3, 2] if has_chapters else [1]
+        n_rows = 2 if has_chapters else 1
+
+        fig, axes = plt.subplots(
+            n_rows,
+            1,
+            figsize=(16, 10 if has_chapters else 6),
+            gridspec_kw={"height_ratios": height_ratios},
+            dpi=self.dpi,
         )
+
+        ax_scores = axes[0] if has_chapters else axes
+        n_points = len(next(iter(scores.values())))
+        x = np.arange(n_points)
+
+        # Plot scores
         for dim in dim_keys:
-            system1_scores[dim] = [
-                r["system1_scores"].get(dim, 0) for r in waypoint_results
-            ]
-            system2_scores[dim] = [
-                (
-                    r.get("system2_scores", {}).get(
-                        dim, r["system1_scores"].get(dim, 0)
-                    )
-                    if r.get("system2_scores")
-                    else r["system1_scores"].get(dim, 0)
-                )
-                for r in waypoint_results
-            ]
-
-        system2_triggered = [
-            i
-            for i, r in enumerate(waypoint_results)
-            if r.get("system2_triggered", False)
-        ]
-
-        dim_config = self._build_dim_config(dim_keys)
-
-        fig, axes = plt.subplots(2, 2, figsize=(16, 12), dpi=self.dpi)
-        axes = axes.flatten()
-        x = np.arange(len(waypoint_ids))
-
-        for idx, dim_key in enumerate(dim_keys):
-            if idx >= 4:
+            if dim not in scores:
                 continue
-
-            ax = axes[idx]
-            config = dim_config[dim_key]
-
-            ax.plot(
-                x,
-                system1_scores[dim_key],
-                marker="o",
-                markersize=3.5,
-                linewidth=1.2,
-                color=config["color"],
-                alpha=0.6,
-                label="System 1 (Raw VLM)",
-                linestyle="--",
-            )
-
-            ax.plot(
-                x,
-                system2_scores[dim_key],
-                marker="s",
-                markersize=4,
-                linewidth=1.5,
-                color=config["color"],
-                alpha=0.9,
-                label="System 2 (Context)",
-                linestyle="-",
-            )
-
-            # Add vertical lines for System 2 triggered waypoints
-            for i in system2_triggered:
-                ax.axvline(
-                    x=i,
-                    color="gray",
-                    linestyle="--",
-                    linewidth=1,
-                    alpha=0.4,
-                    zorder=0,
-                )
-
-            for i in system2_triggered:
-                s1_score = system1_scores[dim_key][i]
-                s2_score = system2_scores[dim_key][i]
-                if abs(s2_score - s1_score) >= 0.5:
-                    color = "green" if s2_score > s1_score else "red"
-                    ax.annotate(
-                        "",
-                        xy=(i, s2_score),
-                        xytext=(i, s1_score),
-                        arrowprops=dict(
-                            arrowstyle="->",
-                            color=color,
-                            alpha=0.6,
-                            lw=1.5,
-                        ),
-                    )
-
-            ax.set_title(
-                f"{config['label']} - Memory Influence", fontsize=12, fontweight="bold"
-            )
-            ax.set_xlabel("Waypoint ID", fontsize=10)
-            ax.set_ylabel("Score", fontsize=10)
-            ax.set_ylim(0, 10.5)
-            ax.legend(loc="best", fontsize=9)
-
-            tick_step = max(1, len(waypoint_ids) // 10)
-            ax.set_xticks(x[::tick_step])
-            ax.set_xticklabels(
-                [str(wid) for wid in waypoint_ids[::tick_step]],
-                rotation=45,
-                ha="right",
-                fontsize=8,
-            )
-
-            s1_mean = np.mean(system1_scores[dim_key])
-            s2_mean = np.mean(system2_scores[dim_key])
-            delta = s2_mean - s1_mean
-            stats_text = f"Δ: {delta:+.2f}\nS1: {s1_mean:.2f}\nS2: {s2_mean:.2f}"
-            ax.text(
-                0.02,
-                0.98,
-                stats_text,
-                transform=ax.transAxes,
-                fontsize=9,
-                verticalalignment="top",
-                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
-            )
-
-        plt.suptitle(title, fontsize=14, fontweight="bold", y=0.995)
-        plt.tight_layout()
-
-        if save_path:
-            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
-            print(f"Saved dual-system comparison to {save_path}")
-
-        return fig
-
-    def plot_adjustment_heatmap(
-        self,
-        waypoint_results: List[Dict[str, Any]],
-        save_path: Optional[Path] = None,
-        dimensions: Optional[Sequence[str]] = None,
-    ) -> plt.Figure:
-        """Create heatmap showing System 2 score adjustments."""
-        dim_keys = self._infer_dimension_keys(
-            dimensions=dimensions, waypoint_results=waypoint_results
-        )
-
-        adjustments: List[List[float]] = []
-        for dim in dim_keys:
-            dim_adjustments = [
-                (
-                    r.get("score_adjustments", {}).get(dim, 0)
-                    if r.get("score_adjustments")
-                    else 0
-                )
-                for r in waypoint_results
-            ]
-            adjustments.append(dim_adjustments)
-
-        adjustments_arr = np.array(adjustments)
-        waypoint_ids = [r["waypoint_id"] for r in waypoint_results]
-
-        fig, ax = plt.subplots(figsize=(14, 4), dpi=self.dpi)
-
-        im = ax.imshow(
-            adjustments_arr,
-            aspect="auto",
-            cmap="RdYlGn",
-            vmin=-3,
-            vmax=3,
-            interpolation="nearest",
-        )
-
-        ax.set_yticks(np.arange(len(dim_keys)))
-        ax.set_yticklabels(dim_keys)
-
-        tick_step = max(1, len(waypoint_ids) // 20)
-        ax.set_xticks(np.arange(0, len(waypoint_ids), tick_step))
-        ax.set_xticklabels(
-            [str(wid) for wid in waypoint_ids[::tick_step]],
-            rotation=45,
-            ha="right",
-            fontsize=8,
-        )
-
-        cbar = plt.colorbar(im, ax=ax)
-        cbar.set_label(
-            "Score Adjustment (System 2 - System 1)", rotation=270, labelpad=20
-        )
-
-        # Add vertical lines for System 2 triggered waypoints
-        system2_triggered = [
-            i
-            for i, r in enumerate(waypoint_results)
-            if r.get("system2_triggered", False)
-        ]
-        for idx in system2_triggered:
-            ax.axvline(
-                x=idx,
-                color="gray",
-                linestyle="--",
-                linewidth=0.8,
-                alpha=0.4,
-                zorder=10,
-            )
-
-        ax.set_xlabel("Waypoint ID", fontsize=11, fontweight="bold")
-        ax.set_title(
-            "System 2 Score Adjustments (Memory Influence)",
-            fontsize=13,
-            fontweight="bold",
-            pad=15,
-        )
-
-        plt.tight_layout()
-
-        if save_path:
-            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
-            print(f"Saved adjustment heatmap to {save_path}")
-
-        return fig
-
-    def plot_narrative_timeline(
-        self,
-        narrative_chapters: Optional[List[Dict[str, Any]]],
-        waypoint_scores: Dict[str, List[float]],
-        save_path: Optional[Path] = None,
-        dimensions: Optional[Sequence[str]] = None,
-    ) -> plt.Figure:
-        """Visualize narrative chapters alongside score timeline."""
-        dim_keys = self._infer_dimension_keys(
-            dimensions=dimensions, scores=waypoint_scores
-        )
-        dim_config = self._build_dim_config(dim_keys)
-
-        fig, (ax_scores, ax_narrative) = plt.subplots(
-            2, 1, figsize=(16, 10), gridspec_kw={"height_ratios": [3, 2]}, dpi=self.dpi
-        )
-
-        waypoint_ids = list(range(len(next(iter(waypoint_scores.values())))))
-
-        for dim in dim_keys:
-            scores = waypoint_scores.get(dim)
-            if scores is None:
-                continue
-            config = dim_config.get(dim, {"label": dim, "color": None})
+            cfg = dim_config[dim]
             ax_scores.plot(
-                waypoint_ids,
-                scores,
+                x,
+                scores[dim],
                 marker="o",
-                markersize=3.5,
-                label=config["label"],
-                linewidth=1.2,
-                color=config.get("color"),
-                alpha=0.8,
+                markersize=PlotConfig.MARKER_SIZE,
+                label=cfg["label"],
+                linewidth=PlotConfig.LINE_WIDTH,
+                color=cfg["color"],
+                alpha=PlotConfig.LINE_ALPHA,
             )
 
-        if narrative_chapters:
-            for chapter in narrative_chapters:
-                wid = chapter["waypoint_id"]
+        # Chapter markers on score plot
+        if chapters:
+            for ch in chapters:
+                wid = ch.get("waypoint_id", 0)
                 ax_scores.axvline(x=wid, color="red", linestyle="--", alpha=0.3)
                 ax_scores.text(
                     wid,
                     9.5,
-                    f"Ch{chapter['chapter_number']}",
+                    f"Ch{ch.get('chapter_number', '?')}",
                     fontsize=8,
                     ha="center",
                     bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
                 )
 
-        ax_scores.set_title(
-            "Score Timeline with Narrative Chapters", fontsize=13, fontweight="bold"
-        )
+        ax_scores.set_title(title, fontsize=13, fontweight="bold")
         ax_scores.set_ylabel("Score", fontsize=11)
         ax_scores.legend(loc="best")
-        ax_scores.set_ylim(0, 10.5)
+        ax_scores.set_ylim(*PlotConfig.Y_LIMITS)
 
-        ax_narrative.set_xlim(0, len(waypoint_ids))
-        if narrative_chapters:
-            ax_narrative.set_ylim(0, len(narrative_chapters) + 1)
+        # Narrative panel
+        if has_chapters:
+            ax_narrative = axes[1]
+            ax_narrative.set_xlim(0, n_points)
             ax_narrative.axis("off")
 
-            for i, chapter in enumerate(narrative_chapters):
-                y_pos = len(narrative_chapters) - i
-                x_pos = chapter["waypoint_id"]
-                ax_narrative.plot([x_pos, x_pos], [0, y_pos], "k-", alpha=0.3)
-
-                text = f"Ch{chapter['chapter_number']}: {chapter.get('key_observation', '')[:60]}..."
+            if chapters:
+                ax_narrative.set_ylim(0, len(chapters) + 1)
                 tone_colors = {
                     "optimistic": "#10B981",
                     "neutral": "#6B7280",
                     "cautious": "#F59E0B",
                     "concerned": "#EF4444",
                 }
-                color = tone_colors.get(
-                    chapter.get("emotional_tone", "neutral"), "#6B7280"
-                )
+                for i, ch in enumerate(chapters):
+                    y_pos = len(chapters) - i
+                    x_pos = ch.get("waypoint_id", 0)
+                    ax_narrative.plot([x_pos, x_pos], [0, y_pos], "k-", alpha=0.3)
 
-                ax_narrative.text(
-                    x_pos + 1,
-                    y_pos,
-                    text,
-                    fontsize=9,
-                    va="center",
-                    bbox=dict(boxstyle="round", facecolor=color, alpha=0.3),
-                )
-        else:
-            ax_narrative.set_ylim(0, 1)
-            ax_narrative.axis("off")
-            ax_narrative.text(
-                0.5,
-                0.5,
-                "No narrative chapters available",
-                transform=ax_narrative.transAxes,
-                fontsize=12,
-                ha="center",
-                va="center",
-                style="italic",
-                color="gray",
-            )
-
-        plt.tight_layout()
-
-        if save_path:
-            fig.savefig(save_path, dpi=150, bbox_inches="tight")
-            print(f"Saved narrative timeline to {save_path}")
-
-        return fig
-
-    def generate_summary_stats(self, scores: Dict[str, List[float]]) -> Dict:
-        """
-        Calculate summary statistics for each dimension.
-
-        Args:
-            scores: Dictionary mapping dimension names to score lists
-
-        Returns:
-            Dictionary containing statistics for each dimension
-        """
-        stats = {}
-        for dim_key, score_list in scores.items():
-            arr = np.array(score_list)
-            stats[dim_key] = {
-                "mean": float(np.mean(arr)),
-                "median": float(np.median(arr)),
-                "std": float(np.std(arr)),
-                "min": float(np.min(arr)),
-                "max": float(np.max(arr)),
-                "range": float(np.max(arr) - np.min(arr)),
-                "cv": float(np.std(arr) / np.mean(arr)) if np.mean(arr) > 0 else 0,
-            }
-        return stats
-
-    def plot_radar_charts(
-        self,
-        analyses: Iterable[Mapping],
-        output_dir: Path,
-        dimensions: Optional[Sequence[str]] = None,
-        figsize: Tuple[int, int] = (8, 8),
-    ) -> List[Path]:
-        """
-        Generate radar charts for waypoints with visual change detection.
-
-        Creates one radar chart per waypoint that has visual_change_detected=True,
-        showing all dimension scores in a spider/radar plot.
-
-        Args:
-            analyses: Iterable of WaypointAnalysis-like objects or dicts
-            output_dir: Directory to save radar chart images
-            dimensions: Optional ordered list of dimensions to plot
-            figsize: Figure size in inches (width, height)
-
-        Returns:
-            List of paths to saved radar chart images
-        """
-        # Create output directory for radar charts
-        radar_dir = output_dir / "radar_charts"
-        radar_dir.mkdir(parents=True, exist_ok=True)
-
-        analyses_list = list(analyses)
-        if not analyses_list:
-            print("No analyses provided for radar charts.")
-            return []
-
-        def get(obj, key, default=None):
-            if isinstance(obj, Mapping):
-                return obj.get(key, default)
-            return getattr(obj, key, default)
-
-        # Filter for waypoints with visual change detected
-        def _has_visual_change(analysis) -> bool:
-            detected = get(analysis, "visual_change_detected", None)
-            if detected is None:
-                detected = get(analysis, "visual_change", False)
-            return bool(detected)
-
-        filtered_analyses = [a for a in analyses_list if _has_visual_change(a)]
-
-        if not filtered_analyses:
-            print(
-                "No waypoints with visual change detection passed. No radar charts generated."
-            )
-            return []
-
-        print(
-            f"Generating radar charts for {len(filtered_analyses)} waypoints with visual changes..."
-        )
-
-        # Determine dimensions
-        dim_keys = (
-            list(dimensions)
-            if dimensions
-            else sorted(
-                {k for a in filtered_analyses for k in get(a, "scores", {}).keys()}
-            )
-        )
-        if not dim_keys:
-            print("No dimensions found in analyses.")
-            return []
-
-        dim_config = self._build_dim_config(dim_keys)
-        saved_paths = []
-
-        # Generate one radar chart per filtered waypoint
-        for analysis in filtered_analyses:
-            waypoint_id = get(analysis, "waypoint_id", "unknown")
-            scores_dict = get(analysis, "scores", {})
-
-            # Prepare data for radar chart
-            labels = [
-                dim_config[dim]["label"] for dim in dim_keys if dim in scores_dict
-            ]
-            values = [scores_dict[dim] for dim in dim_keys if dim in scores_dict]
-
-            if not values:
-                continue
-
-            # Number of variables
-            num_vars = len(labels)
-
-            # Compute angle for each axis
-            angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
-
-            # The plot is circular, so close the loop by appending the start value
-            values += values[:1]
-            angles += angles[:1]
-
-            # Create radar chart
-            fig, ax = plt.subplots(
-                figsize=figsize, subplot_kw=dict(projection="polar"), dpi=self.dpi
-            )
-
-            # Plot data
-            ax.plot(angles, values, "o-", linewidth=2, color="#2E86AB", label="Scores")
-            ax.fill(angles, values, alpha=0.25, color="#2E86AB")
-
-            # Set labels for each axis
-            ax.set_xticks(angles[:-1])
-            ax.set_xticklabels(labels, fontsize=10)
-
-            # Set y-axis limits
-            ax.set_ylim(0, 10)
-            ax.set_yticks([2, 4, 6, 8, 10])
-            ax.set_yticklabels(["2", "4", "6", "8", "10"], fontsize=8, alpha=0.7)
-
-            # Add grid
-            ax.grid(True, linestyle=":", linewidth=0.4, alpha=0.3)
-
-            # Add title
-            phash_distance = get(analysis, "phash_distance", None)
-            title = f"Waypoint {waypoint_id}"
-            if phash_distance is not None:
-                title += f" (pHash: {phash_distance:.2f})"
-            ax.set_title(title, fontsize=13, fontweight="bold", pad=20)
-
-            # Save figure
-            output_path = radar_dir / f"radar_waypoint_{waypoint_id}.png"
-            fig.savefig(output_path, dpi=self.dpi, bbox_inches="tight")
-            plt.close(fig)
-
-            saved_paths.append(output_path)
-            print(f"  Saved radar chart: {output_path.name}")
-
-        print(f"Generated {len(saved_paths)} radar charts in {radar_dir}")
-        return saved_paths
-
-    def plot_dual_system_radar_charts(
-        self,
-        waypoint_results: Sequence[Mapping[str, Any]],
-        output_dir: Path,
-        dimensions: Optional[Sequence[str]] = None,
-        figsize: Tuple[int, int] = (8, 8),
-    ) -> Dict[str, Path]:
-        """
-        Generate System1, System2/Final, and overlay radar charts for all waypoints.
-
-        Args:
-            waypoint_results: Sequence of waypoint result dicts containing system1_scores/system2_scores
-            output_dir: Base directory to write radar charts into
-            dimensions: Optional ordered list of dimensions to plot
-            figsize: Figure size in inches
-
-        Returns:
-            Dict of directories for the generated radar chart sets
-        """
-        dim_keys = self._infer_dimension_keys(
-            dimensions=dimensions, waypoint_results=waypoint_results
-        )
-        dim_config = self._build_dim_config(dim_keys)
-
-        base_dir = output_dir / "radar_charts_dual"
-        sys1_dir = base_dir / "system1"
-        sys2_dir = base_dir / "system2"
-        overlay_dir = base_dir / "overlay"
-        for d in (sys1_dir, sys2_dir, overlay_dir):
-            d.mkdir(parents=True, exist_ok=True)
-
-        def _prepare_scores(result: Mapping[str, Any], key: str) -> List[float]:
-            source = (
-                result.get(key)
-                if isinstance(result, Mapping)
-                else getattr(result, key, None)
-            )
-            if source is None:
-                source = {}
-            return [float(source.get(dim, 0.0) or 0.0) for dim in dim_keys]
-
-        def _plot_single(
-            path: Path, scores: List[float], label: str, color: str
-        ) -> None:
-            labels = [dim_config[dim]["label"] for dim in dim_keys]
-            values = list(scores) + [scores[0]]
-            angles = np.linspace(0, 2 * np.pi, len(dim_keys), endpoint=False).tolist()
-            angles += angles[:1]
-
-            fig, ax = plt.subplots(
-                figsize=figsize, subplot_kw=dict(projection="polar"), dpi=self.dpi
-            )
-            ax.plot(angles, values, "o-", linewidth=2, color=color, label=label)
-            ax.fill(angles, values, alpha=0.25, color=color)
-            ax.set_xticks(angles[:-1])
-            ax.set_xticklabels(labels, fontsize=10)
-            ax.set_ylim(0, 10)
-            ax.set_yticks([2, 4, 6, 8, 10])
-            ax.set_yticklabels(["2", "4", "6", "8", "10"], fontsize=8, alpha=0.7)
-            ax.grid(True, linestyle=":", linewidth=0.4, alpha=0.3)
-            ax.set_title(label, fontsize=13, fontweight="bold", pad=20)
-            fig.savefig(path, dpi=self.dpi, bbox_inches="tight")
-            plt.close(fig)
-
-        def _plot_overlay(
-            path: Path, scores1: List[float], scores2: List[float]
-        ) -> None:
-            labels = [dim_config[dim]["label"] for dim in dim_keys]
-            angles = np.linspace(0, 2 * np.pi, len(dim_keys), endpoint=False).tolist()
-            angles += angles[:1]
-
-            s1 = list(scores1) + [scores1[0]]
-            s2 = list(scores2) + [scores2[0]]
-
-            fig, ax = plt.subplots(
-                figsize=figsize, subplot_kw=dict(projection="polar"), dpi=self.dpi
-            )
-            ax.plot(angles, s1, "o--", linewidth=1.8, color="#94A3B8", label="System 1")
-            ax.fill(angles, s1, alpha=0.20, color="#94A3B8")
-            ax.plot(
-                angles,
-                s2,
-                "o-",
-                linewidth=2.2,
-                color="#EF4444",
-                label="System 2 / Final",
-            )
-            ax.fill(angles, s2, alpha=0.25, color="#EF4444")
-            ax.set_xticks(angles[:-1])
-            ax.set_xticklabels(labels, fontsize=10)
-            ax.set_ylim(0, 10)
-            ax.set_yticks([2, 4, 6, 8, 10])
-            ax.set_yticklabels(["2", "4", "6", "8", "10"], fontsize=8, alpha=0.7)
-            ax.grid(True, linestyle=":", linewidth=0.4, alpha=0.3)
-            ax.set_title("Objective vs Persona", fontsize=13, fontweight="bold", pad=20)
-            ax.legend(loc="upper right", bbox_to_anchor=(1.25, 1.05))
-            fig.savefig(path, dpi=self.dpi, bbox_inches="tight")
-            plt.close(fig)
-
-        for wp_result in waypoint_results:
-            wp_id = (
-                wp_result.get("waypoint_id")
-                if isinstance(wp_result, Mapping)
-                else getattr(wp_result, "waypoint_id", "unknown")
-            )
-            sys1_scores = _prepare_scores(wp_result, "system1_scores")
-            sys2_scores = _prepare_scores(wp_result, "system2_scores")
-            obj_scores = _prepare_scores(wp_result, "objective_scores")
-            per_scores = _prepare_scores(wp_result, "persona_scores")
-
-            fallback = (
-                wp_result.get("scores", {})
-                if isinstance(wp_result, Mapping)
-                else getattr(wp_result, "scores", {})
-            )
-            if not any(sys2_scores) and fallback:
-                sys2_scores = [float(fallback.get(dim, 0.0) or 0.0) for dim in dim_keys]
-
-            _plot_single(
-                sys1_dir / f"radar_sys1_wp_{wp_id}.png",
-                sys1_scores,
-                f"Waypoint {wp_id} - System 1",
-                "#0EA5E9",
-            )
-            _plot_single(
-                sys2_dir / f"radar_sys2_wp_{wp_id}.png",
-                sys2_scores,
-                f"Waypoint {wp_id} - System 2/Final",
-                "#EF4444",
-            )
-            _plot_overlay(
-                overlay_dir / f"radar_overlay_wp_{wp_id}.png", obj_scores, per_scores
-            )
-
-        return {
-            "radar_system1_dir": sys1_dir,
-            "radar_system2_dir": sys2_dir,
-            "radar_overlay_dir": overlay_dir,
-        }
-
-    def plot_persona_comparison(
-        self,
-        waypoint_results: Sequence[Mapping[str, Any]],
-        title: str = "Objective vs Persona-Aware Evaluation",
-        save_path: Optional[Path] = None,
-        dimensions: Optional[Sequence[str]] = None,
-    ) -> plt.Figure:
-        """
-        Plot objective scores vs persona-aware scores for dual VLM evaluation.
-
-        This visualization shows the difference between objective (framework-only)
-        and persona-aware evaluations in the dual evaluation system using area fill
-        to highlight differences between the two evaluation systems.
-
-        Args:
-            waypoint_results: Sequence of waypoint result dicts containing:
-                - objective_scores: Scores from objective evaluation (research)
-                - persona_scores: Scores from persona-aware evaluation (final)
-            title: Plot title
-            save_path: Optional path to save figure
-            dimensions: Optional ordered list of dimensions to plot
-
-        Returns:
-            Matplotlib figure object
-        """
-        # Infer dimensions
-        dim_keys = self._infer_dimension_keys(
-            dimensions=dimensions, waypoint_results=waypoint_results
-        )
-        dim_config = self._build_dim_config(dim_keys)
-
-        # Extract waypoint IDs
-        waypoint_ids = []
-        for r in waypoint_results:
-            if isinstance(r, Mapping):
-                waypoint_ids.append(r.get("waypoint_id", len(waypoint_ids)))
-            else:
-                waypoint_ids.append(getattr(r, "waypoint_id", len(waypoint_ids)))
-
-        # Prepare score data
-        objective_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
-        persona_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
-
-        for r in waypoint_results:
-            if isinstance(r, Mapping):
-                obj_scores = r.get("objective_scores", {})
-                per_scores = r.get("persona_scores", {})
-                # Fallback to old field names for backward compatibility
-                if not obj_scores:
-                    obj_scores = r.get("neutral_scores", r.get("system1_scores", {}))
-                if not per_scores:
-                    per_scores = r.get("scores", {})
-            else:
-                obj_scores = getattr(r, "objective_scores", {})
-                per_scores = getattr(r, "persona_scores", {})
-                # Fallback to old field names for backward compatibility
-                if not obj_scores:
-                    obj_scores = getattr(
-                        r, "neutral_scores", getattr(r, "system1_scores", {})
+                    text = f"Ch{ch.get('chapter_number', '?')}: {ch.get('key_observation', '')[:60]}..."
+                    color = tone_colors.get(
+                        ch.get("emotional_tone", "neutral"), "#6B7280"
                     )
-                if not per_scores:
-                    per_scores = getattr(r, "scores", {})
+                    ax_narrative.text(
+                        x_pos + 1,
+                        y_pos,
+                        text,
+                        fontsize=9,
+                        va="center",
+                        bbox=dict(boxstyle="round", facecolor=color, alpha=0.3),
+                    )
+            else:
+                ax_narrative.text(
+                    0.5,
+                    0.5,
+                    "No narrative chapters",
+                    transform=ax_narrative.transAxes,
+                    fontsize=12,
+                    ha="center",
+                    va="center",
+                    style="italic",
+                    color="gray",
+                )
 
-            for dim in dim_keys:
-                objective_scores[dim].append(float(obj_scores.get(dim, 0) or 0))
-                persona_scores[dim].append(float(per_scores.get(dim, 0) or 0))
-
-        # Create 3x2 subplot for dimensions
-        fig, axes = plt.subplots(3, 2, figsize=(16, 16), dpi=self.dpi)
-        axes = axes.flatten()
-        x = np.arange(len(waypoint_ids))
-
-        # Colors for the two evaluation types (matching reference image style)
-        objective_color = "#94A3B8"  # Gray for objective/System 1
-        persona_color = "#EF4444"  # Red for persona-aware/System 2
-        fill_color = "#EF4444"  # Red fill for difference area
-
-        for idx, dim_key in enumerate(dim_keys[:5]):  # Limit to 5 dimensions
-            ax = axes[idx]
-            config = dim_config[dim_key]
-
-            obj_data = np.array(objective_scores[dim_key])
-            per_data = np.array(persona_scores[dim_key])
-
-            # Plot objective scores (solid line, no markers for cleaner look)
-            ax.plot(
-                x,
-                obj_data,
-                marker="o",
-                markersize=4,
-                linewidth=1.5,
-                color=objective_color,
-                alpha=0.9,
-                label="Objective",
-                linestyle="-",  # Solid line instead of dashed
-            )
-
-            # Plot persona-aware scores (solid line with different marker)
-            ax.plot(
-                x,
-                per_data,
-                marker="x",
-                markersize=5,
-                linewidth=1.5,
-                color=persona_color,
-                alpha=0.9,
-                label="Persona-Aware",
-                linestyle="-",  # Solid line
-            )
-
-            # Fill area between the two lines to show difference
-            ax.fill_between(
-                x,
-                obj_data,
-                per_data,
-                color=fill_color,
-                alpha=0.15,
-                label="Difference",
-            )
-
-            ax.set_title(
-                f"{config['label']} - Persona Impact", fontsize=12, fontweight="bold"
-            )
-            ax.set_xlabel("Waypoint ID", fontsize=10)
-            ax.set_ylabel("Score", fontsize=10)
-            ax.set_ylim(0, 10.5)
-            ax.legend(loc="upper right", fontsize=9)
-
-            # X-axis formatting
-            tick_step = max(1, len(waypoint_ids) // 10)
-            ax.set_xticks(x[::tick_step])
-            ax.set_xticklabels(
-                [str(wid) for wid in waypoint_ids[::tick_step]],
-                rotation=45,
-                ha="right",
-                fontsize=8,
-            )
-
-            # Add statistics text box
-            obj_mean = np.mean(obj_data)
-            p_mean = np.mean(per_data)
-            delta_mean = p_mean - obj_mean
-            stats_text = (
-                f"Avg Δ: {delta_mean:+.2f}\n"
-                f"Objective: {obj_mean:.2f}\n"
-                f"Persona: {p_mean:.2f}"
-            )
-            ax.text(
-                0.02,
-                0.98,
-                stats_text,
-                transform=ax.transAxes,
-                fontsize=9,
-                verticalalignment="top",
-                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
-            )
-
-        # Hide unused subplot if dimensions < 6
-        if len(dim_keys) < 6:
-            axes[5].set_visible(False)
-
-        plt.suptitle(title, fontsize=14, fontweight="bold", y=0.995)
         plt.tight_layout()
-
         if save_path:
             fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
-            print(f"Saved persona comparison to {save_path}")
-
         return fig
 
-    def plot_persona_neutral_overview(
+    def plot_overview(
         self,
-        waypoint_results: Sequence[Mapping[str, Any]],
-        title: str = "Objective vs Persona Overview",
+        waypoint_results: Sequence[Mapping],
+        title: str = "Evaluation Overview",
         save_path: Optional[Path] = None,
         dimensions: Optional[Sequence[str]] = None,
+        mode: str = "persona",
     ) -> plt.Figure:
         """
-        Plot objective vs persona averages alongside a delta heatmap.
+        Create overview with average line plot and delta heatmap side by side.
 
-        This combines the line + heatmap view showing the difference between
-        objective (research) and persona-aware (final) evaluations.
+        Args:
+            waypoint_results: List of waypoint result dicts
+            title: Plot title
+            save_path: Path to save figure
+            dimensions: Dimension keys to plot
+            mode: "persona" or "system"
         """
-        dim_keys = self._infer_dimension_keys(
-            dimensions=dimensions, waypoint_results=waypoint_results
+        dim_keys = self._infer_dimensions(dimensions, waypoint_results=waypoint_results)
+        objective, persona, waypoint_ids = _extract_all_scores(
+            waypoint_results, dim_keys, mode
         )
-        if not dim_keys:
-            raise ValueError("No dimensions available for persona overview plot.")
-
-        def _get(obj, key, default=None):
-            if isinstance(obj, Mapping):
-                return obj.get(key, default)
-            return getattr(obj, key, default)
-
-        waypoint_ids: List[str] = []
-        objective_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
-        persona_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
-
-        for idx, result in enumerate(waypoint_results):
-            waypoint_id = _get(result, "waypoint_id", idx)
-            waypoint_ids.append(str(waypoint_id))
-
-            # Try new field names first, fallback to old for backward compatibility
-            objective = (
-                _get(result, "objective_scores")
-                or _get(result, "neutral_scores")
-                or _get(result, "system1_scores")
-                or {}
-            )
-            persona = (
-                _get(result, "persona_scores") or _get(result, "scores") or objective
-            )
-
-            for dim in dim_keys:
-                objective_scores[dim].append(float(objective.get(dim, 0) or 0.0))
-                persona_scores[dim].append(float(persona.get(dim, 0) or 0.0))
 
         n_points = len(waypoint_ids)
-        if n_points == 0:
-            raise ValueError("No waypoint results provided for persona overview plot.")
-
-        avg_objective = [
-            float(np.mean([objective_scores[dim][i] for dim in dim_keys]))
-            for i in range(n_points)
+        avg_obj = [
+            np.mean([objective[d][i] for d in dim_keys]) for i in range(n_points)
         ]
-        avg_persona = [
-            float(np.mean([persona_scores[dim][i] for dim in dim_keys]))
-            for i in range(n_points)
-        ]
+        avg_per = [np.mean([persona[d][i] for d in dim_keys]) for i in range(n_points)]
 
         delta_matrix = np.array(
             [
-                [
-                    persona_scores[dim][i] - objective_scores[dim][i]
-                    for i in range(n_points)
-                ]
-                for dim in dim_keys
+                [persona[d][i] - objective[d][i] for i in range(n_points)]
+                for d in dim_keys
             ]
         )
 
         fig, axes = plt.subplots(
             1, 2, figsize=(16, 6), gridspec_kw={"width_ratios": [1.25, 1]}
         )
-
         x = np.arange(n_points)
+
+        label_obj = "System 1" if mode == "system" else "Objective"
+        label_per = "System 2" if mode == "system" else "Persona-Aware"
+
+        # Line plot
         axes[0].plot(
             x,
-            avg_objective,
+            avg_obj,
             marker="o",
-            markersize=3.5,
+            markersize=PlotConfig.MARKER_SIZE,
             linewidth=1.4,
-            color="#94A3B8",
+            color=PlotConfig.OBJECTIVE_COLOR,
             alpha=0.9,
-            label="Objective (Research)",
+            label=label_obj,
             linestyle="--",
         )
         axes[0].plot(
             x,
-            avg_persona,
+            avg_per,
             marker="s",
             markersize=4,
             linewidth=1.6,
-            color="#EF4444",
+            color=PlotConfig.PERSONA_COLOR,
             alpha=0.95,
-            label="Persona-Aware (Final)",
+            label=label_per,
         )
-
         axes[0].fill_between(
-            x,
-            avg_objective,
-            avg_persona,
-            color="#EF4444",
-            alpha=0.12,
-            label="Difference Zone",
+            x, avg_obj, avg_per, color=PlotConfig.PERSONA_COLOR, alpha=0.12
         )
 
-        tick_step = max(1, n_points // 12)
-        axes[0].set_xticks(x[::tick_step])
-        axes[0].set_xticklabels(
-            [waypoint_ids[i] for i in range(0, n_points, tick_step)],
-            rotation=45,
-            ha="right",
-            fontsize=8,
-        )
-        axes[0].set_xlabel("Waypoint ID", fontsize=11, fontweight="bold")
         axes[0].set_ylabel("Average Score", fontsize=11, fontweight="bold")
-        axes[0].set_ylim(0, 10.5)
+        axes[0].set_ylim(*PlotConfig.Y_LIMITS)
         axes[0].set_title(f"{title} – Averages", fontsize=13, fontweight="bold", pad=12)
         axes[0].legend(loc="best", fontsize=10)
+        _setup_xaxis(axes[0], waypoint_ids, max_ticks=12)
 
-        if delta_matrix.size:
-            max_abs = float(np.max(np.abs(delta_matrix))) if delta_matrix.size else 1.0
-            max_abs = max(max_abs, 0.5)
-            im = axes[1].imshow(
-                delta_matrix,
-                aspect="auto",
-                cmap="coolwarm",
-                vmin=-max_abs,
-                vmax=max_abs,
-                interpolation="nearest",
-            )
-            axes[1].set_yticks(np.arange(len(dim_keys)))
-            axes[1].set_yticklabels(dim_keys)
-
-            heat_tick_step = max(1, n_points // 12)
-            axes[1].set_xticks(np.arange(0, n_points, heat_tick_step))
-            axes[1].set_xticklabels(
-                waypoint_ids[::heat_tick_step],
-                rotation=45,
-                ha="right",
-                fontsize=8,
-            )
-            axes[1].set_xlabel("Waypoint ID", fontsize=11, fontweight="bold")
-            axes[1].set_title(
-                f"{title} – Persona − Neutral",
-                fontsize=13,
-                fontweight="bold",
-                pad=12,
-            )
-
-            # Annotate deltas for readability
-            for row_idx, dim in enumerate(dim_keys):
-                for col_idx in range(n_points):
-                    delta_val = delta_matrix[row_idx, col_idx]
-                    axes[1].text(
-                        col_idx,
-                        row_idx,
-                        f"{delta_val:+.2f}",
-                        ha="center",
-                        va="center",
-                        fontsize=7,
-                        color="black",
-                    )
-
-            cbar = plt.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
-            cbar.set_label("Persona Adjustment", rotation=270, labelpad=18)
-
-        fig.tight_layout()
-
-        if save_path:
-            fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
-            print(f"Saved persona overview to {save_path}")
-
-        return fig
-
-    def plot_persona_summary_radar(
-        self,
-        waypoint_results: Sequence[Mapping[str, Any]],
-        save_path: Optional[Path] = None,
-        dimensions: Optional[Sequence[str]] = None,
-        figsize: Tuple[int, int] = (10, 10),
-    ) -> plt.Figure:
-        """
-        Create radar chart showing average neutral vs persona scores across all dimensions.
-
-        Args:
-            waypoint_results: Sequence of waypoint result dicts with neutral_scores and scores
-            save_path: Optional path to save figure
-            dimensions: Optional ordered list of dimensions to plot
-            figsize: Figure size in inches
-
-        Returns:
-            Matplotlib figure object
-        """
-        # Infer dimensions
-        dim_keys = self._infer_dimension_keys(
-            dimensions=dimensions, waypoint_results=waypoint_results
-        )
-        dim_config = self._build_dim_config(dim_keys)
-
-        # Calculate average scores across all waypoints
-        neutral_avgs = []
-        persona_avgs = []
-
-        for dim in dim_keys:
-            neutral_vals = []
-            persona_vals = []
-
-            for r in waypoint_results:
-                if isinstance(r, Mapping):
-                    obj_scores = r.get("neutral_scores", r.get("system1_scores", {}))
-                    per_scores = r.get("scores", {})
-                else:
-                    obj_scores = getattr(
-                        r, "neutral_scores", getattr(r, "system1_scores", {})
-                    )
-                    per_scores = getattr(r, "scores", {})
-
-                neutral_vals.append(float(obj_scores.get(dim, 0) or 0))
-                persona_vals.append(float(per_scores.get(dim, 0) or 0))
-
-            neutral_avgs.append(np.mean(neutral_vals))
-            persona_avgs.append(np.mean(persona_vals))
-
-        # Prepare radar chart data
-        labels = [dim_config[dim]["label"] for dim in dim_keys]
-        num_vars = len(labels)
-
-        # Compute angles
-        angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
-
-        # Close the plot by appending the first value
-        neutral_avgs += neutral_avgs[:1]
-        persona_avgs += persona_avgs[:1]
-        angles += angles[:1]
-
-        # Create radar chart
-        fig, ax = plt.subplots(
-            figsize=figsize, subplot_kw=dict(projection="polar"), dpi=self.dpi
+        # Heatmap
+        max_abs = max(float(np.max(np.abs(delta_matrix))), 0.5)
+        im = axes[1].imshow(
+            delta_matrix,
+            aspect="auto",
+            cmap="coolwarm",
+            vmin=-max_abs,
+            vmax=max_abs,
+            interpolation="nearest",
         )
 
-        # Plot neutral scores
-        ax.plot(
-            angles,
-            neutral_avgs,
-            "o--",
-            linewidth=2,
-            color="#94A3B8",
-            label="Neutral (No Persona)",
+        axes[1].set_yticks(np.arange(len(dim_keys)))
+        axes[1].set_yticklabels(dim_keys)
+
+        tick_step = max(1, n_points // 12)
+        axes[1].set_xticks(np.arange(0, n_points, tick_step))
+        axes[1].set_xticklabels(
+            waypoint_ids[::tick_step], rotation=45, ha="right", fontsize=8
         )
-        ax.fill(angles, neutral_avgs, alpha=0.20, color="#94A3B8")
+        axes[1].set_xlabel("Waypoint ID", fontsize=11, fontweight="bold")
+        axes[1].set_title(f"{title} – Delta", fontsize=13, fontweight="bold", pad=12)
 
-        # Plot persona scores
-        ax.plot(
-            angles,
-            persona_avgs,
-            "o-",
-            linewidth=2.5,
-            color="#EF4444",
-            label="Persona-Aware",
-        )
-        ax.fill(angles, persona_avgs, alpha=0.25, color="#EF4444")
-
-        # Set axis labels
-        ax.set_xticks(angles[:-1])
-        ax.set_xticklabels(labels, fontsize=11)
-
-        # Set y-axis limits and labels
-        ax.set_ylim(0, 10)
-        ax.set_yticks([2, 4, 6, 8, 10])
-        ax.set_yticklabels(["2", "4", "6", "8", "10"], fontsize=9, alpha=0.7)
-
-        # Add grid
-        ax.grid(True, linestyle=":", linewidth=0.5, alpha=0.4)
-
-        # Add legend
-        ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1), fontsize=11)
-
-        # Add title
-        ax.set_title(
-            "Average Persona Impact Across All Dimensions",
-            fontsize=14,
-            fontweight="bold",
-            pad=20,
-        )
+        cbar = plt.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
+        cbar.set_label("Adjustment", rotation=270, labelpad=18)
 
         plt.tight_layout()
-
         if save_path:
             fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
-            print(f"Saved persona summary radar to {save_path}")
-
         return fig
 
-    def plot_persona_delta_distribution(
+    def plot_summary_radar(
         self,
-        waypoint_results: Sequence[Mapping[str, Any]],
+        waypoint_results: Sequence[Mapping],
         save_path: Optional[Path] = None,
         dimensions: Optional[Sequence[str]] = None,
+        mode: str = "persona",
     ) -> plt.Figure:
         """
-        Plot distribution of persona adjustments (score deltas) across dimensions.
-
-        Shows histograms and box plots of how much persona hints adjust scores
-        from neutral baseline, revealing persona bias patterns.
+        Create radar chart comparing average objective vs persona scores.
 
         Args:
-            waypoint_results: Sequence of waypoint result dicts with persona_adjustments
-            save_path: Optional path to save figure
-            dimensions: Optional ordered list of dimensions to plot
-
-        Returns:
-            Matplotlib figure object
+            waypoint_results: List of waypoint result dicts
+            save_path: Path to save figure
+            dimensions: Dimension keys to plot
+            mode: "persona" or "system"
         """
-        # Infer dimensions
-        dim_keys = self._infer_dimension_keys(
-            dimensions=dimensions, waypoint_results=waypoint_results
-        )
-        dim_config = self._build_dim_config(dim_keys)
+        dim_keys = self._infer_dimensions(dimensions, waypoint_results=waypoint_results)
+        dim_config = self._get_dim_config(dim_keys)
+        objective, persona, _ = _extract_all_scores(waypoint_results, dim_keys, mode)
 
-        # Collect adjustments for each dimension
-        adjustments_by_dim: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
+        obj_avgs = [np.mean(objective[d]) for d in dim_keys]
+        per_avgs = [np.mean(persona[d]) for d in dim_keys]
 
-        for r in waypoint_results:
-            if isinstance(r, Mapping):
-                adj = r.get("persona_adjustments", {})
-            else:
-                adj = getattr(r, "persona_adjustments", {})
+        labels = [dim_config[d]["label"] for d in dim_keys]
+        angles = np.linspace(0, 2 * np.pi, len(dim_keys), endpoint=False).tolist()
 
-            if adj:
-                for dim in dim_keys:
-                    val = adj.get(dim)
-                    if val is not None:
-                        adjustments_by_dim[dim].append(float(val))
+        obj_avgs = obj_avgs + obj_avgs[:1]
+        per_avgs = per_avgs + per_avgs[:1]
+        angles = angles + angles[:1]
 
-        # Create subplot with histogram and box plot
-        fig = plt.figure(figsize=(16, 10), dpi=self.dpi)
-        gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
+        label_obj = "System 1" if mode == "system" else "Objective"
+        label_per = "System 2" if mode == "system" else "Persona-Aware"
 
-        # Top: Histograms for first 4 dimensions
-        for idx, dim in enumerate(dim_keys[:4]):
-            ax = fig.add_subplot(gs[idx // 2, idx % 2])
-            config = dim_config[dim]
-            deltas = adjustments_by_dim[dim]
+        # Use clearer, more contrasting colors
+        color_obj = "#3B82F6"  # Bright blue
+        color_per = "#F97316"  # Bright orange
 
-            if not deltas:
-                ax.text(
-                    0.5,
-                    0.5,
-                    "No persona adjustments",
-                    ha="center",
-                    va="center",
-                    transform=ax.transAxes,
-                    fontsize=10,
-                    style="italic",
-                    color="gray",
-                )
-                ax.set_title(config["label"], fontsize=12, fontweight="bold")
-                continue
-
-            # Plot histogram
-            ax.hist(
-                deltas,
-                bins=20,
-                color=config["color"],
-                alpha=0.7,
-                edgecolor="black",
-                linewidth=0.5,
-            )
-
-            # Add vertical line at zero
-            ax.axvline(x=0, color="gray", linestyle="--", linewidth=1.5, alpha=0.6)
-
-            # Add mean and median lines
-            mean_delta = np.mean(deltas)
-            median_delta = np.median(deltas)
-
-            ax.axvline(
-                x=mean_delta,
-                color="red",
-                linestyle="-",
-                linewidth=2,
-                alpha=0.8,
-                label=f"Mean: {mean_delta:+.2f}",
-            )
-            ax.axvline(
-                x=median_delta,
-                color="blue",
-                linestyle="-.",
-                linewidth=2,
-                alpha=0.8,
-                label=f"Median: {median_delta:+.2f}",
-            )
-
-            ax.set_title(config["label"], fontsize=12, fontweight="bold")
-            ax.set_xlabel("Score Adjustment (Persona - Neutral)", fontsize=10)
-            ax.set_ylabel("Frequency", fontsize=10)
-            ax.legend(loc="best", fontsize=9)
-            ax.grid(True, alpha=0.3, linestyle=":")
-
-        # Bottom: Box plot comparing all dimensions
-        ax_box = fig.add_subplot(gs[2, :])
-
-        # Prepare data for box plot
-        box_data = []
-        box_labels = []
-
-        for dim in dim_keys:
-            deltas = adjustments_by_dim[dim]
-            if deltas:
-                box_data.append(deltas)
-                box_labels.append(dim_config[dim]["label"])
-
-        if box_data:
-            bp = ax_box.boxplot(
-                box_data,
-                labels=box_labels,
-                patch_artist=True,
-                notch=True,
-                showmeans=True,
-            )
-
-            # Color boxes
-            for idx, (patch, dim) in enumerate(
-                zip(bp["boxes"], dim_keys[: len(box_data)])
-            ):
-                config = dim_config.get(dim, {})
-                color = config.get("color", "#94A3B8")
-                patch.set_facecolor(color)
-                patch.set_alpha(0.6)
-
-            # Add horizontal line at zero
-            ax_box.axhline(y=0, color="gray", linestyle="--", linewidth=1.5, alpha=0.6)
-
-            ax_box.set_title(
-                "Persona Adjustment Distribution by Dimension",
-                fontsize=13,
-                fontweight="bold",
-            )
-            ax_box.set_ylabel("Score Adjustment", fontsize=11)
-            ax_box.set_xlabel("Dimension", fontsize=11)
-            ax_box.grid(True, alpha=0.3, linestyle=":", axis="y")
-            ax_box.tick_params(axis="x", rotation=45)
-
-        plt.suptitle(
-            "Persona Adjustment Patterns (Persona - Neutral)",
-            fontsize=15,
-            fontweight="bold",
-            y=0.995,
+        fig, ax = plt.subplots(
+            figsize=(10, 10), subplot_kw=dict(projection="polar"), dpi=self.dpi
         )
 
+        # Plot objective scores with lower opacity for base layer
+        ax.plot(
+            angles,
+            obj_avgs,
+            "o--",
+            linewidth=3,
+            color=color_obj,
+            label=label_obj,
+            markersize=8,
+            alpha=0.85,
+        )
+        ax.fill(angles, obj_avgs, alpha=0.12, color=color_obj)
+
+        # Plot persona scores on top with higher opacity
+        ax.plot(
+            angles,
+            per_avgs,
+            "s-",
+            linewidth=3.5,
+            color=color_per,
+            label=label_per,
+            markersize=7,
+            alpha=0.95,
+        )
+        ax.fill(angles, per_avgs, alpha=0.18, color=color_per)
+
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(labels, fontsize=20, fontweight="bold")
+        ax.set_ylim(0, 10)
+        ax.set_yticks(PlotConfig.RADAR_YTICKS)
+        ax.set_yticklabels([])  # Hide radial tick labels
+        ax.grid(True, linestyle="-", linewidth=1.0, alpha=0.35, color="#999999")
+        ax.legend(
+            loc="upper right",
+            bbox_to_anchor=(1.35, 1.12),
+            fontsize=14,
+            frameon=True,
+            framealpha=0.95,
+            edgecolor="#CCCCCC",
+        )
+        ax.set_title("Average Score Comparison", fontsize=16, fontweight="bold", pad=25)
+
+        plt.tight_layout()
         if save_path:
             fig.savefig(save_path, dpi=self.dpi, bbox_inches="tight")
-            print(f"Saved persona delta distribution to {save_path}")
-
         return fig
 
-    @classmethod
-    def from_jsonl(
-        cls,
-        jsonl_path: Path,
-        score_fields: Optional[List[str]] = None,
-        framework_id: Optional[str] = None,
-    ) -> Tuple[Dict[str, List[float]], List[str], List[Mapping]]:
+    # -------------------------------------------------------------------------
+    # Batch Generation
+    # -------------------------------------------------------------------------
+
+    def generate_report(
+        self,
+        waypoint_results: Sequence[Mapping],
+        output_dir: Path,
+        chapters: Optional[List[Dict]] = None,
+        mode: str = "persona",
+        include_radar: bool = False,
+    ) -> Dict[str, Path]:
         """
-        Load scores from JSONL file and create visualizations.
+        Generate complete visualization report.
 
         Args:
-            jsonl_path: Path to JSONL evaluation file
-            score_fields: Explicit score field names (otherwise inferred from data or framework)
-            framework_id: Optional framework id to fall back to for dimension names
+            waypoint_results: List of waypoint result dicts
+            output_dir: Directory to save visualizations
+            chapters: Optional narrative chapters
+            mode: "persona" or "system"
+            include_radar: Whether to generate per-waypoint radar charts
 
         Returns:
-            Tuple of (scores dict, waypoint_ids list, analyses list)
+            Dict mapping output names to file paths
         """
-        scores: Dict[str, List[float]] = {}
-        waypoint_ids: List[str] = []
-        analyses: List[Mapping] = []
-        framework_dims: List[str] = []
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        paths: Dict[str, Path] = {}
 
-        if framework_id:
-            try:
-                from src.config import load_framework
-
-                framework = load_framework(framework_id)
-                framework_dims = [dim["id"] for dim in framework.get("dimensions", [])]
-            except Exception:
-                framework_dims = []
-
-        with open(jsonl_path, "r", encoding="utf-8") as f:
-            for idx, line in enumerate(f):
-                data = json.loads(line)
-                if idx == 0 and score_fields is None:
-                    # Infer score fields from first record (exclude obvious metadata)
-                    excluded = {
-                        "waypoint_id",
-                        "image_id",
-                        "timestamp",
-                        "gps",
-                        "heading",
-                    }
-                    score_fields = [
-                        k
-                        for k in data.keys()
-                        if k not in excluded and isinstance(data.get(k), (int, float))
-                    ]
-                    if not score_fields and framework_dims:
-                        score_fields = framework_dims
-                    if not score_fields:
-                        score_fields = list(DEFAULT_SCORE_ORDER)
-                if score_fields is None:
-                    score_fields = framework_dims or list(DEFAULT_SCORE_ORDER)
-
-                waypoint_id = data.get("waypoint_id", str(len(waypoint_ids)))
-                waypoint_ids.append(str(waypoint_id))
-                record_scores: Dict[str, float] = {}
-
-                for field in score_fields:
-                    score = data.get(field, data.get(f"{field}_score", 0))
-                    value = float(score)
-                    scores.setdefault(field, []).append(value)
-                    record_scores[field] = value
-
-                record = {
-                    "waypoint_id": waypoint_id,
-                    "scores": record_scores,
-                    "visual_change_detected": data.get(
-                        "visual_change_detected", data.get("visual_change", False)
-                    ),
-                }
-                if "phash_distance" in data:
-                    record["phash_distance"] = data["phash_distance"]
-                analyses.append(record)
-
-        return scores, waypoint_ids, analyses
-
-
-def plot_dual_system_analysis(
-    waypoint_results: List[Dict[str, Any]],
-    narrative_chapters: Optional[List[Dict[str, Any]]] = None,
-    output_dir: Path = Path("."),
-    dimensions: Optional[Sequence[str]] = None,
-    framework_id: str = DEFAULT_FRAMEWORK_ID,
-    generate_radar_sets: bool = False,
-) -> Dict[str, Path]:
-    """Generate complete dual-system analysis visualizations."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    viz = RouteVisualizer(framework_id=framework_id)
-    paths: Dict[str, Path] = {}
-    dim_keys = viz._infer_dimension_keys(
-        dimensions=dimensions, waypoint_results=waypoint_results
-    )
-
-    comparison_path = output_dir / "system1_vs_system2_comparison.png"
-    viz.plot_dual_system_comparison(
-        waypoint_results,
-        save_path=comparison_path,
-        dimensions=dim_keys,
-    )
-    paths["comparison"] = comparison_path
-
-    heatmap_path = output_dir / "system2_adjustments_heatmap.png"
-    viz.plot_adjustment_heatmap(
-        waypoint_results,
-        save_path=heatmap_path,
-        dimensions=dim_keys,
-    )
-    paths["heatmap"] = heatmap_path
-
-    waypoint_ids = [r["waypoint_id"] for r in waypoint_results]
-
-    # Get indices where System 2 was triggered
-    system2_triggered_indices = [
-        i for i, r in enumerate(waypoint_results) if r.get("system2_triggered", False)
-    ]
-    system2_triggered_waypoints = [waypoint_ids[i] for i in system2_triggered_indices]
-
-    system1_scores: Dict[str, List[float]] = {}
-    for dim in dim_keys:
-        system1_scores[dim] = [
-            r["system1_scores"].get(dim, 0) for r in waypoint_results
-        ]
-
-    system1_path = output_dir / "system1_scores.png"
-    viz.plot_scores_with_trends(
-        system1_scores,
-        waypoint_ids=[str(wid) for wid in waypoint_ids],
-        title="System 1 Scores (Raw VLM Perception)",
-        save_path=system1_path,
-        dimensions=dim_keys,
-        system2_triggered_waypoints=system2_triggered_waypoints,
-    )
-    paths["system1"] = system1_path
-
-    final_scores: Dict[str, List[float]] = {}
-    for dim in dim_keys:
-        final_scores[dim] = [
-            (
-                r.get("system2_scores", {}).get(dim, r["system1_scores"].get(dim, 0))
-                if r.get("system2_scores")
-                else r["system1_scores"].get(dim, 0)
-            )
-            for r in waypoint_results
-        ]
-
-    final_path = output_dir / "final_scores.png"
-    viz.plot_scores_with_trends(
-        final_scores,
-        waypoint_ids=[str(wid) for wid in waypoint_ids],
-        title="Final Scores (System 2 when triggered)",
-        save_path=final_path,
-        dimensions=dim_keys,
-        system2_triggered_waypoints=system2_triggered_waypoints,
-    )
-    paths["final_scores"] = final_path
-
-    narrative_path = output_dir / "narrative_timeline.png"
-    viz.plot_narrative_timeline(
-        narrative_chapters=narrative_chapters,
-        waypoint_scores=final_scores,
-        save_path=narrative_path,
-        dimensions=dim_keys,
-    )
-    paths["narrative"] = narrative_path
-
-    if generate_radar_sets:
-        radar_dirs = viz.plot_dual_system_radar_charts(
-            waypoint_results=waypoint_results,
-            output_dir=output_dir,
-            dimensions=dim_keys,
+        dim_keys = self._infer_dimensions(waypoint_results=waypoint_results)
+        objective, persona, waypoint_ids = _extract_all_scores(
+            waypoint_results, dim_keys, mode
         )
-        paths.update(radar_dirs)
 
-    return paths
+        triggered = [
+            waypoint_ids[i]
+            for i, r in enumerate(waypoint_results)
+            if _get(r, "system2_triggered", False)
+        ]
+
+        # 1. Objective scores
+        obj_path = output_dir / "scores_objective.png"
+        self.plot_scores(
+            objective,
+            waypoint_ids,
+            "Objective Scores",
+            save_path=obj_path,
+            dimensions=dim_keys,
+            markers=triggered,
+        )
+        paths["objective_scores"] = obj_path
+
+        # 2. Persona/Final scores
+        per_path = output_dir / "scores_final.png"
+        self.plot_scores(
+            persona,
+            waypoint_ids,
+            "Final Scores",
+            save_path=per_path,
+            dimensions=dim_keys,
+            markers=triggered,
+        )
+        paths["final_scores"] = per_path
+
+        # 3. Comparison
+        comp_path = output_dir / "comparison.png"
+        self.plot_comparison(
+            waypoint_results, save_path=comp_path, dimensions=dim_keys, mode=mode
+        )
+        paths["comparison"] = comp_path
+
+        # 4. Overview
+        over_path = output_dir / "overview.png"
+        self.plot_overview(
+            waypoint_results, save_path=over_path, dimensions=dim_keys, mode=mode
+        )
+        paths["overview"] = over_path
+
+        # 5. Summary radar
+        radar_path = output_dir / "summary_radar.png"
+        self.plot_summary_radar(
+            waypoint_results, save_path=radar_path, dimensions=dim_keys, mode=mode
+        )
+        paths["summary_radar"] = radar_path
+
+        # 8. Route scatter (GPS map) - Generate both objective and persona versions
+        try:
+            # Objective scores version
+            scatter_obj_path = output_dir / "route_scatter_objective.png"
+            self.plot_route_scatter(
+                waypoint_results,
+                title="Route Map - Objective Scores",
+                save_path=scatter_obj_path,
+                dimensions=dim_keys,
+                score_type="objective",
+                mode=mode,
+            )
+            paths["route_scatter_objective"] = scatter_obj_path
+
+            # Persona scores version
+            scatter_per_path = output_dir / "route_scatter_persona.png"
+            self.plot_route_scatter(
+                waypoint_results,
+                title="Route Map - Persona Scores",
+                save_path=scatter_per_path,
+                dimensions=dim_keys,
+                score_type="persona",
+                mode=mode,
+            )
+            paths["route_scatter_persona"] = scatter_per_path
+        except ValueError as e:
+            # No GPS data available - skip scatter plot
+            print(f"Skipping route scatter: {e}")
+        except Exception as e:
+            # Other errors - log but continue
+            print(f"Warning: Could not generate route scatter plot: {e}")
+
+        # 6. Timeline with chapters
+        if chapters:
+            timeline_path = output_dir / "timeline.png"
+            self.plot_timeline(
+                persona,
+                chapters,
+                "Narrative Timeline",
+                save_path=timeline_path,
+                dimensions=dim_keys,
+            )
+            paths["timeline"] = timeline_path
+
+        # 7. Heatmap
+        heatmap_data = np.array([persona[d] for d in dim_keys])
+        heatmap_path = output_dir / "heatmap.png"
+        dim_labels = [self._get_dim_config(dim_keys)[d]["label"] for d in dim_keys]
+        self.plot_heatmap(
+            heatmap_data,
+            dim_labels,
+            waypoint_ids,
+            "Score Heatmap",
+            save_path=heatmap_path,
+        )
+        paths["heatmap"] = heatmap_path
+
+        # 8. Per-waypoint radar charts (optional)
+        if include_radar:
+            radar_base_dir = output_dir / "radar_charts"
+            radar_base_dir.mkdir(exist_ok=True)
+
+            # Create subdirectories for objective and comparison charts
+            radar_obj_dir = radar_base_dir / "objective"
+            radar_comp_dir = radar_base_dir / "comparison"
+            radar_obj_dir.mkdir(exist_ok=True)
+            radar_comp_dir.mkdir(exist_ok=True)
+
+            for idx, result in enumerate(waypoint_results):
+                wp_id = waypoint_ids[idx]
+                obj_scores, per_scores = _get_scores_from_result(result, dim_keys, mode)
+
+                # Create labels for radar charts
+                obj_labels = {
+                    self._get_dim_config(dim_keys)[d]["label"]: obj_scores[d]
+                    for d in dim_keys
+                }
+                per_labels = {
+                    self._get_dim_config(dim_keys)[d]["label"]: per_scores[d]
+                    for d in dim_keys
+                }
+
+                # Generate objective-only radar chart with bright blue color
+                obj_radar_path = radar_obj_dir / f"radar_wp_{wp_id}.png"
+                fig_obj = self.plot_radar(
+                    obj_labels,
+                    f"Waypoint {wp_id} - Objective",
+                    save_path=obj_radar_path,
+                    color="#3B82F6",  # Bright blue
+                )
+                plt.close(fig_obj)
+
+                # Generate comparison radar chart
+                comp_radar_path = radar_comp_dir / f"radar_wp_{wp_id}.png"
+                fig_comp = self.plot_radar_comparison(
+                    obj_labels,
+                    per_labels,
+                    f"Waypoint {wp_id} - Comparison",
+                    save_path=comp_radar_path,
+                    mode=mode,
+                )
+                plt.close(fig_comp)
+
+            paths["radar_objective_dir"] = radar_obj_dir
+            paths["radar_comparison_dir"] = radar_comp_dir
+
+        return paths
+
+
+# =============================================================================
+# Convenience Functions
+# =============================================================================
 
 
 def plot_analysis_results(
     analyses: Iterable[Mapping],
     output_path: Path,
     dimensions: Optional[Sequence[str]] = None,
+    framework_id: str = DEFAULT_FRAMEWORK_ID,
 ) -> Path:
     """
-    Convenience helper: plot waypoint scores directly from analysis outputs.
+    Quick plot of analysis results.
 
     Args:
-        analyses: Iterable of WaypointAnalysis-like objects or dicts
-        output_path: PNG path to write
-        dimensions: Optional ordered list of dimensions to plot
+        analyses: Iterable of analysis records
+        output_path: Path to save PNG
+        dimensions: Optional dimension keys
+        framework_id: Framework ID for config
     """
     analyses_list = list(analyses)
     if not analyses_list:
-        raise ValueError("No analyses provided for plotting.")
+        raise ValueError("No analyses provided")
 
-    def get(obj, key, default=None):
-        if isinstance(obj, Mapping):
-            return obj.get(key, default)
-        return getattr(obj, key, default)
+    viz = RouteVisualizer(framework_id=framework_id)
+    dim_keys = viz._infer_dimensions(dimensions, waypoint_results=analyses_list)
 
-    def _coerce_float(value: object, default: float = 0.0) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
+    # Extract data
+    scores: Dict[str, List[float]] = {d: [] for d in dim_keys}
+    waypoint_ids: List[str] = []
+    visual_changes: List[str] = []
 
-    def _coerce_waypoint_id(raw_wp: object, fallback_idx: int) -> Tuple[float, str]:
-        """Return numeric waypoint for plotting plus the display label."""
-        label = raw_wp if raw_wp is not None else fallback_idx
-        try:
-            numeric = float(raw_wp)
-        except (TypeError, ValueError):
-            numeric = float(fallback_idx)
-        return numeric, str(label)
+    for idx, a in enumerate(analyses_list):
+        wp_id = str(_get(a, "waypoint_id", idx))
+        waypoint_ids.append(wp_id)
 
-    def _format_tick(label: str, numeric: float) -> str:
-        try:
-            return f"wp{int(float(label)):03d}"
-        except (TypeError, ValueError):
-            try:
-                return f"wp{int(round(numeric)):03d}"
-            except (TypeError, ValueError):
-                return str(label)
-
-    discovered_dims: Set[str] = set()
-    records: List[Dict] = []
-    for idx, analysis in enumerate(analyses_list):
-        waypoint = get(analysis, "waypoint_id", idx)
-        numeric_wp, label = _coerce_waypoint_id(waypoint, idx)
-        scores_dict = get(analysis, "scores", {}) or {}
-        if not scores_dict:
-            # Fall back to system 2 (final) scores, then system 1 scores
-            scores_dict = (
-                get(analysis, "system2_scores", {})
-                or get(analysis, "system1_scores", {})
-                or {}
-            )
-        discovered_dims.update(scores_dict.keys())
-        visual_change = bool(
-            get(
-                analysis,
-                "visual_change_detected",
-                get(analysis, "visual_change", False),
-            )
+        score_source = (
+            _get(a, "scores")
+            or _get(a, "system2_scores")
+            or _get(a, "system1_scores")
+            or {}
         )
-        records.append(
-            {
-                "order": idx,
-                "numeric_id": numeric_wp,
-                "label": label,
-                "scores": scores_dict,
-                "visual_change": visual_change,
-            }
-        )
+        for d in dim_keys:
+            scores[d].append(_coerce_float(score_source.get(d, 0)))
 
-    if dimensions:
-        dim_keys = list(dimensions)
-    else:
-        ordered_defaults = [
-            dim for dim in DEFAULT_SCORE_ORDER if dim in discovered_dims
-        ]
-        remaining = sorted(discovered_dims - set(ordered_defaults))
-        dim_keys = ordered_defaults + remaining
-    if not dim_keys:
-        raise ValueError("No dimensions found in analyses.")
+        if _get(a, "visual_change_detected") or _get(a, "visual_change"):
+            visual_changes.append(wp_id)
 
-    # Ensure chronological ordering using numeric ids (fallbacks keep insertion order)
-    records.sort(key=lambda rec: (rec["numeric_id"], rec["order"]))
-    x_values = [rec["numeric_id"] for rec in records]
-    xtick_labels = [_format_tick(rec["label"], rec["numeric_id"]) for rec in records]
-    visual_change_positions = [
-        rec["numeric_id"] for rec in records if rec["visual_change"]
-    ]
-
-    scores_by_dim: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
-    for dim in dim_keys:
-        for record in records:
-            scores_by_dim[dim].append(
-                _coerce_float(record["scores"].get(dim, 0.0), default=0.0)
-            )
-
-    avg_scores = [
-        float(np.mean([scores_by_dim[dim][idx] for dim in dim_keys]))
-        for idx in range(len(records))
-    ]
-
-    fig, ax = plt.subplots(figsize=(16, 6))
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
-
-    for idx, dim in enumerate(dim_keys):
-        color = DEFAULT_SCORE_COLORS.get(dim) or plt.cm.tab10(idx % 10)
-        ax.plot(
-            x_values,
-            scores_by_dim[dim],
-            marker="o",
-            linewidth=2,
-            markersize=4,
-            label=dim,
-            color=color,
-        )
-
-    ax.plot(
-        x_values,
-        avg_scores,
-        linestyle="--",
-        linewidth=2.5,
-        color="black",
-        label="average",
+    viz.plot_scores(
+        scores,
+        waypoint_ids,
+        title="Scores by Dimension",
+        save_path=output_path,
+        dimensions=dim_keys,
+        markers=visual_changes,
     )
-
-    for wp in visual_change_positions:
-        ax.axvline(
-            x=wp,
-            color="gray",
-            linestyle="-",
-            alpha=0.35,
-            linewidth=1,
-            zorder=0,
-        )
-
-    ax.set_title("Scores by Dimension (Average included, Visual Change Highlighted)")
-    ax.set_xlabel("Waypoint ID")
-    ax.set_ylabel("Score")
-    ax.set_ylim(0, 10.5)
-    ax.set_yticks(range(0, 11, 1))
-    ax.set_axisbelow(True)
-    for spine in ("left", "bottom"):
-        ax.spines[spine].set_linewidth(1.2)
-        ax.spines[spine].set_color("#1F2933")
-        ax.spines[spine].set_visible(True)
-    for spine in ("top", "right"):
-        ax.spines[spine].set_visible(False)
-    ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5))
-
-    if x_values:
-        ax.set_xticks(x_values)
-        ax.set_xticklabels(xtick_labels, rotation=90, fontsize=6)
-
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
+    plt.close()
     return output_path
 
 
 def regenerate_visualizations(
     output_dir: Path,
     framework_id: str = DEFAULT_FRAMEWORK_ID,
-    personality: str = "unknown",
-    only: str = "all",
-    radar_charts: bool = False,
+    mode: str = "persona",
+    include_radar: bool = False,
 ) -> Dict[str, Path]:
     """
-    Regenerate persona/system visualizations using an existing analysis_results.json.
+    Regenerate all visualizations from existing analysis_results.json.
 
-    This replaces the old examples/regenerate_visualizations.py script.
+    Args:
+        output_dir: Directory containing analysis_results.json
+        framework_id: Framework ID
+        mode: "persona" or "system"
+        include_radar: Generate per-waypoint radar charts
+
+    Returns:
+        Dict of generated file paths
     """
     output_dir = Path(output_dir)
-    if not output_dir.exists():
-        raise FileNotFoundError(f"Output directory not found: {output_dir}")
-
     analysis_path = output_dir / "analysis_results.json"
+
     if not analysis_path.exists():
-        raise FileNotFoundError(
-            f"analysis_results.json not found in {output_dir}. Run a demo first."
-        )
+        raise FileNotFoundError(f"analysis_results.json not found in {output_dir}")
 
-    analyses = _load_analyses_from_json(analysis_path)
+    analyses = load_analyses(analysis_path)
+
+    # Load chapters if available
+    chapters_path = output_dir / "narrative_chapters.json"
+    chapters = None
+    if chapters_path.exists():
+        chapters = json.loads(chapters_path.read_text())
+
     viz_dir = output_dir / "visualizations"
-    viz_dir.mkdir(parents=True, exist_ok=True)
-
     viz = RouteVisualizer(framework_id=framework_id)
-    viz_paths: Dict[str, Path] = {}
 
-    def _get(obj, key, default=None):
-        if isinstance(obj, Mapping):
-            return obj.get(key, default)
-        return getattr(obj, key, default)
-
-    if only in ("persona", "all"):
-        dim_keys = viz._infer_dimension_keys(dimensions=None, waypoint_results=analyses)
-        waypoint_ids = [
-            str(_get(r, "waypoint_id", idx)) for idx, r in enumerate(analyses)
-        ]
-        system2_triggers = [
-            str(_get(r, "waypoint_id", idx))
-            for idx, r in enumerate(analyses)
-            if _get(r, "system2_triggered", False)
-        ]
-
-        objective_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
-        persona_scores: Dict[str, List[float]] = {dim: [] for dim in dim_keys}
-
-        for result in analyses:
-            # Try new field names first, fallback to old for backward compatibility
-            objective = (
-                _get(result, "objective_scores")
-                or _get(result, "neutral_scores")
-                or _get(result, "system1_scores")
-                or {}
-            )
-            persona = (
-                _get(result, "persona_scores") or _get(result, "scores") or objective
-            )
-
-            for dim in dim_keys:
-                objective_scores[dim].append(float(objective.get(dim, 0) or 0.0))
-                persona_scores[dim].append(float(persona.get(dim, 0) or 0.0))
-
-        comparison_path = viz_dir / "persona_comparison.png"
-        viz.plot_persona_comparison(
-            waypoint_results=analyses,
-            title=f"Objective vs Persona-Aware Evaluation ({personality})",
-            save_path=comparison_path,
-            dimensions=dim_keys,
-        )
-        viz_paths["persona_comparison"] = comparison_path
-
-        overview_path = viz_dir / "persona_objective_overview.png"
-        viz.plot_persona_neutral_overview(
-            waypoint_results=analyses,
-            title=f"Objective vs Persona Overview ({personality})",
-            save_path=overview_path,
-            dimensions=dim_keys,
-        )
-        viz_paths["persona_overview"] = overview_path
-
-        radar_path = viz_dir / "persona_summary_radar.png"
-        viz.plot_persona_summary_radar(
-            waypoint_results=analyses,
-            save_path=radar_path,
-            dimensions=dim_keys,
-        )
-        viz_paths["persona_radar"] = radar_path
-
-        delta_path = viz_dir / "persona_delta_distribution.png"
-        viz.plot_persona_delta_distribution(
-            waypoint_results=analyses,
-            save_path=delta_path,
-            dimensions=dim_keys,
-        )
-        viz_paths["persona_delta"] = delta_path
-
-        objective_path = viz_dir / "scores_objective.png"
-        viz.plot_scores_with_trends(
-            scores=objective_scores,
-            waypoint_ids=waypoint_ids,
-            title="Objective Evaluation (Research)",
-            save_path=objective_path,
-            dimensions=dim_keys,
-            system2_triggered_waypoints=system2_triggers,
-        )
-        viz_paths["objective_scores"] = objective_path
-
-        persona_path = viz_dir / "scores_persona_aware.png"
-        viz.plot_scores_with_trends(
-            scores=persona_scores,
-            waypoint_ids=waypoint_ids,
-            title=f"Persona-Aware Evaluation ({personality})",
-            save_path=persona_path,
-            dimensions=dim_keys,
-            system2_triggered_waypoints=system2_triggers,
-        )
-        viz_paths["persona_scores"] = persona_path
-
-    if only in ("system", "all"):
-        narrative_json = output_dir / "narrative_chapters.json"
-        narrative_chapters = None
-        if narrative_json.exists():
-            narrative_chapters = json.loads(narrative_json.read_text())
-
-        system_paths = plot_dual_system_analysis(
-            waypoint_results=analyses,
-            narrative_chapters=narrative_chapters,
-            output_dir=viz_dir,
-            framework_id=framework_id,
-            generate_radar_sets=radar_charts,
-        )
-        viz_paths.update(system_paths)
-
-    return viz_paths
+    return viz.generate_report(
+        analyses,
+        output_dir=viz_dir,
+        chapters=chapters,
+        mode=mode,
+        include_radar=include_radar,
+    )
 
 
-# ============================================================================
-# CLI helper to visualize existing outputs
-# ============================================================================
-
-
-def _load_analyses_from_json(path: Path) -> List[Mapping]:
-    data = json.loads(path.read_text())
-    if isinstance(data, list):
-        return data
-    raise ValueError("Expected a JSON list of analysis records.")
-
-
-def _load_analyses_from_csv(path: Path) -> List[Mapping]:
-    by_waypoint: Dict[str, Dict] = {}
-    with path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            wp = row.get("image_id") or row.get("waypoint_id")
-            dim = row.get("dimension_id") or row.get("dimension_name")
-            score = row.get("score")
-            if wp is None or dim is None or score is None:
-                continue
-            record = by_waypoint.setdefault(wp, {"waypoint_id": wp, "scores": {}})
-            try:
-                record["scores"][dim] = float(score)
-            except ValueError:
-                continue
-
-    def _sort_key(item):
-        wp = item["waypoint_id"]
-        try:
-            return int(wp)
-        except (TypeError, ValueError):
-            return wp
-
-    return [by_waypoint[k] for k in sorted(by_waypoint.keys(), key=_sort_key)]
-
-
-def _extract_visual_change_waypoints(
-    analyses: Iterable[Mapping],
-) -> List[str]:
-    """Return waypoint ids that include a visual change flag."""
-    change_ids: List[str] = []
-
-    for idx, analysis in enumerate(analyses):
-        if isinstance(analysis, Mapping):
-            wp = analysis.get("waypoint_id", idx)
-            change_flag = analysis.get(
-                "visual_change_detected", analysis.get("visual_change", False)
-            )
-        else:
-            wp = getattr(analysis, "waypoint_id", idx)
-            change_flag = getattr(
-                analysis,
-                "visual_change_detected",
-                getattr(analysis, "visual_change", False),
-            )
-        if change_flag:
-            change_ids.append(str(wp))
-
-    return change_ids
+# =============================================================================
+# CLI
+# =============================================================================
 
 
 def main():
-    """CLI entrypoint: visualize analysis JSON/CSV/JSONL outputs."""
+    """CLI entrypoint for visualization."""
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Plot analysis metrics from JSON/CSV/JSONL outputs.",
+        description="Generate visualizations from analysis results.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "input",
-        nargs="?",
+        "input", nargs="?", type=Path, help="Analysis file (JSON/CSV/JSONL)"
+    )
+    parser.add_argument("-o", "--output", type=Path, help="Output path for single plot")
+    parser.add_argument(
+        "-f", "--framework", default=DEFAULT_FRAMEWORK_ID, help="Framework ID"
+    )
+    parser.add_argument("-d", "--dimensions", nargs="+", help="Dimension keys to plot")
+    parser.add_argument(
+        "--regenerate",
         type=Path,
-        help="Path to analysis_results.json/.csv/.jsonl",
+        metavar="DIR",
+        help="Regenerate all visualizations from output directory",
     )
     parser.add_argument(
-        "-o",
-        "--output",
-        type=Path,
-        help="Where to save the plot PNG (default: input with .png)",
+        "--mode",
+        choices=["persona", "system"],
+        default="persona",
+        help="Comparison mode",
     )
-    parser.add_argument(
-        "--regenerate-output-dir",
-        type=Path,
-        help="Regenerate persona/system visualizations from an output directory (replaces examples/regenerate_visualizations.py)",
-    )
-    parser.add_argument(
-        "--regenerate-only",
-        choices=["persona", "system", "all"],
-        default="all",
-        help="Subset of visualizations to regenerate (with --regenerate-output-dir)",
-    )
-    parser.add_argument(
-        "--personality",
-        default="unknown",
-        help="Personality label for persona plots (regeneration mode)",
-    )
-    parser.add_argument(
-        "-d",
-        "--dimensions",
-        nargs="+",
-        help="Explicit dimension ids to plot (otherwise derived from data)",
-    )
-    parser.add_argument(
-        "--radar-charts",
-        action="store_true",
-        help="Generate radar charts for waypoints that flagged visual change",
-    )
-    parser.add_argument(
-        "--radar-dir",
-        type=Path,
-        help="Override directory for radar chart outputs (default: alongside input)",
-    )
-    parser.add_argument(
-        "-f",
-        "--framework-id",
-        default=DEFAULT_FRAMEWORK_ID,
-        help="Framework id to use for labels/colors when inferring dimensions",
-    )
+    parser.add_argument("--radar", action="store_true", help="Generate radar charts")
+
     args = parser.parse_args()
 
-    if args.regenerate_output_dir:
+    if args.regenerate:
         paths = regenerate_visualizations(
-            output_dir=args.regenerate_output_dir,
-            framework_id=args.framework_id,
-            personality=args.personality,
-            only=args.regenerate_only,
-            radar_charts=args.radar_charts,
+            args.regenerate,
+            framework_id=args.framework,
+            mode=args.mode,
+            include_radar=args.radar,
         )
-
-        print("Regenerated visualizations:")
+        print("Generated visualizations:")
         for name, path in paths.items():
-            print(f"  - {name}: {path}")
+            print(f"  {name}: {path}")
         return
 
-    if args.input is None:
-        raise SystemExit(
-            "Either provide an input file to plot or --regenerate-output-dir."
-        )
+    if not args.input:
+        parser.error("Provide input file or use --regenerate")
 
-    input_path: Path = args.input
-    if not input_path.exists():
-        raise SystemExit(f"Input not found: {input_path}")
+    if not args.input.exists():
+        raise SystemExit(f"Input not found: {args.input}")
 
-    output_path = args.output or input_path.with_suffix(".png")
-    generate_radar = bool(args.radar_charts or args.radar_dir)
-    radar_dir = args.radar_dir or output_path.parent
-    analyses_for_radar: Optional[List[Mapping]] = None
-    framework_id = args.framework_id
-    viz = RouteVisualizer(framework_id=framework_id)
+    output_path = args.output or args.input.with_suffix(".png")
 
-    suffix = input_path.suffix.lower()
-    if suffix == ".jsonl":
-        scores, waypoint_ids, analyses_for_radar = RouteVisualizer.from_jsonl(
-            input_path, score_fields=args.dimensions, framework_id=framework_id
-        )
-        change_wp_ids = (
-            _extract_visual_change_waypoints(analyses_for_radar)
-            if analyses_for_radar
-            else None
-        )
-        viz.plot_scores_with_trends(
-            scores,
-            waypoint_ids=waypoint_ids,
-            title="Waypoint Metrics by Dimension",
-            dimensions=args.dimensions,
-            visual_change_waypoints=change_wp_ids,
-            save_path=output_path,
-        )
-    elif suffix == ".json":
-        analyses = _load_analyses_from_json(input_path)
-        analyses_for_radar = analyses
-        plot_analysis_results(analyses, output_path, dimensions=args.dimensions)
-    elif suffix == ".csv":
-        analyses = _load_analyses_from_csv(input_path)
-        analyses_for_radar = analyses
-        plot_analysis_results(analyses, output_path, dimensions=args.dimensions)
-    else:
-        raise SystemExit("Unsupported input format. Use .json, .csv, or .jsonl.")
+    analyses = load_analyses(args.input)
+    plot_analysis_results(
+        analyses, output_path, dimensions=args.dimensions, framework_id=args.framework
+    )
 
-    if generate_radar:
-        if not analyses_for_radar:
-            print("No analyses available to generate radar charts.")
-        else:
-            viz.plot_radar_charts(
-                analyses_for_radar, radar_dir, dimensions=args.dimensions
-            )
-
-    print(f"Saved plot to {output_path}")
-    try:
-        plt.show()
-    except Exception:
-        # In headless environments showing may fail; ignore.
-        pass
+    print(f"Saved: {output_path}")
 
 
 if __name__ == "__main__":
