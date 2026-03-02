@@ -1,432 +1,335 @@
 #!/usr/bin/env python3
 """
-Command-line entrypoint for running the CityWalkAgent pipeline.
+CityWalkAgent — main entry point.
 
-This script wraps the high-level pipeline orchestrator with a friendly CLI so
-you can kick off end-to-end analyses (route generation → image collection →
-VLM scoring → sequential analytics) or re-run the workflow on an existing route.
+Subcommands:
+  run      Analyze a walking route (collect images + evaluate + visualize)
+  collect  Collect Street View images along a route
+
+Usage:
+  python main.py run     --route-folder data/images/my_route/ --personality homebuyer
+  python main.py run     --start 37.5665,126.9780 --end 37.5512,126.9882
+  python main.py collect --start 37.5665,126.9780 --end 37.5512,126.9882 --output data/images/my_route
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Optional, Tuple
 
-# Ensure local src/ package is importable when executed as a script
-REPO_ROOT = Path(__file__).resolve().parent
-SRC_DIR = REPO_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_DIR = PROJECT_ROOT / "src"
+for p in (PROJECT_ROOT, SRC_DIR):
+    if str(p) not in sys.path:
+        sys.path.insert(0, str(p))
 
-from pipeline import WalkingAgentPipeline, PipelineResult  # noqa: E402
-from config import settings  # noqa: E402
+from src.config import DEFAULT_FRAMEWORK_ID, settings
+from src.agent.walking_agent import WalkingAgent
+from src.utils.visualization import RouteVisualizer, plot_dual_system_analysis
+from src.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
-def _parse_coord(value: str) -> Tuple[float, float]:
-    """Parse a latitude,longitude string into a float tuple."""
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def parse_coord(value: str) -> Tuple[float, float]:
     try:
-        lat_str, lon_str = value.split(",", maxsplit=1)
-        return float(lat_str.strip()), float(lon_str.strip())
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(
-            "Coordinates must be in 'lat,lon' format (e.g., 40.7589,-73.9851)"
-        ) from exc
+        lat, lon = value.split(",")
+        return float(lat.strip()), float(lon.strip())
+    except ValueError:
+        raise argparse.ArgumentTypeError("Format: 'lat,lon'  e.g. 37.5665,126.9780")
 
 
-def _export_agent_results(
-    agent: "WalkingAgent",
-    args: argparse.Namespace,
-    result: dict,
-) -> Optional[Dict[str, Path]]:
-    """Export agent evaluation artifacts using the pipeline exporter."""
-    try:
-        from analysis.comparator import MethodComparator
-        from analysis.sequential_analyzer import SequentialAnalyzer
-    except ImportError:
-        print("Unable to import analysis modules for exporting results.", file=sys.stderr)
-        return None
+def generate_persona_visualizations(
+    analysis_results: list,
+    output_dir: Path,
+    framework_id: str,
+    personality_name: str,
+) -> dict:
+    """Generate visualizations comparing objective vs persona-aware evaluations.
 
-    perception = result.get("perception", {})
-    route_info = perception.get("route_info", {})
-    route = route_info.get("route")
-    evaluations = perception.get("raw_evaluations", [])
+    Args:
+        analysis_results: List of waypoint result dicts with objective_scores and persona_scores
+        output_dir: Directory to save visualizations
+        framework_id: Framework ID for dimension labels
+        personality_name: Name of personality for titles
 
-    if route is None:
-        print("Cannot export agent results: route data missing from perception.", file=sys.stderr)
-        return None
+    Returns:
+        Dict mapping visualization names to file paths
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    viz = RouteVisualizer(framework_id=framework_id)
 
-    if not evaluations:
-        print("Cannot export agent results: no evaluation data available.", file=sys.stderr)
-        return None
+    print("\n" + "=" * 60)
+    print("GENERATING PERSONA IMPACT VISUALIZATIONS")
+    print("=" * 60)
 
-    # Configure pipeline output directory
-    pipeline = agent.pipeline
-    if args.output_dir:
-        pipeline.output_dir = Path(args.output_dir).expanduser().resolve()
+    viz_paths = {}
+
+    # 1. Persona comparison (line plots with arrows)
+    print("\n1. Creating objective vs persona comparison plots...")
+    comparison_path = output_dir / "persona_comparison.png"
+    viz.plot_persona_comparison(
+        waypoint_results=analysis_results,
+        title=f"Objective vs Persona-Aware Evaluation ({personality_name})",
+        save_path=comparison_path,
+    )
+    viz_paths["persona_comparison"] = comparison_path
+
+    # 2. Summary radar chart
+    print("2. Creating persona impact radar chart...")
+    radar_path = output_dir / "persona_summary_radar.png"
+    viz.plot_persona_summary_radar(
+        waypoint_results=analysis_results,
+        save_path=radar_path,
+    )
+    viz_paths["persona_radar"] = radar_path
+
+    # 3. Delta distribution (histograms + box plot)
+    print("3. Creating persona adjustment distribution...")
+    delta_path = output_dir / "persona_delta_distribution.png"
+    viz.plot_persona_delta_distribution(
+        waypoint_results=analysis_results,
+        save_path=delta_path,
+    )
+    viz_paths["persona_delta"] = delta_path
+
+    # 4. Individual score plots (objective and persona separately)
+    print("4. Creating individual score timeline plots...")
+
+    # Extract objective and persona scores
+    waypoint_ids = [str(r["waypoint_id"]) for r in analysis_results]
+    system2_triggers = [
+        str(r["waypoint_id"]) for r in analysis_results if r.get("system2_triggered")
+    ]
+
+    # Get dimensions from first result
+    first_result = analysis_results[0]
+    objective_scores_dict = first_result.get(
+        "objective_scores",
+        first_result.get("neutral_scores", first_result.get("system1_scores", {})),
+    )
+    dimensions = list(objective_scores_dict.keys())
+
+    # Build objective scores dict
+    objective_scores = {dim: [] for dim in dimensions}
+    for r in analysis_results:
+        obj_scores = r.get(
+            "objective_scores", r.get("neutral_scores", r.get("system1_scores", {}))
+        )
+        for dim in dimensions:
+            objective_scores[dim].append(obj_scores.get(dim, 0))
+
+    # Build persona scores dict
+    persona_scores = {dim: [] for dim in dimensions}
+    for r in analysis_results:
+        per_scores = r.get("persona_scores", r.get("scores", {}))
+        for dim in dimensions:
+            persona_scores[dim].append(per_scores.get(dim, 0))
+
+    # Plot objective scores
+    objective_path = output_dir / "scores_objective.png"
+    viz.plot_scores_with_trends(
+        scores=objective_scores,
+        waypoint_ids=waypoint_ids,
+        title="Objective Evaluation (Research/Framework-Only)",
+        save_path=objective_path,
+        system2_triggered_waypoints=system2_triggers,
+    )
+    viz_paths["objective_scores"] = objective_path
+
+    # Plot persona-aware scores
+    persona_path = output_dir / "scores_persona_aware.png"
+    viz.plot_scores_with_trends(
+        scores=persona_scores,
+        waypoint_ids=waypoint_ids,
+        title=f"Persona-Aware Evaluation ({personality_name}) - Final Scores",
+        save_path=persona_path,
+        system2_triggered_waypoints=system2_triggers,
+    )
+    viz_paths["persona_scores"] = persona_path
+
+    print("\n✅ All visualizations generated!")
+    return viz_paths
+
+
+# ---------------------------------------------------------------------------
+# `run` subcommand
+# ---------------------------------------------------------------------------
+
+def cmd_run(args: argparse.Namespace) -> None:
+    """Analyze a walking route end-to-end."""
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    framework_id = args.framework_id
+    personality  = args.personality
+
+    # ── Visualize-only mode ──────────────────────────────────────────────
+    if args.visualize_only:
+        analysis_path = output_dir / "analysis_results.json"
+        if not analysis_path.exists():
+            print(f"❌  analysis_results.json not found in {output_dir}")
+            sys.exit(1)
+        with open(analysis_path, encoding="utf-8") as f:
+            analysis_results = json.load(f)
+        viz_dir = output_dir / "visualizations"
+        viz_dir.mkdir(parents=True, exist_ok=True)
+        generate_persona_visualizations(analysis_results, viz_dir, framework_id, personality)
+        print(f"✅  Visualizations saved to {viz_dir}")
+        return
+
+    # ── Normal analysis mode ─────────────────────────────────────────────
+    print("=" * 70)
+    print(f"  Persona : {personality}")
+    print(f"  Framework: {framework_id}")
+    print("=" * 70)
+
+    agent = WalkingAgent.from_preset(preset_name=personality, framework_id=framework_id)
+    agent.set_thresholds(phash_threshold=args.phash_threshold)
+
+    if args.route_folder:
+        result = agent.run_with_memory_from_folder(
+            route_folder=args.route_folder,
+            output_dir=output_dir,
+            skip_thinking=args.system1_only,
+        )
+    elif args.start and args.end:
+        result = agent.run_with_memory(
+            start=args.start,
+            end=args.end,
+            interval=args.interval,
+            output_dir=output_dir,
+            skip_thinking=args.system1_only,
+        )
     else:
-        pipeline.output_dir = (settings.results_dir / "agent_runs")
-    pipeline.output_dir.mkdir(parents=True, exist_ok=True)
+        print("❌  Provide --route-folder OR both --start and --end.")
+        sys.exit(1)
 
-    # Re-run analysis to obtain dataclass outputs
-    analyzer = SequentialAnalyzer(
-        route,
-        evaluations,
-        volatility_threshold=settings.volatility_threshold,
-        barrier_threshold=settings.barrier_threshold,
+    # ── Visualizations ───────────────────────────────────────────────────
+    analysis_results = result.get("analysis_results", [])
+    if not analysis_results:
+        print("⚠️  No analysis results — skipping visualizations.")
+        return
+
+    viz_dir = output_dir / "visualizations"
+    viz_dir.mkdir(parents=True, exist_ok=True)
+
+    generate_persona_visualizations(analysis_results, viz_dir, framework_id, personality)
+
+    narrative_json = output_dir / "narrative_chapters.json"
+    narrative_chapters = None
+    if narrative_json.exists():
+        with open(narrative_json, encoding="utf-8") as f:
+            narrative_chapters = json.load(f)
+
+    plot_dual_system_analysis(
+        waypoint_results=analysis_results,
+        narrative_chapters=narrative_chapters,
+        output_dir=viz_dir,
+        framework_id=framework_id,
+        generate_radar_sets=False,
     )
-    seq_analysis = analyzer.full_analysis()
 
-    comparator = MethodComparator(
-        route,
-        evaluations,
-        volatility_threshold=settings.volatility_threshold,
-        barrier_threshold=settings.barrier_threshold,
+    print(f"\n✅  Done. Outputs in: {output_dir}")
+
+
+# ---------------------------------------------------------------------------
+# `collect` subcommand
+# ---------------------------------------------------------------------------
+
+def cmd_collect(args: argparse.Namespace) -> None:
+    """Collect Street View images along a route."""
+    from src.data_collection.route_generator import RouteGenerator
+    from src.data_collection.image_collector import ImageCollector
+
+    output = Path(args.output)
+    output.mkdir(parents=True, exist_ok=True)
+    route_name = args.route_name or f"route_{args.start[0]:.4f}_{args.start[1]:.4f}"
+
+    print(f"Generating route: {args.start} → {args.end}")
+    route_gen = RouteGenerator(api_key=settings.google_maps_api_key)
+    route = route_gen.create_google_maps_route(
+        origin=args.start,
+        destination=args.end,
+        interval_meters=args.interval,
+        route_name=route_name,
     )
-    comparison = comparator.compare()
+    print(f"  ✓ {len(route.waypoints)} waypoints")
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    exported = pipeline._export_results(
+    print(f"Collecting Street View images → {output}")
+    collector = ImageCollector(api_key=settings.google_maps_api_key)
+    results = collector.collect_google_street_view_images_static(
         route,
-        evaluations,
-        seq_analysis,
-        comparison,
-        timestamp,
+        output_dir=str(output),
+        use_route_direction=True,
+        all_around=False,
+        fov=90,
+        pitch=-5,
+        lookahead_distance=2,
+        detect_corners=True,
+        corner_threshold=30.0,
     )
-
-    print("\nAgent outputs exported:")
-    for label, path in exported.items():
-        print(f"  - {label}: {path}")
-
-    return exported
+    success = sum(1 for r in results if r.get("download_success"))
+    print(f"  ✓ {success}/{len(results)} images collected")
+    print(f"\nRun analysis:")
+    print(f"  python main.py run --route-folder {output} --personality balanced")
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    """Configure CLI arguments."""
+# ---------------------------------------------------------------------------
+# Argument parser
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the CityWalkAgent walking-experience analysis pipeline.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        prog="main.py",
+        description="CityWalkAgent — walkability analysis pipeline",
     )
+    sub = parser.add_subparsers(dest="command", required=True)
 
-    group = parser.add_mutually_exclusive_group(required=False)
-    group.add_argument(
-        "--route-file",
-        type=Path,
-        help="Path to an existing route JSON file generated by the pipeline.",
-    )
-    group.add_argument(
-        "--start",
-        type=_parse_coord,
-        help="Starting coordinate as 'lat,lon'. Requires --end.",
-    )
-    group.add_argument(
-        "--route-folder",
-        type=Path,
-        help="Path to a pre-collected route folder (requires collection_metadata.json).",
-    )
+    # ── run ──────────────────────────────────────────────────────────────
+    p_run = sub.add_parser("run", help="Analyze a walking route")
+    src_group = p_run.add_mutually_exclusive_group()
+    src_group.add_argument("--route-folder", type=Path, help="Path to existing image folder")
+    src_group.add_argument("--start", type=parse_coord, metavar="LAT,LON")
+    p_run.add_argument("--end", type=parse_coord, metavar="LAT,LON")
+    p_run.add_argument("--personality", default="balanced",
+                       help="Persona preset (homebuyer, runner, photographer, …)")
+    p_run.add_argument("--framework-id", default=DEFAULT_FRAMEWORK_ID)
+    p_run.add_argument("--output-dir", default="outputs/run", type=str)
+    p_run.add_argument("--interval", type=int, default=20, help="Waypoint interval in metres")
+    p_run.add_argument("--phash-threshold", type=int, default=30)
+    p_run.add_argument("--system1-only", action="store_true",
+                       help="Skip ThinkingModule (faster)")
+    p_run.add_argument("--visualize-only", action="store_true",
+                       help="Regenerate visualizations from existing results")
 
-    parser.add_argument(
-        "--end",
-        type=_parse_coord,
-        help="Ending coordinate as 'lat,lon'. Required unless --route-file is used.",
-    )
-    parser.add_argument(
-        "--interval",
-        type=int,
-        default=settings.default_sampling_interval,
-        help="Sampling interval between waypoints (meters).",
-    )
-    parser.add_argument(
-        "--route-name",
-        type=str,
-        help="Optional name for the generated route.",
-    )
-    parser.add_argument(
-        "--framework",
-        type=str,
-        default=settings.default_framework_id,
-        help="Framework identifier to drive evaluation prompts.",
-    )
-    parser.add_argument(
-        "--provider",
-        type=str,
-        default="claude",
-        help="VLM provider name (claude, openai, qwen).",
-    )
-    parser.add_argument(
-        "--model",
-        type=str,
-        help="Override model name for the selected provider.",
-    )
-    parser.add_argument(
-        "--api-key",
-        type=str,
-        help="Explicit API key; falls back to environment settings if omitted.",
-    )
-    parser.add_argument(
-        "--max-concurrent",
-        type=int,
-        default=5,
-        help="Maximum concurrent VLM requests.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        help="Directory to store pipeline outputs (defaults to settings.results_dir/pipeline).",
-    )
-    parser.add_argument(
-        "--skip-images",
-        action="store_true",
-        help="Skip image collection (assumes waypoints already have image paths).",
-    )
-    parser.add_argument(
-        "--disable-cost-tracking",
-        action="store_true",
-        help="Disable API cost tracking (useful when dependencies are unavailable).",
-    )
-
-    # Agent mode arguments
-    parser.add_argument(
-        "--agent",
-        action="store_true",
-        help="Enable agent mode (uses personality-driven analysis).",
-    )
-    parser.add_argument(
-        "--personality",
-        type=str,
-        default="balanced",
-        help="Personality preset to use in agent mode (safety, scenic, balanced, etc.).",
-    )
-    parser.add_argument(
-        "--use-semantic",
-        action="store_true",
-        default=True,
-        help="Use semantic mapping for personality (adapts to any framework).",
-    )
-    parser.add_argument(
-        "--no-use-semantic",
-        dest="use_semantic",
-        action="store_false",
-        help="Use framework-specific personality configuration instead of semantic mapping.",
-    )
-    parser.add_argument(
-        "--list-personalities",
-        action="store_true",
-        help="List available personality presets and exit.",
-    )
+    # ── collect ──────────────────────────────────────────────────────────
+    p_col = sub.add_parser("collect", help="Collect Street View images along a route")
+    p_col.add_argument("--start",  type=parse_coord, required=True, metavar="LAT,LON")
+    p_col.add_argument("--end",    type=parse_coord, required=True, metavar="LAT,LON")
+    p_col.add_argument("--output", required=True, help="Output directory for images")
+    p_col.add_argument("--interval", type=int, default=20, help="Waypoint interval in metres")
+    p_col.add_argument("--route-name", type=str, default=None)
 
     return parser
 
 
-def _run_pipeline(args: argparse.Namespace) -> PipelineResult:
-    """Instantiate and execute the walking agent pipeline."""
-    pipeline = WalkingAgentPipeline(
-        framework_id=args.framework,
-        vlm_provider=args.provider,
-        vlm_api_key=args.api_key,
-        vlm_model=args.model,
-        max_concurrent=args.max_concurrent,
-        output_dir=args.output_dir,
-        enable_cost_tracking=not args.disable_cost_tracking,
-    )
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
 
-    if args.route_file:
-        return pipeline.analyze_existing_route(args.route_file)
-
-    if args.route_folder:
-        raise ValueError("--route-folder is only supported in agent mode.")
-
-    if args.start is None or args.end is None:
-        raise ValueError("Both --start and --end must be provided when not using --route-file.")
-
-    return pipeline.analyze_route(
-        start=args.start,
-        end=args.end,
-        interval_meters=args.interval,
-        route_name=args.route_name,
-        collect_images=not args.skip_images,
-    )
-
-
-def _list_personalities() -> None:
-    """Print available personality presets and their configurations."""
-    from agent import list_presets, get_preset
-    from config import settings
-
-    print("\n=== Available Agent Personalities ===\n")
-
-    presets = list_presets()
-    framework_id = settings.default_framework_id
-
-    for preset_name in presets:
-        try:
-            # Get personality with semantic mapping
-            personality = get_preset(preset_name, framework_id, use_semantic=True)
-
-            print(f"• {preset_name.upper()}")
-            print(f"  Name: {personality.name}")
-            print(f"  Description: {personality.description}")
-            print(f"  Explanation Style: {personality.explanation_style}")
-            print(f"  Dimension Weights:")
-            for dim, weight in sorted(personality.dimension_weights.items()):
-                print(f"    - {dim}: {weight:.2f}")
-            print()
-
-        except Exception as e:
-            print(f"• {preset_name.upper()}: Error loading ({e})")
-            print()
-
-    print(f"Use with: python main.py --agent --personality <name> --start LAT,LON --end LAT,LON")
-    print(f"Example:  python main.py --agent --personality safety --start 40.7,-73.9 --end 40.8,-73.8\n")
-
-
-def _run_agent(args: argparse.Namespace) -> dict:
-    """Run agent-based route analysis."""
-    from agent import WalkingAgent
-
-    print(f"\n=== Agent Mode: {args.personality.title()} ===\n")
-
-    # Create agent from preset
-    agent = WalkingAgent.from_preset(
-        preset_name=args.personality,
-        framework_id=args.framework,
-        use_semantic=args.use_semantic,
-    )
-
-    print(f"Agent: {agent.metadata.name}")
-    print(f"Description: {agent.metadata.description}")
-    print(f"Framework: {args.framework}")
-    print(f"Configuration: {'Semantic mapping' if args.use_semantic else 'Framework-specific'}")
-    print()
-
-    route_folder_path: Optional[Path] = None
-
-    if args.route_folder:
-        if args.start is not None or args.end is not None:
-            raise ValueError("Provide either --route-folder or --start/--end, not both.")
-
-        route_folder_path = args.route_folder.resolve()
-        print(f"Analyzing existing route folder: {route_folder_path}")
-        print(f"Interval override: {args.interval} meters (if provided)\n")
-
-        result = agent.run(
-            route_folder=route_folder_path,
-            interval=args.interval,
-        )
-    else:
-        # Validate coordinates
-        if args.start is None or args.end is None:
-            raise ValueError("Both --start and --end must be provided in agent mode.")
-
-        # Run agent
-        print(f"Analyzing route from {args.start} to {args.end}...")
-        print(f"Interval: {args.interval} meters\n")
-
-        result = agent.run(
-            start=args.start,
-            end=args.end,
-            interval=args.interval,
-        )
-
-    exported = _export_agent_results(agent, args, result)
-    if exported:
-        print("\nExported files match pipeline outputs (route, evaluations, analysis, comparison).")
-
-    return result
-
-
-def _print_summary(result: PipelineResult) -> None:
-    """Render a short, human-readable summary of the pipeline outputs."""
-    print("\n=== CityWalkAgent Pipeline Complete ===")
-    print(f"Route ID:          {result.route_id}")
-    print(f"Waypoints:         {result.route_info['waypoints']}")
-    print(f"Sequential Pattern:{result.sequential_analysis['pattern_type']}")
-    print(f"Hidden Barriers:   {len(result.sequential_analysis['hidden_barriers'])}")
-    print(f"Better Method:     {result.method_comparison['which_method_better']}")
-    print("\nOutput Files:")
-    for label, path in result.output_files.items():
-        print(f"  - {label}: {path}")
-    print("\nDone!")
-
-
-def _print_agent_summary(result: dict) -> None:
-    """Render a human-readable summary of agent analysis results."""
-    print("\n=== Agent Analysis Complete ===")
-
-    # Route info
-    perception = result.get("perception", {})
-    route_info = perception.get("route_info", {})
-    print(f"Route ID:          {route_info.get('route_id', 'N/A')}")
-    print(f"Images Evaluated:  {route_info.get('num_images', 0)}")
-
-    # Decision info
-    decision = result.get("decision", {})
-    action = result.get("result", {})
-
-    print(f"\nRecommendation:    {decision.get('recommendation', 'N/A').upper()}")
-    print(f"Confidence:        {decision.get('confidence', 0):.1%}")
-    print(f"Weighted Score:    {decision.get('weighted_score', 0):.2f}/10")
-
-    # Sequential analysis
-    seq_analysis = decision.get("sequential_analysis", {})
-    if seq_analysis:
-        print(f"Route Pattern:     {seq_analysis.get('pattern_type', 'N/A')}")
-        print(f"Volatility:        {seq_analysis.get('volatility', 0):.2f}")
-        print(f"Hidden Barriers:   {len(seq_analysis.get('hidden_barriers', []))}")
-
-    # Explanation
-    print(f"\n{action.get('message', 'No explanation available')}")
-
-    # Highlights
-    highlights = decision.get("highlights", [])
-    if highlights:
-        print(f"\n✨ Highlights:")
-        for highlight in highlights[:3]:
-            print(f"   • {highlight}")
-
-    # Concerns
-    concerns = decision.get("concerns", [])
-    if concerns:
-        print(f"\n⚠️  Concerns:")
-        for concern in concerns[:3]:
-            print(f"   • {concern}")
-
-    # Agent state
-    state = result.get("state", {})
-    print(f"\nAgent Memory:      {state.get('memory_count', 0)} experiences")
-
-    print("\nDone!")
-
-
-def main(argv: Optional[list[str]] = None) -> int:
-    """Main CLI entrypoint."""
-    parser = _build_parser()
-    args = parser.parse_args(argv)
-
-    # Handle --list-personalities
-    if args.list_personalities:
-        _list_personalities()
-        return 0
-
-    # Run in agent or pipeline mode
-    try:
-        if args.agent:
-            result = _run_agent(args)
-            _print_agent_summary(result)
-        else:
-            result = _run_pipeline(args)
-            _print_summary(result)
-    except Exception as exc:
-        mode = "Agent" if args.agent else "Pipeline"
-        print(f"\n{mode} failed: {exc}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
-        return 1
-
-    return 0
+    if args.command == "run":
+        cmd_run(args)
+    elif args.command == "collect":
+        cmd_collect(args)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
