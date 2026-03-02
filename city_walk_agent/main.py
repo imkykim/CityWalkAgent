@@ -28,7 +28,7 @@ for p in (PROJECT_ROOT, SRC_DIR):
 
 from src.config import DEFAULT_FRAMEWORK_ID, settings
 from src.agent.walking_agent import WalkingAgent
-from src.utils.visualization import RouteVisualizer, plot_dual_system_analysis
+
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -222,20 +222,6 @@ def cmd_run(args: argparse.Namespace) -> None:
     viz_dir.mkdir(parents=True, exist_ok=True)
 
     generate_persona_visualizations(analysis_results, viz_dir, framework_id, personality)
-
-    narrative_json = output_dir / "narrative_chapters.json"
-    narrative_chapters = None
-    if narrative_json.exists():
-        with open(narrative_json, encoding="utf-8") as f:
-            narrative_chapters = json.load(f)
-
-    plot_dual_system_analysis(
-        waypoint_results=analysis_results,
-        narrative_chapters=narrative_chapters,
-        output_dir=viz_dir,
-        framework_id=framework_id,
-        generate_radar_sets=False,
-    )
 
     print(f"\n✅  Done. Outputs in: {output_dir}")
 

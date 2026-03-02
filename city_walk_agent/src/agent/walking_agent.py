@@ -94,6 +94,12 @@ class WalkingAgent(BaseAgent):
         self.enable_memory = enable_memory
         self._cognitive_controller: Optional[CognitiveController] = None
 
+        # System 2
+        self._interpreter = None
+        self._decider     = None
+        self._planner     = None
+        self._reporter    = None
+
         # Configurable thresholds (can be overridden via set_thresholds())
         self._phash_threshold: int = 30  # Default for System 2 trigger
 
@@ -420,6 +426,54 @@ class WalkingAgent(BaseAgent):
                 "CognitiveController initialized", phash_threshold=self._phash_threshold
             )
         return self._cognitive_controller
+
+    # ========================================================================
+    # System 2 Properties
+    # ========================================================================
+
+    @property
+    def interpreter(self):
+        """Lazy-load System 2 Interpreter."""
+        if self._interpreter is None:
+            from src.agent.system2 import Interpreter
+            self._interpreter = Interpreter(
+                framework_id=self.framework_id
+            )
+            self.logger.debug("System2 Interpreter initialized")
+        return self._interpreter
+
+    @property
+    def decider(self):
+        """Lazy-load System 2 Decider."""
+        if self._decider is None:
+            from src.agent.system2 import Decider
+            self._decider = Decider(
+                framework_id=self.framework_id
+            )
+            self.logger.debug("System2 Decider initialized")
+        return self._decider
+
+    @property
+    def planner(self):
+        """Lazy-load System 2 Planner."""
+        if self._planner is None:
+            from src.agent.system2 import Planner
+            self._planner = Planner(
+                framework_id=self.framework_id
+            )
+            self.logger.debug("System2 Planner initialized")
+        return self._planner
+
+    @property
+    def reporter(self):
+        """Lazy-load System 2 Reporter."""
+        if self._reporter is None:
+            from src.agent.system2 import Reporter
+            self._reporter = Reporter(
+                framework_id=self.framework_id
+            )
+            self.logger.debug("System2 Reporter initialized")
+        return self._reporter
 
     def _get_enhanced_persona(self):
         """Get EnhancedPersonalityConfig from current personality.
@@ -1858,6 +1912,50 @@ class WalkingAgent(BaseAgent):
         )
 
         return result
+
+    def run_system2(
+        self,
+        analysis_results: List[Any],
+        route_metadata: Dict[str, Any],
+        candidate_routes: Optional[List[Any]] = None,
+    ) -> Dict[str, Any]:
+        """Run System 2 reasoning on System 1 analysis results.
+
+        Pipeline: Interpret → Decide → Plan → Report
+
+        Args:
+            analysis_results: Output from run_with_memory() or run_with_memory_from_folder().
+            route_metadata:   Route-level info dict (route_id, length_km, etc.).
+            candidate_routes: Optional pre-generated alternative routes for Planner.
+
+        Returns:
+            Dict with keys: interpret, decide, plan, report.
+
+        Raises:
+            NotImplementedError: Until System 2 stages are implemented.
+        """
+        from src.agent.system2.models import System1Evidence
+
+        enhanced_persona = self._get_enhanced_persona()
+
+        evidence = System1Evidence(
+            waypoint_results=analysis_results,
+            route_metadata=route_metadata,
+        )
+
+        interpret_result = self.interpreter.interpret(evidence, enhanced_persona)
+        decide_result    = self.decider.decide(evidence, interpret_result, enhanced_persona)
+        plan_result      = self.planner.plan(evidence, decide_result, candidate_routes, enhanced_persona)
+        report_result    = self.reporter.report(
+            evidence, interpret_result, decide_result, plan_result, enhanced_persona
+        )
+
+        return {
+            "interpret": interpret_result,
+            "decide":    decide_result,
+            "plan":      plan_result,
+            "report":    report_result,
+        }
 
     def _compute_dual_system_statistics(
         self, results: List[Dict[str, Any]]

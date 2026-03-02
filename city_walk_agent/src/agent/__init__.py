@@ -9,16 +9,12 @@ Status: Implemented (v0.1.0)
 
 from src.agent.base import AgentMetadata, AgentState, BaseAgent
 from src.agent.capabilities import (
-    ActionCapability,
-    AnalysisCapability,
     KeyMoment,
     LongTermMemory,
     MemoryItem,
-    ObservationCapability,
     RoutePattern,
     RouteSummary,
     ShortTermMemory,
-    ThinkingCapability,
     ThinkingModule,
     ThinkingResult,
     TriggerReason,
@@ -44,11 +40,6 @@ __all__ = [
     "create_neutral_personality",
     "get_preset",
     "list_presets",
-    # Core capabilities
-    "ActionCapability",
-    "AnalysisCapability",
-    "ObservationCapability",
-    "ThinkingCapability",
     # Long-term memory system
     "LongTermMemory",
     "KeyMoment",
