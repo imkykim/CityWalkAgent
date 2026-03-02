@@ -440,20 +440,11 @@ class MemoryManager:
         return context
 
     def _retrieve_relevant_ltm(
-        self, current_gps: Tuple[float, float], radius_meters: float = 500.0
+        self,
+        current_gps: Tuple[float, float],
+        radius_meters: float = 500.0,
     ) -> List[Dict[str, Any]]:
-        """Retrieve relevant experiences from LTM based on GPS proximity.
-
-        Args:
-            current_gps: (latitude, longitude) of current waypoint
-            radius_meters: Search radius in meters
-
-        Returns:
-            List of relevant LTM moments (limited to 3-5 most relevant)
-        """
-        # For now, return empty list
-        # TODO: Implement GPS-based LTM retrieval when needed
-        # This would query episodic_ltm for moments within radius_meters
+        """Retrieve relevant LTM experiences by GPS proximity. Not yet implemented."""
         return []
 
     # ========================================================================
@@ -548,28 +539,23 @@ class MemoryManager:
     def update_with_system2_result(
         self, waypoint_id: int, thinking_result: Any  # ThinkingResult
     ) -> None:
-        """Update STM with System 2 revised scores.
-
-        Note: Accesses STM._memory directly as a temporary workaround.
-        TODO: Add public API to ShortTermMemory for updating items.
-        """
+        """Update STM with System 2 revised scores."""
         self._system2_results[waypoint_id] = thinking_result
 
         if getattr(thinking_result, "revised_scores", None):
-            # Access internal deque (workaround - should use public API)
-            for item in self.stm._memory:
-                if item.waypoint_id == waypoint_id:
-                    item.scores = thinking_result.revised_scores
-                    item.summary = f"Waypoint {waypoint_id} (System 2: {thinking_result.significance})"
-                    adjustments = (
-                        getattr(thinking_result, "score_adjustments", {}) or {}
-                    )
-                    self.logger.debug(
-                        "Updated STM with System 2 scores",
-                        waypoint_id=waypoint_id,
-                        adjustments={k: f"{v:+.1f}" for k, v in adjustments.items()},
-                    )
-                    break
+            updated = self.stm.update_item_scores(
+                waypoint_id=waypoint_id,
+                new_scores=thinking_result.revised_scores,
+            )
+            if updated:
+                adjustments = (
+                    getattr(thinking_result, "score_adjustments", {}) or {}
+                )
+                self.logger.debug(
+                    "Updated STM with System 2 scores",
+                    waypoint_id=waypoint_id,
+                    adjustments={k: f"{v:+.1f}" for k, v in adjustments.items()},
+                )
 
     # ========================================================================
     # Route Consolidation: STM → LTM

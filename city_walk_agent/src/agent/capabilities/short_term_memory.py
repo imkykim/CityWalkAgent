@@ -140,6 +140,30 @@ class ShortTermMemory:
             avg_score=sum(scores.values()) / len(scores) if scores else 0.0
         )
 
+    def update_item_scores(
+        self,
+        waypoint_id: int,
+        new_scores: Dict[str, float],
+        new_summary: Optional[str] = None,
+    ) -> bool:
+        """Update scores for a specific waypoint already in memory.
+
+        Args:
+            waypoint_id: ID of the waypoint to update.
+            new_scores: Replacement score values.
+            new_summary: Optional replacement summary text.
+
+        Returns:
+            True if the waypoint was found and updated, False otherwise.
+        """
+        for item in self._memory:
+            if item.waypoint_id == waypoint_id:
+                item.scores = new_scores
+                if new_summary is not None:
+                    item.summary = new_summary
+                return True
+        return False
+
     def get_context(self) -> Dict:
         """Get complete context from recent waypoint history.
 

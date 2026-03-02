@@ -1,15 +1,10 @@
 """WalkingAgent - orchestrates all capabilities for route analysis.
 
-This is the main concrete agent implementation that uses ObservationCapability,
-ThinkingCapability, and LongTermMemory to analyze walking routes with personality-driven
-decision making.
+This is the main concrete agent implementation that uses ContinuousAnalyzer,
+ShortTermMemory, ThinkingModule, and LongTermMemory to analyze walking routes
+with personality-driven decision making.
 
-Two Analysis Modes:
-1. run(): Traditional route-level analysis (backward compatible)
-   - Post-hoc batch evaluation of completed routes
-   - Uses ObservationCapability → AnalysisCapability → ThinkingCapability
-
-2. run_with_memory(): Waypoint-level analysis with full memory system (new)
+Analysis mode: run_with_memory() / run_with_memory_from_folder()
    - Real-time sequential analysis during route traversal
    - Uses ContinuousAnalyzer → ShortTermMemory → ThinkingModule → LongTermMemory
    - Includes pHash detection, triggered reasoning, and moment curation
@@ -23,19 +18,14 @@ from geopy.distance import geodesic
 
 from src.agent.base import AgentMetadata, AgentState, BaseAgent
 from src.agent.capabilities import (
-    ActionCapability,
-    AnalysisCapability,
     LongTermMemory,
     MemoryManager,
-    ObservationCapability,
     ShortTermMemory,
-    ThinkingCapability,
     ThinkingModule,
     TriggerReason,
 )
 from src.agent.cognitive_controller import CognitiveController
 from src.agent.config import AgentPersonality, get_preset
-from src.pipeline import WalkingAgentPipeline
 from src.config import DEFAULT_FRAMEWORK_ID, settings
 from src.utils.data_models import Route, Waypoint
 from src.utils.logging import get_logger
@@ -110,14 +100,7 @@ class WalkingAgent(BaseAgent):
         # Initialize state (preferences no longer used in dual evaluation system)
         self.state.preferences = {}
 
-        # Lazy-loaded capabilities (traditional)
-        self._observer: Optional[ObservationCapability] = None
-        self._analyzer: Optional[AnalysisCapability] = None
-        self._thinker: Optional[ThinkingCapability] = None
-        self._actor: Optional[ActionCapability] = None
-        self._pipeline: Optional[WalkingAgentPipeline] = None
-
-        # Lazy-loaded memory system components (new)
+        # Lazy-loaded memory system components
         self._continuous_analyzer = None
         self._short_term_memory = None
         self._thinking_module = None
@@ -195,35 +178,6 @@ class WalkingAgent(BaseAgent):
         if phash_threshold is not None:
             self._phash_threshold = phash_threshold
             self.logger.info(f"pHash threshold set to {phash_threshold}")
-
-    def run(
-        self,
-        start: Optional[Tuple[float, float]] = None,
-        end: Optional[Tuple[float, float]] = None,
-        *,
-        route_folder: Optional[Union[str, Path]] = None,
-        metadata_filename: str = "collection_metadata.json",
-        **kwargs,
-    ) -> Dict[str, Any]:
-        """Run the agent either by generating a route or from a pre-collected folder."""
-        if route_folder is not None:
-            if (start is not None) or (end is not None):
-                raise ValueError(
-                    "Provide either start/end or route_folder, but not both."
-                )
-
-            return self.run_from_folder(
-                route_folder=route_folder,
-                metadata_filename=metadata_filename,
-                **kwargs,
-            )
-
-        if start is None or end is None:
-            raise ValueError(
-                "Both start and end must be provided when route_folder is not supplied."
-            )
-
-        return super().run(start=start, end=end, **kwargs)
 
     def run_from_folder(
         self,
@@ -361,48 +315,8 @@ class WalkingAgent(BaseAgent):
             **kwargs,
         )
 
-    @property
-    def observer(self) -> ObservationCapability:
-        """Lazy-load observation capability."""
-        if self._observer is None:
-            self._observer = ObservationCapability(framework_id=self.framework_id)
-            self.logger.debug("ObservationCapability initialized")
-        return self._observer
-
-    @property
-    def analyzer(self) -> AnalysisCapability:
-        """Lazy-load analysis capability."""
-        if self._analyzer is None:
-            self._analyzer = AnalysisCapability()
-            self.logger.debug("AnalysisCapability initialized")
-        return self._analyzer
-
-    @property
-    def thinker(self) -> ThinkingCapability:
-        """Lazy-load thinking capability."""
-        if self._thinker is None:
-            self._thinker = ThinkingCapability()
-            self.logger.debug("ThinkingCapability initialized")
-        return self._thinker
-
-    @property
-    def actor(self) -> ActionCapability:
-        """Lazy-load action capability."""
-        if self._actor is None:
-            self._actor = ActionCapability()
-            self.logger.debug("ActionCapability initialized")
-        return self._actor
-
-    @property
-    def pipeline(self) -> WalkingAgentPipeline:
-        """Lazy-load pipeline for route data."""
-        if self._pipeline is None:
-            self._pipeline = WalkingAgentPipeline(framework_id=self.framework_id)
-            self.logger.debug("Pipeline initialized")
-        return self._pipeline
-
     # ========================================================================
-    # Memory System Properties (New)
+    # Memory System Properties
     # ========================================================================
 
     @property
@@ -464,7 +378,6 @@ class WalkingAgent(BaseAgent):
                 framework_id=self.framework_id,
                 distance_trigger_meters=600.0,
                 score_delta_threshold=1.5,
-                enable_vlm_deep_dive=False,
                 framework_dimensions=framework.get("dimensions", []),
             )
             self.logger.debug(
