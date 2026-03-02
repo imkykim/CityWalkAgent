@@ -948,9 +948,14 @@ class WalkingAgent(BaseAgent):
             )
 
         # ====================================================================
-        # Phase 2: Continuous Analysis with CognitiveController
+        # Phase 2+3: Interleaved analysis and memory per waypoint
+        # STM is populated immediately after each analysis so the next
+        # waypoint's VLM call receives prior context.
         # ====================================================================
-        self.logger.info("Phase 2: Running continuous analysis with visual change detection")
+        if skip_thinking:
+            self.logger.info("Phase 2+3: Continuous analysis (thinking SKIPPED — system1-only mode)")
+        else:
+            self.logger.info("Phase 2+3: Interleaved continuous analysis + memory + thinking")
 
         # Reset state for new route analysis
         self.cognitive.reset()
@@ -958,6 +963,9 @@ class WalkingAgent(BaseAgent):
         self.logger.debug("CognitiveController and ContinuousAnalyzer state reset for new route")
 
         analysis_results = []
+        thinking_results = []
+        memory_manager = self.memory_manager
+        waypoint_results: List[Dict[str, Any]] = []
 
         for i, (img_path, meta) in enumerate(zip(image_paths, metadata)):
             # Step A: CognitiveController detects visual change
@@ -974,7 +982,7 @@ class WalkingAgent(BaseAgent):
                 reason=visual_change_result.reason
             )
 
-            # Step B: ContinuousAnalyzer analyzes waypoint with pre-computed visual change
+            # Step B: ContinuousAnalyzer analyzes waypoint (STM already populated by prior iterations)
             analysis = self.continuous_analyzer.analyze_waypoint(
                 waypoint_id=i,
                 image_path=img_path,
@@ -983,35 +991,10 @@ class WalkingAgent(BaseAgent):
                 phash_distance=visual_change_result.phash_distance
             )
 
-            # Update analysis history (same as analyze_route does)
             self.continuous_analyzer.analysis_history.append(analysis)
             analysis_results.append(analysis)
 
-        # Get analysis statistics
-        analysis_stats = self.continuous_analyzer.get_statistics()
-
-        self.logger.info(
-            "Continuous analysis complete",
-            total_waypoints=analysis_stats["total_waypoints"],
-            visual_changes=analysis_stats["visual_changes_detected"],
-        )
-
-        # ====================================================================
-        # Phase 3: Thinking with Short-Term Memory (Optional - can be skipped)
-        # ====================================================================
-        if skip_thinking:
-            self.logger.info("Phase 3: SKIPPED (--system1-only mode) - using System 1 scores as final")
-        else:
-            self.logger.info("Phase 3: Processing with short-term memory and thinking")
-
-        thinking_results = []
-        memory_manager = self.memory_manager
-        waypoint_results: List[Dict[str, Any]] = []
-
-        for analysis in analysis_results:
-            # Phase 2 Consolidation: Use ContinuousAnalyzer's pre-computed visual change detection
-            # This eliminates redundant pHash computation from CognitiveController
-            # ContinuousAnalyzer already computed pHash and stored result in analysis.visual_change_detected
+            # Step C: Feed into STM immediately so next waypoint gets context
             is_first_waypoint = analysis.waypoint_id == 0
             should_think = analysis.visual_change_detected or is_first_waypoint
 
@@ -1136,8 +1119,14 @@ class WalkingAgent(BaseAgent):
                 }
             )
 
-        thinking_summary = self.thinking_module.get_thinking_summary()
+        analysis_stats = self.continuous_analyzer.get_statistics()
+        self.logger.info(
+            "Continuous analysis complete",
+            total_waypoints=analysis_stats["total_waypoints"],
+            visual_changes=analysis_stats["visual_changes_detected"],
+        )
 
+        thinking_summary = self.thinking_module.get_thinking_summary()
         self.logger.info(
             "Thinking complete",
             episodes=len(thinking_results),
@@ -1529,11 +1518,14 @@ class WalkingAgent(BaseAgent):
         )
 
         # ====================================================================
-        # Run the memory pipeline (same as run_with_memory)
+        # Phase 2+3: Interleaved analysis and memory per waypoint
+        # STM is populated immediately after each analysis so the next
+        # waypoint's VLM call receives prior context.
         # ====================================================================
-
-        # Phase 2: Continuous Analysis with CognitiveController
-        self.logger.info("Phase 2: Running continuous analysis with visual change detection")
+        if skip_thinking:
+            self.logger.info("Phase 2+3: Continuous analysis (thinking SKIPPED — system1-only mode)")
+        else:
+            self.logger.info("Phase 2+3: Interleaved continuous analysis + memory + thinking")
 
         # Reset state for new route analysis
         self.cognitive.reset()
@@ -1541,6 +1533,9 @@ class WalkingAgent(BaseAgent):
         self.logger.debug("CognitiveController and ContinuousAnalyzer state reset for new route")
 
         analysis_results = []
+        thinking_results = []
+        memory_manager = self.memory_manager
+        waypoint_results: List[Dict[str, Any]] = []
 
         for i, (img_path, meta) in enumerate(zip(resolved_image_paths, waypoint_metadata)):
             # Step A: CognitiveController detects visual change
@@ -1557,7 +1552,7 @@ class WalkingAgent(BaseAgent):
                 reason=visual_change_result.reason
             )
 
-            # Step B: ContinuousAnalyzer analyzes waypoint with pre-computed visual change
+            # Step B: ContinuousAnalyzer analyzes waypoint (STM already populated by prior iterations)
             analysis = self.continuous_analyzer.analyze_waypoint(
                 waypoint_id=i,
                 image_path=img_path,
@@ -1566,30 +1561,10 @@ class WalkingAgent(BaseAgent):
                 phash_distance=visual_change_result.phash_distance
             )
 
-            # Update analysis history (same as analyze_route does)
             self.continuous_analyzer.analysis_history.append(analysis)
             analysis_results.append(analysis)
 
-        # Get analysis statistics
-        analysis_stats = self.continuous_analyzer.get_statistics()
-
-        self.logger.info(
-            "Continuous analysis complete",
-            total_waypoints=analysis_stats["total_waypoints"],
-            visual_changes=analysis_stats["visual_changes_detected"],
-        )
-
-        # Phase 3: Thinking with Short-Term Memory
-        self.logger.info("Phase 3: Processing with short-term memory and thinking")
-
-        thinking_results = []
-        memory_manager = self.memory_manager
-        waypoint_results: List[Dict[str, Any]] = []
-
-        for analysis in analysis_results:
-            # Phase 2 Consolidation: Use ContinuousAnalyzer's pre-computed visual change detection
-            # This eliminates redundant pHash computation from CognitiveController
-            # ContinuousAnalyzer already computed pHash and stored result in analysis.visual_change_detected
+            # Step C: Feed into STM immediately so next waypoint gets context
             is_first_waypoint = analysis.waypoint_id == 0
             should_think = analysis.visual_change_detected or is_first_waypoint
 
@@ -1714,8 +1689,14 @@ class WalkingAgent(BaseAgent):
                 }
             )
 
-        thinking_summary = self.thinking_module.get_thinking_summary()
+        analysis_stats = self.continuous_analyzer.get_statistics()
+        self.logger.info(
+            "Continuous analysis complete",
+            total_waypoints=analysis_stats["total_waypoints"],
+            visual_changes=analysis_stats["visual_changes_detected"],
+        )
 
+        thinking_summary = self.thinking_module.get_thinking_summary()
         self.logger.info(
             "Thinking complete",
             episodes=len(thinking_results),

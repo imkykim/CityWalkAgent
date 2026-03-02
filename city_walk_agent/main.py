@@ -28,7 +28,7 @@ for p in (PROJECT_ROOT, SRC_DIR):
 
 from src.config import DEFAULT_FRAMEWORK_ID, settings
 from src.agent.walking_agent import WalkingAgent
-
+from src.utils.visualization import RouteVisualizer
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
