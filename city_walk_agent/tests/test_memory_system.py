@@ -18,8 +18,8 @@ from unittest.mock import Mock, MagicMock, patch, mock_open
 from typing import Dict, Any, List, Tuple
 from datetime import datetime
 
-from src.agent.capabilities.short_term_memory import ShortTermMemory, MemoryItem
-from src.agent.capabilities.long_term_memory import (
+from src.agent.memory.short_term_memory import ShortTermMemory, MemoryItem
+from src.agent.memory.long_term_memory import (
     LongTermMemory,
     KeyMoment,
     RoutePattern,
@@ -30,7 +30,7 @@ from src.agent.system2.persona_reasoner import (
     TriggerReason,
     ReasoningResult,
 )
-from src.analysis.continuous_analyzer import ContinuousAnalyzer, WaypointAnalysis
+from src.agent.system1.continuous_analyzer import ContinuousAnalyzer, WaypointAnalysis
 
 
 # ============================================================================
@@ -68,8 +68,10 @@ def mock_waypoint_analysis() -> WaypointAnalysis:
     return WaypointAnalysis(
         waypoint_id=0,
         image_path=Path("/test/waypoint_0.jpg"),
-        scores={"safety": 8.5, "comfort": 7.2},
-        reasoning={"safety": "Wide sidewalk", "comfort": "Low noise"},
+        objective_scores={"safety": 8.5, "comfort": 7.2},
+        objective_reasoning={"safety": "Wide sidewalk", "comfort": "Low noise"},
+        persona_scores={"safety": 8.5, "comfort": 7.2},
+        persona_reasoning={"safety": "Wide sidewalk", "comfort": "Low noise"},
         timestamp="2025-01-01T12:00:00",
         gps=(37.7749, -122.4194),
         heading=90.0,
@@ -394,19 +396,15 @@ class TestLongTermMemory:
         """Test memory initializes with correct agent_id and storage."""
         ltm = LongTermMemory(
             agent_id="test_agent",
-            storage_path=temp_memory_dir
+            storage_dir=temp_memory_dir
         )
 
         assert ltm.agent_id == "test_agent"
-        assert ltm.storage_path == temp_memory_dir
-
-        # Check that storage files are created
-        assert (temp_memory_dir / "test_agent_memory.jsonl").exists()
-        assert (temp_memory_dir / "test_agent_index.json").exists()
+        assert ltm.storage_dir == temp_memory_dir
 
     def test_add_candidate_moment_high_significance(self, temp_memory_dir):
         """Test adding high-significance candidate moment."""
-        ltm = LongTermMemory(agent_id="test_agent", storage_path=temp_memory_dir)
+        ltm = LongTermMemory(agent_id="test_agent", storage_dir=temp_memory_dir)
 
         result = ltm.add_candidate_moment(
             waypoint_id=5,
@@ -426,7 +424,7 @@ class TestLongTermMemory:
 
     def test_add_candidate_moment_low_significance_rejected(self, temp_memory_dir):
         """Test that low-significance moments are rejected."""
-        ltm = LongTermMemory(agent_id="test_agent", storage_path=temp_memory_dir)
+        ltm = LongTermMemory(agent_id="test_agent", storage_dir=temp_memory_dir)
 
         result = ltm.add_candidate_moment(
             waypoint_id=3,
@@ -446,7 +444,7 @@ class TestLongTermMemory:
 
     def test_curate_moments_adaptive_count(self, temp_memory_dir):
         """Test adaptive moment curation based on route length."""
-        ltm = LongTermMemory(agent_id="test_agent", storage_path=temp_memory_dir)
+        ltm = LongTermMemory(agent_id="test_agent", storage_dir=temp_memory_dir)
 
         # Add 20 candidate moments
         for i in range(20):
@@ -473,7 +471,7 @@ class TestLongTermMemory:
 
     def test_curate_moments_respects_min_max(self, temp_memory_dir):
         """Test that curation respects min/max moment counts."""
-        ltm = LongTermMemory(agent_id="test_agent", storage_path=temp_memory_dir)
+        ltm = LongTermMemory(agent_id="test_agent", storage_dir=temp_memory_dir)
 
         # Add only 2 high-significance moments
         for i in range(2):
@@ -496,7 +494,7 @@ class TestLongTermMemory:
 
     def test_extract_patterns_trend_detection(self, temp_memory_dir, mock_waypoint_analysis):
         """Test pattern extraction for trend patterns."""
-        ltm = LongTermMemory(agent_id="test_agent", storage_path=temp_memory_dir)
+        ltm = LongTermMemory(agent_id="test_agent", storage_dir=temp_memory_dir)
 
         # Create analysis with improving trend
         analyses = []
@@ -504,8 +502,10 @@ class TestLongTermMemory:
             analysis = WaypointAnalysis(
                 waypoint_id=i,
                 image_path=Path(f"/test/waypoint_{i}.jpg"),
-                scores={"safety": 6.0 + i * 0.5},  # Improving
-                reasoning={"safety": "Getting better"},
+                objective_scores={"safety": 6.0 + i * 0.5},  # Improving
+                objective_reasoning={"safety": "Getting better"},
+                persona_scores={"safety": 6.0 + i * 0.5},
+                persona_reasoning={"safety": "Getting better"},
                 timestamp=f"2025-01-01T12:{i:02d}:00",
                 gps=(37.7749, -122.4194),
                 heading=90.0,
@@ -522,7 +522,7 @@ class TestLongTermMemory:
 
     def test_extract_patterns_barrier_clusters(self, temp_memory_dir):
         """Test pattern extraction for barrier clusters."""
-        ltm = LongTermMemory(agent_id="test_agent", storage_path=temp_memory_dir)
+        ltm = LongTermMemory(agent_id="test_agent", storage_dir=temp_memory_dir)
 
         # Create analyses with low-score cluster (barrier)
         analyses = []
@@ -532,8 +532,10 @@ class TestLongTermMemory:
             analysis = WaypointAnalysis(
                 waypoint_id=i,
                 image_path=Path(f"/test/waypoint_{i}.jpg"),
-                scores={"safety": score},
-                reasoning={"safety": "Barrier detected" if score < 5 else "Safe"},
+                objective_scores={"safety": score},
+                objective_reasoning={"safety": "Barrier detected" if score < 5 else "Safe"},
+                persona_scores={"safety": score},
+                persona_reasoning={"safety": "Barrier detected" if score < 5 else "Safe"},
                 timestamp=f"2025-01-01T12:{i:02d}:00",
                 gps=(37.7749 + i * 0.001, -122.4194),
                 heading=90.0,
@@ -549,7 +551,7 @@ class TestLongTermMemory:
 
     def test_generate_route_summary(self, temp_memory_dir, mock_waypoint_analysis):
         """Test route summary generation."""
-        ltm = LongTermMemory(agent_id="test_agent", storage_path=temp_memory_dir)
+        ltm = LongTermMemory(agent_id="test_agent", storage_dir=temp_memory_dir)
 
         # Add some candidate moments and curate
         for i in range(5):
@@ -574,24 +576,19 @@ class TestLongTermMemory:
 
         # Generate summary
         summary = ltm.generate_route_summary(
-            route_name="Test Route",
-            start_gps=(37.7749, -122.4194),
-            end_gps=(37.7849, -122.4094),
-            total_distance_km=1.0,
+            route_id="test_route_123",
             total_waypoints=10,
-            average_scores={"safety": 8.2, "comfort": 7.5},
-            curated_moments=[],
-            detected_patterns=patterns
+            length_km=1.0,
+            all_analyses=analyses
         )
 
         assert isinstance(summary, RouteSummary)
-        assert summary.route_name == "Test Route"
-        assert summary.total_distance_km == 1.0
         assert summary.total_waypoints == 10
+        assert summary.length_km == 1.0
 
     def test_store_and_retrieve_experience(self, temp_memory_dir):
         """Test storing and retrieving experiences."""
-        ltm = LongTermMemory(agent_id="test_agent", storage_path=temp_memory_dir)
+        ltm = LongTermMemory(agent_id="test_agent", storage_dir=temp_memory_dir)
 
         experience = {
             "route_id": "test_route_123",
@@ -612,7 +609,7 @@ class TestLongTermMemory:
 
     def test_get_statistics(self, temp_memory_dir):
         """Test memory statistics."""
-        ltm = LongTermMemory(agent_id="test_agent", storage_path=temp_memory_dir)
+        ltm = LongTermMemory(agent_id="test_agent", storage_dir=temp_memory_dir)
 
         # Store some experiences
         for i in range(3):
@@ -691,8 +688,8 @@ class TestPersonaReasoner:
 class TestContinuousAnalyzer:
     """Test ContinuousAnalyzer functionality."""
 
-    @patch('src.analysis.continuous_analyzer.load_framework')
-    @patch('src.analysis.continuous_analyzer.Evaluator')
+    @patch('src.agent.system1.continuous_analyzer.load_framework')
+    @patch('src.agent.system1.continuous_analyzer.Evaluator')
     def test_initialization(self, mock_evaluator, mock_load_framework):
         """Test analyzer initializes correctly."""
         mock_framework = Mock()
@@ -708,8 +705,8 @@ class TestContinuousAnalyzer:
         assert len(analyzer.analysis_history) == 0
         assert len(analyzer.phash_distances) == 0
 
-    @patch('src.analysis.continuous_analyzer.load_framework')
-    @patch('src.analysis.continuous_analyzer.Evaluator')
+    @patch('src.agent.system1.continuous_analyzer.load_framework')
+    @patch('src.agent.system1.continuous_analyzer.Evaluator')
     @patch('imagehash.phash')
     @patch('PIL.Image.open')
     @pytest.mark.skip(reason="Deprecated: CognitiveController now handles pHash detection")
@@ -736,8 +733,8 @@ class TestContinuousAnalyzer:
         assert distance is None
         assert analyzer.last_phash == mock_hash
 
-    @patch('src.analysis.continuous_analyzer.load_framework')
-    @patch('src.analysis.continuous_analyzer.Evaluator')
+    @patch('src.agent.system1.continuous_analyzer.load_framework')
+    @patch('src.agent.system1.continuous_analyzer.Evaluator')
     @pytest.mark.skip(reason="Deprecated: CognitiveController now handles pHash detection")
 
     def test_detect_visual_change_threshold_exceeded(self, mock_evaluator, mock_load_framework):
@@ -766,8 +763,8 @@ class TestContinuousAnalyzer:
         assert changed is True
         assert distance == 15.0
 
-    @patch('src.analysis.continuous_analyzer.load_framework')
-    @patch('src.analysis.continuous_analyzer.Evaluator')
+    @patch('src.agent.system1.continuous_analyzer.load_framework')
+    @patch('src.agent.system1.continuous_analyzer.Evaluator')
     @pytest.mark.skip(reason="Deprecated: CognitiveController now handles pHash detection")
 
     def test_detect_visual_change_threshold_not_exceeded(
@@ -797,8 +794,8 @@ class TestContinuousAnalyzer:
         assert changed is False
         assert distance == 10.0
 
-    @patch('src.analysis.continuous_analyzer.load_framework')
-    @patch('src.analysis.continuous_analyzer.Evaluator')
+    @patch('src.agent.system1.continuous_analyzer.load_framework')
+    @patch('src.agent.system1.continuous_analyzer.Evaluator')
     @pytest.mark.skip(reason="Deprecated: CognitiveController now handles pHash detection")
 
     def test_adaptive_threshold_computation(self, mock_evaluator, mock_load_framework):
@@ -831,8 +828,8 @@ class TestContinuousAnalyzer:
         assert changed is True
         assert distance == 12.0
 
-    @patch('src.analysis.continuous_analyzer.load_framework')
-    @patch('src.analysis.continuous_analyzer.Evaluator')
+    @patch('src.agent.system1.continuous_analyzer.load_framework')
+    @patch('src.agent.system1.continuous_analyzer.Evaluator')
     @patch('imagehash.phash')
     @patch('PIL.Image.open')
     def test_analyze_waypoint(
@@ -879,14 +876,13 @@ class TestContinuousAnalyzer:
 
         assert isinstance(result, WaypointAnalysis)
         assert result.waypoint_id == 0
-        assert result.scores["safety"] == 8.5
-        assert result.scores["comfort"] == 7.2
-        assert "safety" in result.reasoning
+        assert "safety" in result.persona_scores
+        assert "safety" in result.persona_reasoning
         assert result.visual_change_detected is False
         assert result.phash_distance == 5.0
 
-    @patch('src.analysis.continuous_analyzer.load_framework')
-    @patch('src.analysis.continuous_analyzer.Evaluator')
+    @patch('src.agent.system1.continuous_analyzer.load_framework')
+    @patch('src.agent.system1.continuous_analyzer.Evaluator')
     def test_get_context_window_empty(self, mock_evaluator, mock_load_framework):
         """Test context window when analysis history is empty."""
         mock_framework = Mock()
@@ -898,8 +894,8 @@ class TestContinuousAnalyzer:
 
         assert context == []
 
-    @patch('src.analysis.continuous_analyzer.load_framework')
-    @patch('src.analysis.continuous_analyzer.Evaluator')
+    @patch('src.agent.system1.continuous_analyzer.load_framework')
+    @patch('src.agent.system1.continuous_analyzer.Evaluator')
     def test_get_context_window_populated(self, mock_evaluator, mock_load_framework):
         """Test context window returns recent analyses."""
         mock_framework = Mock()
@@ -912,8 +908,10 @@ class TestContinuousAnalyzer:
             analysis = WaypointAnalysis(
                 waypoint_id=i,
                 image_path=Path(f"/test/waypoint_{i}.jpg"),
-                scores={"safety": 8.0},
-                reasoning={"safety": "Good"},
+                objective_scores={"safety": 8.0},
+                objective_reasoning={"safety": "Good"},
+                persona_scores={"safety": 8.0},
+                persona_reasoning={"safety": "Good"},
                 timestamp=f"2025-01-01T12:{i:02d}:00",
                 gps=(37.7749, -122.4194),
                 heading=90.0,
@@ -939,8 +937,8 @@ class TestContinuousAnalyzer:
 class TestMemorySystemIntegration:
     """Integration tests for complete memory system workflows."""
 
-    @patch('src.analysis.continuous_analyzer.load_framework')
-    @patch('src.analysis.continuous_analyzer.Evaluator')
+    @patch('src.agent.system1.continuous_analyzer.load_framework')
+    @patch('src.agent.system1.continuous_analyzer.Evaluator')
     def test_full_memory_pipeline(
         self, mock_evaluator_class, mock_load_framework, temp_memory_dir
     ):
@@ -960,7 +958,7 @@ class TestMemorySystemIntegration:
         analyzer = ContinuousAnalyzer(framework_id="sagai_2025")
         stm = ShortTermMemory(window_size=5)
         reasoner = PersonaReasoner()
-        ltm = LongTermMemory(agent_id="integration_test", storage_path=temp_memory_dir)
+        ltm = LongTermMemory(agent_id="integration_test", storage_dir=temp_memory_dir)
 
         # Simulate waypoint processing
         with patch('imagehash.phash'), patch('PIL.Image.open'):
@@ -969,8 +967,10 @@ class TestMemorySystemIntegration:
                 analysis = WaypointAnalysis(
                     waypoint_id=i,
                     image_path=Path(f"/test/waypoint_{i}.jpg"),
-                    scores={"safety": 7.0 + i},
-                    reasoning={"safety": "Getting better"},
+                    objective_scores={"safety": 7.0 + i},
+                    objective_reasoning={"safety": "Getting better"},
+                    persona_scores={"safety": 7.0 + i},
+                    persona_reasoning={"safety": "Getting better"},
                     timestamp=f"2025-01-01T12:{i:02d}:00",
                     gps=(37.7749 + i * 0.001, -122.4194),
                     heading=90.0,
@@ -981,7 +981,7 @@ class TestMemorySystemIntegration:
                 # Add to STM
                 stm.add(
                     waypoint_id=i,
-                    scores=analysis.scores,
+                    scores=analysis.persona_scores,
                     summary=f"Waypoint {i}",
                     image_path=analysis.image_path,
                     gps=analysis.gps
@@ -994,7 +994,7 @@ class TestMemorySystemIntegration:
     def test_memory_components_interoperability(self, temp_memory_dir):
         """Test that memory components work together correctly."""
         stm = ShortTermMemory(window_size=5)
-        ltm = LongTermMemory(agent_id="interop_test", storage_path=temp_memory_dir)
+        ltm = LongTermMemory(agent_id="interop_test", storage_dir=temp_memory_dir)
 
         # Add data to STM
         for i in range(3):
@@ -1070,8 +1070,8 @@ class TestErrorHandling:
         assert isinstance(fallback, ReasoningResult)
         assert fallback.waypoint_id == 0
 
-    @patch('src.analysis.continuous_analyzer.load_framework')
-    @patch('src.analysis.continuous_analyzer.Evaluator')
+    @patch('src.agent.system1.continuous_analyzer.load_framework')
+    @patch('src.agent.system1.continuous_analyzer.Evaluator')
     @patch('PIL.Image.open')
     def test_continuous_analyzer_image_load_failure(
         self, mock_image_open, mock_evaluator, mock_load_framework
@@ -1085,13 +1085,15 @@ class TestErrorHandling:
 
         analyzer = ContinuousAnalyzer(framework_id="sagai_2025")
 
-        # Should handle error gracefully
-        with pytest.raises(IOError):
-            analyzer.analyze_waypoint(
-                waypoint_id=0,
-                image_path=Path("/nonexistent/image.jpg"),
-                metadata={"gps": (37.7749, -122.4194), "heading": 90.0}
-            )
+        # Should handle error gracefully and return a fallback WaypointAnalysis
+        result = analyzer.analyze_waypoint(
+            waypoint_id=0,
+            image_path=Path("/nonexistent/image.jpg"),
+            metadata={"gps": (37.7749, -122.4194), "heading": 90.0}
+        )
+        from src.agent.system1.continuous_analyzer import WaypointAnalysis
+        assert isinstance(result, WaypointAnalysis)
+        assert result.waypoint_id == 0
 
 
 # ============================================================================

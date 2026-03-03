@@ -4,7 +4,7 @@ Public API:
     from src.agent.config import get_preset, AgentPersonality
 
     personality = get_preset("homebuyer", "sagai_2025")
-    agent = WalkingAgent(personality=personality)
+    agent = CityWalkAgent(personality=personality)
 """
 
 # All imports now come from personalities.py

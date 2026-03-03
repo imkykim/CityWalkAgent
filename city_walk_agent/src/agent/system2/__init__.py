@@ -1,6 +1,6 @@
 """System 2: Persona-aware Reasoning Engine.
 
-Four-stage pipeline called sequentially from WalkingAgent.run_system2():
+Four-stage pipeline called sequentially from CityWalkAgent.run_system2():
 
     System1Evidence
         → Interpreter  (WHY:  explain score changes, persona divergence)

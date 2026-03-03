@@ -128,7 +128,7 @@ class Settings(BaseSettings):
     @property
     def frameworks_dir(self) -> Path:
         """Directory containing framework configuration files."""
-        return self.project_root / "src" / "config" / "framework_configs"
+        return self.project_root / "src" / "core" / "frameworks" / "configs"
 
     def ensure_directories(self) -> None:
         """Ensure core data directories exist on disk."""

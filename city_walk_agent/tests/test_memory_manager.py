@@ -8,7 +8,7 @@ Tests cover:
 5. Context preparation
 6. Waypoint processing pipeline
 7. Route consolidation
-8. Integration with WalkingAgent
+8. Integration with CityWalkAgent
 """
 
 import pytest
@@ -17,7 +17,7 @@ from unittest.mock import Mock, MagicMock
 from dataclasses import dataclass
 from typing import Dict, Tuple
 
-from src.agent.capabilities.memory_manager import MemoryManager
+from src.agent.memory.memory_manager import MemoryManager
 from src.agent.config import AgentPersonality
 
 
@@ -45,18 +45,13 @@ def mock_personality():
     return AgentPersonality(
         name="Safety-Focused",
         description="Prioritizes safety above all",
-        dimension_weights={
-            "safety": 2.0,
-            "comfort": 1.2,
-            "interest": 0.8,
-            "aesthetics": 0.6
-        },
         decision_thresholds={
             "min_overall_score": 6.5,
             "max_volatility": 2.0,
             "max_barriers": 2
         },
-        explanation_style="safety"
+        explanation_style="safety",
+        personality_id="test_safety",
     )
 
 
@@ -418,7 +413,6 @@ def test_prepare_context_structure(configured_memory_manager):
 
     # Check personality info
     assert context["personality"]["name"] == "Safety-Focused"
-    assert "dimension_weights" in context["personality"]
 
 
 def test_prepare_context_includes_personality(configured_memory_manager):
@@ -437,9 +431,7 @@ def test_prepare_context_includes_personality(configured_memory_manager):
 
     personality = context["personality"]
     assert personality["name"] == "Safety-Focused"
-    assert "dimension_weights" in personality
-    assert "safety" in personality["dimension_weights"]
-    assert personality["dimension_weights"]["safety"] == 2.0
+    assert "decision_thresholds" in personality
 
 
 # ============================================================================
@@ -591,17 +583,17 @@ def test_complete_route_generates_summary(configured_memory_manager):
 
 
 # ============================================================================
-# Test 8: Integration with WalkingAgent
+# Test 8: Integration with CityWalkAgent
 # ============================================================================
 
 def test_walking_agent_has_memory_manager():
-    """Test WalkingAgent can access memory_manager property."""
-    from src.agent.walking_agent import WalkingAgent
+    """Test CityWalkAgent can access memory_manager property."""
+    from src.agent.orchestrator import CityWalkAgent
     from src.agent.config import get_preset
 
     # Create agent
-    personality = get_preset("balanced", "sagai_2025")
-    agent = WalkingAgent(
+    personality = get_preset("homebuyer", "sagai_2025")
+    agent = CityWalkAgent(
         agent_id="test_walker",
         personality=personality
     )
@@ -612,18 +604,16 @@ def test_walking_agent_has_memory_manager():
     assert mm is not None
     assert mm.agent_id == "test_walker"
     assert mm.personality is not None
-    # Check that personality is set (name may vary by framework)
     assert mm.personality.name is not None
-    assert len(mm.personality.dimension_weights) > 0
 
 
 def test_memory_manager_persists_across_calls():
     """Test MemoryManager is reused across multiple accesses."""
-    from src.agent.walking_agent import WalkingAgent
+    from src.agent.orchestrator import CityWalkAgent
     from src.agent.config import get_preset
 
-    personality = get_preset("balanced", "sagai_2025")
-    agent = WalkingAgent(
+    personality = get_preset("homebuyer", "sagai_2025")
+    agent = CityWalkAgent(
         agent_id="test_walker",
         personality=personality
     )

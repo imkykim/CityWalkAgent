@@ -40,11 +40,11 @@ class FrameworkManager:
             return Path(frameworks_dir)
 
         try:
-            from src.config.settings import settings  # Deferred import to avoid cycles
+            from src.core.settings import settings  # Deferred import to avoid cycles
 
             return settings.frameworks_dir
         except Exception:
-            return Path(__file__).parent / "framework_configs"
+            return Path(__file__).parent / "configs"
 
     def load_framework(self, framework_id: str) -> Dict[str, Any]:
         """

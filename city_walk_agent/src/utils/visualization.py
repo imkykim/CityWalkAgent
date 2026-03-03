@@ -16,7 +16,7 @@ if __name__ == "__main__":
         sys.path.pop(0)
         sys.path.insert(0, str(current_dir.parent.parent))
 
-from src.config import DEFAULT_FRAMEWORK_ID
+from src.core import DEFAULT_FRAMEWORK_ID
 
 try:
     import matplotlib
@@ -297,7 +297,7 @@ class RouteVisualizer:
         _apply_plot_style()
 
         # Load framework dimensions
-        from src.config import load_framework
+        from src.core import load_framework
 
         self.framework = load_framework(framework_id)
         self.dim_config = self._build_dim_config_from_framework()

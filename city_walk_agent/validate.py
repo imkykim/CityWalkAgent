@@ -24,7 +24,7 @@ for p in (PROJECT_ROOT, SRC_DIR):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from src.config.settings import settings
+from src.core.settings import settings
 from src.validation import CLIPExtractor, KNNPredictor, PlacePulseLoader, ValidationAnalyzer
 
 # Check dependencies

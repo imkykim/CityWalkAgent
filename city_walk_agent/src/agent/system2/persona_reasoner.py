@@ -15,7 +15,7 @@ from src.agent.config import (
     get_enhanced_personality,
     EnhancedPersonalityConfig,
 )
-from src.config import DEFAULT_FRAMEWORK_ID, settings
+from src.core import DEFAULT_FRAMEWORK_ID, settings
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -112,7 +112,7 @@ class PersonaReasoner:
             distance_trigger_meters: Distance threshold for milestone triggers.
             score_delta_threshold: Score change threshold for volatility triggers.
         """
-        from src.config import load_framework
+        from src.core import load_framework
 
         self.framework_id = framework_id
         self.framework = load_framework(framework_id)

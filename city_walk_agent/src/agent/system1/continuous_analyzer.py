@@ -14,9 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.evaluation.evaluator import Evaluator
-from src.evaluation.vlm_client import VLMConfig
-from src.config import settings, load_framework
+from src.core.evaluation.evaluator import Evaluator
+from src.core.evaluation.vlm_client import VLMConfig
+from src.core import settings, load_framework
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -288,10 +288,11 @@ class ContinuousAnalyzer:
             phash_distance=phash_distance,
         )
 
+        avg_obj = f"{sum(objective_scores.values()) / len(objective_scores):.2f}" if objective_scores else "N/A"
+        avg_per = f"{sum(persona_scores.values()) / len(persona_scores):.2f}" if persona_scores else "N/A"
         logger.debug(
             f"Waypoint {waypoint_id} analyzed - "
-            f"avg_objective={sum(objective_scores.values()) / len(objective_scores):.2f}, "
-            f"avg_persona={sum(persona_scores.values()) / len(persona_scores):.2f}, "
+            f"avg_objective={avg_obj}, avg_persona={avg_per}, "
             f"visual_change={visual_change_detected}"
         )
 

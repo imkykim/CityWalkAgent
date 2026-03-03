@@ -8,25 +8,23 @@ Status: Implemented (v0.1.0)
 """
 
 from src.agent.base import AgentMetadata, AgentState, BaseAgent
-from src.agent.capabilities import (
+from src.agent.memory import (
     KeyMoment,
     LongTermMemory,
     MemoryItem,
-    PersonaReasoner,
-    ReasoningResult,
     RoutePattern,
     RouteSummary,
     ShortTermMemory,
-    TriggerReason,
 )
-from src.agent.cognitive_controller import CognitiveController
+from src.agent.system2 import PersonaReasoner, ReasoningResult, TriggerReason
+from src.agent.system1 import CognitiveController
 from src.agent.config import (
     AgentPersonality,
     create_neutral_personality,
     get_preset,
     list_presets,
 )
-from src.agent.walking_agent import WalkingAgent
+from src.agent.orchestrator import CityWalkAgent
 
 __all__ = [
     # Base classes
@@ -34,7 +32,7 @@ __all__ = [
     "AgentState",
     "BaseAgent",
     # Walking agent
-    "WalkingAgent",
+    "CityWalkAgent",
     # Personality system
     "AgentPersonality",
     "create_neutral_personality",

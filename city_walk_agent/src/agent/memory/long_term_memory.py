@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel
 
-from src.config import settings
+from src.core import settings
 from src.utils.logging import get_logger
 
 
@@ -557,22 +557,25 @@ class LongTermMemory:
         self,
         all_analyses: List[Dict[str, Any]],
         thinking_history: List[str]
-    ) -> None:
+    ) -> List["RoutePattern"]:
         """Analyze waypoint sequence to extract route patterns.
 
         Identifies trends, barrier clusters, and other sequential patterns
         across the route traversal.
 
         Args:
-            all_analyses: List of waypoint analysis dicts with scores/summaries.
+            all_analyses: List of waypoint analysis dicts or WaypointAnalysis objects.
             thinking_history: Agent's thinking log for context.
+
+        Returns:
+            List of RoutePattern objects extracted from the analyses.
 
         Side Effects:
             Updates _extracted_patterns and persists to {agent_id}_patterns.json.
         """
         if len(all_analyses) < 3:
             self.logger.debug("Insufficient data for pattern extraction")
-            return
+            return []
 
         patterns = []
 
@@ -622,6 +625,8 @@ class LongTermMemory:
                 "Failed to save patterns",
                 error=str(e)
             )
+
+        return patterns
 
     def generate_route_summary(
         self,
@@ -825,7 +830,7 @@ class LongTermMemory:
         dimension_scores = {}
 
         for analysis in all_analyses:
-            scores = analysis.get("scores", {})
+            scores = self._get_scores(analysis)
             for dim_id, score in scores.items():
                 if dim_id not in dimension_scores:
                     dimension_scores[dim_id] = []
@@ -841,7 +846,7 @@ class LongTermMemory:
         dimension_scores = {}
 
         for analysis in all_analyses:
-            scores = analysis.get("scores", {})
+            scores = self._get_scores(analysis)
             for dim_id, score in scores.items():
                 if dim_id not in dimension_scores:
                     dimension_scores[dim_id] = []
@@ -881,14 +886,15 @@ class LongTermMemory:
         barriers = []
 
         for i, analysis in enumerate(all_analyses):
-            scores = analysis.get("scores", {})
+            scores = self._get_scores(analysis)
             avg_score = sum(scores.values()) / len(scores) if scores else 5.0
 
             if avg_score < 4.0:  # Barrier threshold
+                summary = analysis.get("summary", "No description") if isinstance(analysis, dict) else "No description"
                 barriers.append({
                     "waypoint_id": i,
                     "avg_score": avg_score,
-                    "summary": analysis.get("summary", "No description")
+                    "summary": summary
                 })
 
         return barriers
@@ -898,11 +904,11 @@ class LongTermMemory:
         highlights = []
 
         for analysis in all_analyses:
-            scores = analysis.get("scores", {})
+            scores = self._get_scores(analysis)
             avg_score = sum(scores.values()) / len(scores) if scores else 5.0
 
             if avg_score >= 8.0:
-                summary = analysis.get("summary", "Great waypoint")
+                summary = analysis.get("summary", "Great waypoint") if isinstance(analysis, dict) else "Great waypoint"
                 highlights.append(summary)
 
         return highlights[:5]  # Top 5
@@ -951,6 +957,16 @@ class LongTermMemory:
 
         return list(set(target_users))  # Deduplicate
 
+    def _get_scores(self, analysis: Any) -> Dict[str, float]:
+        """Extract scores from a WaypointAnalysis object or dict."""
+        if hasattr(analysis, "persona_scores"):
+            return analysis.persona_scores
+        if hasattr(analysis, "objective_scores"):
+            return analysis.objective_scores
+        if isinstance(analysis, dict):
+            return analysis.get("scores", {})
+        return {}
+
     def _extract_trend_patterns(self, all_analyses: List[Dict[str, Any]]) -> List[RoutePattern]:
         """Extract improving/declining trend patterns."""
         patterns = []
@@ -961,7 +977,7 @@ class LongTermMemory:
         # Calculate waypoint averages
         waypoint_avgs = []
         for analysis in all_analyses:
-            scores = analysis.get("scores", {})
+            scores = self._get_scores(analysis)
             avg = sum(scores.values()) / len(scores) if scores else 5.0
             waypoint_avgs.append(avg)
 
@@ -976,7 +992,7 @@ class LongTermMemory:
                 start_waypoint=0,
                 end_waypoint=len(all_analyses) - 1,
                 description=f"Route improves significantly ({first_half_avg:.1f} → {second_half_avg:.1f})",
-                affected_dimensions=list(all_analyses[0].get("scores", {}).keys())
+                affected_dimensions=list(self._get_scores(all_analyses[0]).keys())
             ))
         elif first_half_avg - second_half_avg > 1.0:
             patterns.append(RoutePattern(
@@ -984,7 +1000,7 @@ class LongTermMemory:
                 start_waypoint=0,
                 end_waypoint=len(all_analyses) - 1,
                 description=f"Route declines significantly ({first_half_avg:.1f} → {second_half_avg:.1f})",
-                affected_dimensions=list(all_analyses[0].get("scores", {}).keys())
+                affected_dimensions=list(self._get_scores(all_analyses[0]).keys())
             ))
 
         return patterns
@@ -996,7 +1012,7 @@ class LongTermMemory:
         cluster_start = 0
 
         for i, analysis in enumerate(all_analyses):
-            scores = analysis.get("scores", {})
+            scores = self._get_scores(analysis)
             avg_score = sum(scores.values()) / len(scores) if scores else 5.0
 
             if avg_score < 4.5:  # Low score threshold
@@ -1028,7 +1044,7 @@ class LongTermMemory:
         for i in range(len(all_analyses) - window_size + 1):
             window_scores = []
             for j in range(i, i + window_size):
-                scores = all_analyses[j].get("scores", {})
+                scores = self._get_scores(all_analyses[j])
                 avg = sum(scores.values()) / len(scores) if scores else 5.0
                 window_scores.append(avg)
 
@@ -1040,7 +1056,7 @@ class LongTermMemory:
                         start_waypoint=i,
                         end_waypoint=i + window_size - 1,
                         description=f"High score variation (std: {std:.1f})",
-                        affected_dimensions=list(all_analyses[i].get("scores", {}).keys())
+                        affected_dimensions=list(self._get_scores(all_analyses[i]).keys())
                     ))
 
         return patterns

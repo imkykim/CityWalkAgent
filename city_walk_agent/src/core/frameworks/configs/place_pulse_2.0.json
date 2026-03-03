@@ -1,5 +1,5 @@
 {
-  "framework_id": "place_pulse",
+  "framework_id": "place_pulse_2.0",
   "framework_name": "MIT Place Pulse 2.0",
   "framework_name_cn": "MIT Place Pulse 2.0 城市感知框架",
   "description": "Crowdsourced urban perception framework with four positive perceptual dimensions. Developed by MIT Media Lab based on 1.17 million pairwise comparisons from 81,630 online volunteers across 56 cities worldwide.",

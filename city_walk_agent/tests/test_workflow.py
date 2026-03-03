@@ -6,6 +6,7 @@ This simulates the complete pipeline without making real VLM API calls.
 """
 
 import sys
+import pytest
 from pathlib import Path
 from datetime import datetime
 
@@ -13,8 +14,21 @@ from datetime import datetime
 sys.path.insert(0, 'src')
 
 from utils.data_models import Route, Waypoint
-from config import load_framework
-from analysis import SequentialAnalyzer, MethodComparator, AggregateAnalyzer
+from src.core import load_framework
+from src.research import SequentialAnalyzer, MethodComparator, AggregateAnalyzer
+
+
+@pytest.fixture
+def route():
+    """Pytest fixture that creates a test route."""
+    return create_test_route()
+
+
+@pytest.fixture
+def evaluations(route):
+    """Pytest fixture that creates mock evaluations for the test route."""
+    framework = load_framework("sagai_2025")
+    return create_mock_evaluations(route, framework)
 
 
 def create_test_route():
@@ -189,7 +203,7 @@ def test_aggregate_analyzer(evaluations):
     print("Testing Aggregate Analyzer")
     print("="*70)
 
-    from analysis import AggregateAnalyzer
+    from src.research import AggregateAnalyzer
 
     analyzer = AggregateAnalyzer(evaluations)
 

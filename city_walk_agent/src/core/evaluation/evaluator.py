@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
-from src.config import DEFAULT_MAX_CONCURRENT
+from src.core import DEFAULT_MAX_CONCURRENT
 from src.utils.logging import get_logger
 
 from .batch_processor import BatchProcessor, EvaluationTask

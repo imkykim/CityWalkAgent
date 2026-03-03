@@ -26,8 +26,8 @@ for p in (PROJECT_ROOT, SRC_DIR):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from src.config import DEFAULT_FRAMEWORK_ID, settings
-from src.agent.walking_agent import WalkingAgent
+from src.core import DEFAULT_FRAMEWORK_ID, settings
+from src.agent.orchestrator import CityWalkAgent
 from src.utils.visualization import RouteVisualizer
 from src.utils.logging import get_logger
 
@@ -75,28 +75,31 @@ def generate_persona_visualizations(
     # 1. Persona comparison (line plots with arrows)
     print("\n1. Creating objective vs persona comparison plots...")
     comparison_path = output_dir / "persona_comparison.png"
-    viz.plot_persona_comparison(
+    viz.plot_comparison(
         waypoint_results=analysis_results,
         title=f"Objective vs Persona-Aware Evaluation ({personality_name})",
         save_path=comparison_path,
+        mode="persona",
     )
     viz_paths["persona_comparison"] = comparison_path
 
     # 2. Summary radar chart
     print("2. Creating persona impact radar chart...")
     radar_path = output_dir / "persona_summary_radar.png"
-    viz.plot_persona_summary_radar(
+    viz.plot_summary_radar(
         waypoint_results=analysis_results,
         save_path=radar_path,
+        mode="persona",
     )
     viz_paths["persona_radar"] = radar_path
 
-    # 3. Delta distribution (histograms + box plot)
-    print("3. Creating persona adjustment distribution...")
+    # 3. Persona delta overview (average trends + delta heatmap)
+    print("3. Creating persona adjustment overview...")
     delta_path = output_dir / "persona_delta_distribution.png"
-    viz.plot_persona_delta_distribution(
+    viz.plot_overview(
         waypoint_results=analysis_results,
         save_path=delta_path,
+        mode="persona",
     )
     viz_paths["persona_delta"] = delta_path
 
@@ -135,23 +138,23 @@ def generate_persona_visualizations(
 
     # Plot objective scores
     objective_path = output_dir / "scores_objective.png"
-    viz.plot_scores_with_trends(
+    viz.plot_scores(
         scores=objective_scores,
         waypoint_ids=waypoint_ids,
         title="Objective Evaluation (Research/Framework-Only)",
         save_path=objective_path,
-        system2_triggered_waypoints=system2_triggers,
+        markers=system2_triggers,
     )
     viz_paths["objective_scores"] = objective_path
 
     # Plot persona-aware scores
     persona_path = output_dir / "scores_persona_aware.png"
-    viz.plot_scores_with_trends(
+    viz.plot_scores(
         scores=persona_scores,
         waypoint_ids=waypoint_ids,
         title=f"Persona-Aware Evaluation ({personality_name}) - Final Scores",
         save_path=persona_path,
-        system2_triggered_waypoints=system2_triggers,
+        markers=system2_triggers,
     )
     viz_paths["persona_scores"] = persona_path
 
@@ -191,7 +194,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     print(f"  Framework: {framework_id}")
     print("=" * 70)
 
-    agent = WalkingAgent.from_preset(preset_name=personality, framework_id=framework_id)
+    agent = CityWalkAgent.from_preset(preset_name=personality, framework_id=framework_id)
     agent.set_thresholds(phash_threshold=args.phash_threshold)
 
     if args.route_folder:

@@ -11,13 +11,13 @@ Usage:
     from src.agent.config import get_preset
     
     personality = get_preset("homebuyer", "sagai_2025")
-    agent = WalkingAgent(personality=personality)
+    agent = CityWalkAgent(personality=personality)
 """
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from src.config import load_framework
+from src.core import load_framework
 
 
 # ============================================================================
@@ -50,7 +50,7 @@ class EnhancedPersonalityConfig:
 
 @dataclass
 class AgentPersonality:
-    """Runtime personality configuration for WalkingAgent.
+    """Runtime personality configuration for CityWalkAgent.
 
     Attributes:
         name: Human-readable personality name

@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from PIL import Image
-from src.config import settings
+from src.core import settings
 from src.utils.data_models import Route, Waypoint
 from src.utils.logging import get_logger
 

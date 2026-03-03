@@ -1,6 +1,6 @@
 """Essential constants for personality configuration."""
 
-from src.config.constants import DEFAULT_FRAMEWORK_ID as GLOBAL_DEFAULT_FRAMEWORK_ID
+from src.core.constants import DEFAULT_FRAMEWORK_ID as GLOBAL_DEFAULT_FRAMEWORK_ID
 
 
 # Default evaluation framework for all agents

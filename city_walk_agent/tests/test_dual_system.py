@@ -64,7 +64,7 @@ def test_reasoning_result_defaults():
 def test_narrative_chapter_creation():
     """NarrativeChapter creation keeps provided fields."""
     from pathlib import Path
-    from src.agent.capabilities.long_term_memory import NarrativeChapter
+    from src.agent.memory.long_term_memory import NarrativeChapter
 
     chapter = NarrativeChapter(
         waypoint_id=10,

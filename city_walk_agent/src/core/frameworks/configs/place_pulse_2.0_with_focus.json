@@ -1,5 +1,5 @@
 {
-  "framework_id": "place_pulse",
+  "framework_id": "place_pulse_2.0",
   "framework_name": "MIT Place Pulse 2.0",
   "framework_name_cn": "MIT Place Pulse 2.0 城市感知框架",
   "description": "An optimized version of the MIT Place Pulse 2.0 framework focusing on pedestrian-centric safety and reduced VLM bias.",

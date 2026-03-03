@@ -1,6 +1,6 @@
 """Integration tests for framework-agnostic functionality.
 
-Tests that PersonaReasoner, RouteVisualizer, and WalkingAgent work correctly
+Tests that PersonaReasoner, RouteVisualizer, and CityWalkAgent work correctly
 with all supported evaluation frameworks.
 """
 
@@ -10,9 +10,9 @@ import pytest
 
 from src.agent.system2.persona_reasoner import PersonaReasoner, TriggerReason
 from src.utils.visualization import RouteVisualizer
-from src.agent.walking_agent import WalkingAgent
+from src.agent.orchestrator import CityWalkAgent
 from src.agent.config import get_preset
-from src.config import DEFAULT_FRAMEWORK_ID, load_framework
+from src.core import DEFAULT_FRAMEWORK_ID, load_framework
 
 
 # All supported frameworks
@@ -102,8 +102,8 @@ class TestRouteVisualizerFrameworks:
 
         assert viz.framework_id == framework_id
         assert viz.framework is not None
-        assert viz.dimension_config is not None
-        assert len(viz.dimension_config) > 0
+        assert viz.dim_config is not None
+        assert len(viz.dim_config) > 0
 
     @pytest.mark.parametrize("framework_id", FRAMEWORKS)
     def test_dimension_config_has_all_dimensions(self, framework_id):
@@ -113,18 +113,18 @@ class TestRouteVisualizerFrameworks:
 
         # Check that all dimensions have color and label
         for dim in framework["dimensions"]:
-            assert dim["id"] in viz.dimension_config
-            assert "color" in viz.dimension_config[dim["id"]]
-            assert "label" in viz.dimension_config[dim["id"]]
+            assert dim["id"] in viz.dim_config
+            assert "color" in viz.dim_config[dim["id"]]
+            assert "label" in viz.dim_config[dim["id"]]
 
     @pytest.mark.parametrize("framework_id", FRAMEWORKS)
-    def test_build_dim_config_uses_framework_dimensions(self, framework_id):
-        """Test that _build_dim_config uses framework dimensions."""
+    def test_get_dim_config_uses_framework_dimensions(self, framework_id):
+        """Test that _get_dim_config uses framework dimensions."""
         viz = RouteVisualizer(framework_id=framework_id)
         framework = load_framework(framework_id)
 
         dim_keys = [dim["id"] for dim in framework["dimensions"]]
-        config = viz._build_dim_config(dim_keys)
+        config = viz._get_dim_config(dim_keys)
 
         # Check that all dimensions are configured
         assert len(config) == len(framework["dimensions"])
@@ -144,7 +144,7 @@ class TestRouteVisualizerFrameworks:
         waypoint_ids = ["wp_0", "wp_1", "wp_2", "wp_3", "wp_4"]
 
         # Test plotting (should not raise errors)
-        fig = viz.plot_scores_with_trends(
+        fig = viz.plot_scores(
             scores=scores,
             waypoint_ids=waypoint_ids,
             title=f"Test {framework_id}",
@@ -154,15 +154,15 @@ class TestRouteVisualizerFrameworks:
         assert fig is not None
 
 
-class TestWalkingAgentFrameworks:
-    """Test WalkingAgent with different frameworks."""
+class TestCityWalkAgentFrameworks:
+    """Test CityWalkAgent with different frameworks."""
 
     @pytest.mark.parametrize("framework_id", FRAMEWORKS)
     def test_agent_initializes_with_framework(self, framework_id):
-        """Test that WalkingAgent initializes with framework."""
-        personality = get_preset("balanced", framework_id)
+        """Test that CityWalkAgent initializes with framework."""
+        personality = get_preset("homebuyer", framework_id)
 
-        agent = WalkingAgent(
+        agent = CityWalkAgent(
             agent_id="test_agent",
             personality=personality,
             framework_id=framework_id
@@ -173,10 +173,10 @@ class TestWalkingAgentFrameworks:
 
     @pytest.mark.parametrize("framework_id", FRAMEWORKS)
     def test_persona_reasoner_uses_framework(self, framework_id):
-        """Test that WalkingAgent's PersonaReasoner uses correct framework."""
-        personality = get_preset("balanced", framework_id)
+        """Test that CityWalkAgent's PersonaReasoner uses correct framework."""
+        personality = get_preset("homebuyer", framework_id)
 
-        agent = WalkingAgent(
+        agent = CityWalkAgent(
             agent_id="test_agent",
             personality=personality,
             framework_id=framework_id
@@ -194,8 +194,8 @@ class TestWalkingAgentFrameworks:
     @pytest.mark.parametrize("framework_id", FRAMEWORKS)
     def test_agent_from_preset(self, framework_id):
         """Test creating agent from preset with framework."""
-        agent = WalkingAgent.from_preset(
-            preset_name="balanced",
+        agent = CityWalkAgent.from_preset(
+            preset_name="homebuyer",
             framework_id=framework_id,
             agent_id=f"test_{framework_id}"
         )
@@ -210,8 +210,8 @@ class TestFrameworkSwitching:
 
     def test_different_agents_different_frameworks(self):
         """Test that different agents can use different frameworks simultaneously."""
-        agent1 = WalkingAgent.from_preset("balanced", "sagai_2025", "agent1")
-        agent2 = WalkingAgent.from_preset("balanced", "streetagent_5d", "agent2")
+        agent1 = CityWalkAgent.from_preset("homebuyer", "sagai_2025", "agent1")
+        agent2 = CityWalkAgent.from_preset("homebuyer", "streetagent_5d", "agent2")
 
         assert agent1.framework_id == "sagai_2025"
         assert agent2.framework_id == "streetagent_5d"
@@ -227,8 +227,8 @@ class TestFrameworkSwitching:
         assert viz1.framework_id == "sagai_2025"
         assert viz2.framework_id == "phenomenology_3d"
 
-        assert len(viz1.dimension_config) == 4  # sagai_2025 has 4 dimensions
-        assert len(viz2.dimension_config) == 3  # phenomenology_3d has 3 dimensions
+        assert len(viz1.dim_config) == 4  # sagai_2025 has 4 dimensions
+        assert len(viz2.dim_config) == 3  # phenomenology_3d has 3 dimensions
 
 
 class TestBackwardCompatibility:
@@ -245,9 +245,9 @@ class TestBackwardCompatibility:
         assert viz.framework_id == DEFAULT_FRAMEWORK_ID
 
     def test_agent_defaults_to_default_framework(self):
-        """Test that WalkingAgent defaults to default framework when not specified."""
-        personality = get_preset("balanced", DEFAULT_FRAMEWORK_ID)
-        agent = WalkingAgent(agent_id="test", personality=personality)
+        """Test that CityWalkAgent defaults to default framework when not specified."""
+        personality = get_preset("homebuyer", DEFAULT_FRAMEWORK_ID)
+        agent = CityWalkAgent(agent_id="test", personality=personality)
         assert agent.framework_id == DEFAULT_FRAMEWORK_ID
 
 

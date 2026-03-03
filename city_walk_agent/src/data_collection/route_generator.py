@@ -15,7 +15,7 @@ else:
     GOOGLEMAPS_IMPORT_ERROR = None
 from geopy.distance import geodesic
 
-from src.config import DEFAULT_SAMPLING_INTERVAL, settings
+from src.core import DEFAULT_SAMPLING_INTERVAL, settings
 from src.utils.data_models import Route, Waypoint
 from src.utils.logging import get_logger
 

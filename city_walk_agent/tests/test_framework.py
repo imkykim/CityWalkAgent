@@ -33,7 +33,7 @@ def test_imports():
         return False
 
     try:
-        from analysis import SequentialAnalyzer, MethodComparator
+        from src.research import SequentialAnalyzer, MethodComparator
 
         print("✓ Analysis imports OK")
     except Exception as e:
@@ -41,7 +41,7 @@ def test_imports():
         return False
 
     try:
-        from pipeline import WalkingAgentPipeline
+        from pipeline import CityWalkAgentPipeline
 
         print("✓ Pipeline import OK")
     except Exception as e:
@@ -142,7 +142,7 @@ def test_analysis_algorithms():
     print("=" * 70)
 
     try:
-        from analysis.metrics import (
+        from src.research.metrics import (
             calculate_volatility,
             analyze_transitions,
             classify_route_pattern,
@@ -181,7 +181,7 @@ def test_prompt_builder():
 
     try:
         from config import load_framework
-        from evaluation.prompt_builder import PromptBuilder
+        from src.core.evaluation.prompt_builder import PromptBuilder
 
         # Load a framework
         framework = load_framework("sagai_2025")

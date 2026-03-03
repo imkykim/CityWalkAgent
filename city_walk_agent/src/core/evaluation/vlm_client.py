@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from src.config import DEFAULT_RETRY_ATTEMPTS, DEFAULT_VLM_TIMEOUT
+from src.core import DEFAULT_RETRY_ATTEMPTS, DEFAULT_VLM_TIMEOUT
 from src.utils.logging import get_logger
 
 

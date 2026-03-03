@@ -52,8 +52,8 @@ import statistics
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.agent.capabilities.long_term_memory import LongTermMemory, RouteSummary
-from src.agent.capabilities.short_term_memory import MemoryItem, ShortTermMemory
+from src.agent.memory.long_term_memory import LongTermMemory, RouteSummary
+from src.agent.memory.short_term_memory import MemoryItem, ShortTermMemory
 from src.agent.system2.persona_reasoner import TriggerReason
 from src.agent.config import AgentPersonality
 from src.utils.logging import get_logger

@@ -1,4 +1,4 @@
-"""WalkingAgent - orchestrates all capabilities for route analysis.
+"""CityWalkAgent - orchestrates all capabilities for route analysis.
 
 This is the main concrete agent implementation that uses ContinuousAnalyzer,
 ShortTermMemory, PersonaReasoner, and LongTermMemory to analyze walking routes
@@ -17,21 +17,20 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from geopy.distance import geodesic
 
 from src.agent.base import AgentMetadata, AgentState, BaseAgent
-from src.agent.capabilities import (
+from src.agent.memory import (
     LongTermMemory,
     MemoryManager,
-    PersonaReasoner,
     ShortTermMemory,
-    TriggerReason,
 )
-from src.agent.cognitive_controller import CognitiveController
+from src.agent.system2 import PersonaReasoner, TriggerReason
+from src.agent.system1 import CognitiveController
 from src.agent.config import AgentPersonality, get_preset
-from src.config import DEFAULT_FRAMEWORK_ID, settings
+from src.core import DEFAULT_FRAMEWORK_ID, settings
 from src.utils.data_models import Route, Waypoint
 from src.utils.logging import get_logger
 
 
-class WalkingAgent(BaseAgent):
+class CityWalkAgent(BaseAgent):
     """Walking route analysis agent with personality-driven decision making.
 
     This agent orchestrates the full cognitive pipeline:
@@ -44,7 +43,7 @@ class WalkingAgent(BaseAgent):
     Example:
         ```python
         # Create from preset
-        agent = WalkingAgent.from_preset("safety", "sagai_2025")
+        agent = CityWalkAgent.from_preset("safety", "sagai_2025")
 
         # Analyze a route
         result = agent.run(
@@ -65,7 +64,7 @@ class WalkingAgent(BaseAgent):
         framework_id: Optional[str] = None,
         enable_memory: bool = True,
     ):
-        """Initialize WalkingAgent with personality.
+        """Initialize CityWalkAgent with personality.
 
         Args:
             agent_id: Unique identifier for this agent.
@@ -122,7 +121,7 @@ class WalkingAgent(BaseAgent):
         preset_name: str,
         framework_id: str = DEFAULT_FRAMEWORK_ID,
         agent_id: Optional[str] = None,
-    ) -> "WalkingAgent":
+    ) -> "CityWalkAgent":
         """Create agent from a personality preset.
 
         Args:
@@ -131,11 +130,11 @@ class WalkingAgent(BaseAgent):
             agent_id: Optional agent ID (defaults to f"{preset_name}_agent").
 
         Returns:
-            Configured WalkingAgent instance.
+            Configured CityWalkAgent instance.
 
         Example:
             ```python
-            agent = WalkingAgent.from_preset("homebuyer", "streetagent_5d")
+            agent = CityWalkAgent.from_preset("homebuyer", "streetagent_5d")
             ```
         """
         # Load personality
@@ -169,7 +168,7 @@ class WalkingAgent(BaseAgent):
 
         Example:
             ```python
-            agent = WalkingAgent.from_preset("balanced", "streetagent_5d")
+            agent = CityWalkAgent.from_preset("balanced", "streetagent_5d")
 
             # Configure threshold BEFORE using the agent
             agent.set_thresholds(phash_threshold=30)
@@ -330,7 +329,7 @@ class WalkingAgent(BaseAgent):
             ContinuousAnalyzer instance configured with agent's framework and persona.
         """
         if self._continuous_analyzer is None:
-            from src.analysis import ContinuousAnalyzer
+            from src.agent.system1 import ContinuousAnalyzer
 
             # Get enhanced persona configuration if available
             enhanced_persona = self._get_enhanced_persona()
@@ -836,7 +835,7 @@ class WalkingAgent(BaseAgent):
 
         Example:
             ```python
-            agent = WalkingAgent.from_preset("balanced", "sagai_2025")
+            agent = CityWalkAgent.from_preset("balanced", "sagai_2025")
 
             result = agent.run_with_memory(
                 start=(40.7589, -73.9851),
@@ -1309,7 +1308,7 @@ class WalkingAgent(BaseAgent):
 
         Example:
             ```python
-            agent = WalkingAgent.from_preset("safety", "streetagent_5d")
+            agent = CityWalkAgent.from_preset("safety", "streetagent_5d")
             result = agent.run_with_memory_from_folder(
                 route_folder="data/images/singapore/",
                 output_dir=Path("outputs/singapore_analysis")

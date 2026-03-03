@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 from src.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    from src.agent.capabilities import LongTermMemory
+    from src.agent.memory import LongTermMemory
 
 
 @dataclass
@@ -119,7 +119,7 @@ class BaseAgent(ABC):
             LongTermMemory instance for this agent
         """
         if self._memory_system is None:
-            from src.agent.capabilities import LongTermMemory
+            from src.agent.memory import LongTermMemory
             self._memory_system = LongTermMemory(self.metadata.agent_id)
             self.logger.debug("Memory system initialized")
         return self._memory_system
@@ -321,7 +321,7 @@ class BaseAgent(ABC):
             and metadata.
         """
         # Placeholder implementation - subclasses should override
-        # In production, would use WalkingAgentPipeline
+        # In production, would use CityWalkAgentPipeline
         self.logger.warning(
             "Using placeholder _get_route_data - override in subclass",
             start=start,
