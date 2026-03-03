@@ -23,6 +23,7 @@ from .models import (
     PlanResult,
     ReportResult,
 )
+from .persona_reasoner import PersonaReasoner, ReasoningResult, TriggerReason
 
 __all__ = [
     "Interpreter",
@@ -34,4 +35,7 @@ __all__ = [
     "DecideResult",
     "PlanResult",
     "ReportResult",
+    "PersonaReasoner",
+    "ReasoningResult",
+    "TriggerReason",
 ]

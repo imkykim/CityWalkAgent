@@ -12,11 +12,11 @@ from src.agent.capabilities import (
     KeyMoment,
     LongTermMemory,
     MemoryItem,
+    PersonaReasoner,
+    ReasoningResult,
     RoutePattern,
     RouteSummary,
     ShortTermMemory,
-    ThinkingModule,
-    ThinkingResult,
     TriggerReason,
 )
 from src.agent.cognitive_controller import CognitiveController
@@ -48,10 +48,10 @@ __all__ = [
     # Short-term memory system
     "ShortTermMemory",
     "MemoryItem",
-    # Thinking module (waypoint-level reasoning)
-    "ThinkingModule",
+    # Persona reasoner (System 2 waypoint-level reasoning)
+    "PersonaReasoner",
     "TriggerReason",
-    "ThinkingResult",
+    "ReasoningResult",
     # Cognitive controller
     "CognitiveController",
 ]

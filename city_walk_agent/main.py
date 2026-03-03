@@ -198,7 +198,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         result = agent.run_with_memory_from_folder(
             route_folder=args.route_folder,
             output_dir=output_dir,
-            skip_thinking=args.system1_only,
+            skip_reasoning=args.system1_only,
         )
     elif args.start and args.end:
         result = agent.run_with_memory(
@@ -206,7 +206,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             end=args.end,
             interval=args.interval,
             output_dir=output_dir,
-            skip_thinking=args.system1_only,
+            skip_reasoning=args.system1_only,
         )
     else:
         print("❌  Provide --route-folder OR both --start and --end.")

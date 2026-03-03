@@ -269,7 +269,7 @@ def test_attention_gate_filters_normal(configured_memory_manager):
 
 def test_system2_context_with_trigger(configured_memory_manager):
     """Test that triggered waypoints get System 2 context prepared."""
-    from src.agent.capabilities.thinking import TriggerReason
+    from src.agent.system2.persona_reasoner import TriggerReason
 
     # Add waypoints to STM
     for i in range(3):
@@ -343,7 +343,7 @@ def test_system2_result_update(configured_memory_manager):
 
 def test_system2_statistics_tracking(configured_memory_manager):
     """Test that System 2 triggers are tracked in statistics."""
-    from src.agent.capabilities.thinking import TriggerReason
+    from src.agent.system2.persona_reasoner import TriggerReason
 
     # Process several waypoints
     for i in range(5):
@@ -372,7 +372,7 @@ def test_system2_statistics_tracking(configured_memory_manager):
 
 def test_prepare_context_structure(configured_memory_manager):
     """Test context preparation returns correct structure."""
-    from src.agent.capabilities.thinking import TriggerReason
+    from src.agent.system2.persona_reasoner import TriggerReason
 
     # Add some waypoints to STM
     for i in range(3):
@@ -394,7 +394,7 @@ def test_prepare_context_structure(configured_memory_manager):
         visual_change=True
     )
 
-    context = configured_memory_manager.prepare_context_for_thinking(
+    context = configured_memory_manager.prepare_context_for_reasoning(
         current,
         trigger_reason=TriggerReason.VISUAL_CHANGE
     )
@@ -423,14 +423,14 @@ def test_prepare_context_structure(configured_memory_manager):
 
 def test_prepare_context_includes_personality(configured_memory_manager):
     """Test prepared context includes personality information."""
-    from src.agent.capabilities.thinking import TriggerReason
+    from src.agent.system2.persona_reasoner import TriggerReason
 
     waypoint = create_waypoint_analysis(
         waypoint_id=1,
         scores={"safety": 7.0, "comfort": 7.0}
     )
 
-    context = configured_memory_manager.prepare_context_for_thinking(
+    context = configured_memory_manager.prepare_context_for_reasoning(
         waypoint,
         trigger_reason=TriggerReason.VISUAL_CHANGE
     )
@@ -476,7 +476,7 @@ def test_process_waypoint_adds_to_stm(configured_memory_manager):
 
 def test_process_waypoint_triggers_system2(configured_memory_manager):
     """Test process_waypoint triggers System 2 when triggered flag is set."""
-    from src.agent.capabilities.thinking import TriggerReason
+    from src.agent.system2.persona_reasoner import TriggerReason
 
     # Add some waypoints first
     for i in range(3):
@@ -552,7 +552,7 @@ def test_complete_route_clears_stm(configured_memory_manager):
 
     summary = configured_memory_manager.complete_route(
         route_data=route_data,
-        thinking_history=[]
+        reasoning_history=[]
     )
 
     # STM should be cleared
@@ -581,7 +581,7 @@ def test_complete_route_generates_summary(configured_memory_manager):
 
     summary = configured_memory_manager.complete_route(
         route_data=route_data,
-        thinking_history=[]
+        reasoning_history=[]
     )
 
     assert summary.route_id == "declining_route"

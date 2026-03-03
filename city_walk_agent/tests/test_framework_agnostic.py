@@ -1,6 +1,6 @@
 """Integration tests for framework-agnostic functionality.
 
-Tests that ThinkingModule, RouteVisualizer, and WalkingAgent work correctly
+Tests that PersonaReasoner, RouteVisualizer, and WalkingAgent work correctly
 with all supported evaluation frameworks.
 """
 
@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 import pytest
 
-from src.agent.capabilities.thinking import ThinkingModule, TriggerReason
+from src.agent.system2.persona_reasoner import PersonaReasoner, TriggerReason
 from src.utils.visualization import RouteVisualizer
 from src.agent.walking_agent import WalkingAgent
 from src.agent.config import get_preset
@@ -56,82 +56,40 @@ class TestFrameworkLoading:
             assert len(dim["name_en"]) > 0
 
 
-class TestThinkingModuleFrameworks:
-    """Test ThinkingModule with different frameworks."""
+class TestPersonaReasonerFrameworks:
+    """Test PersonaReasoner with different frameworks."""
 
     @pytest.mark.parametrize("framework_id", FRAMEWORKS)
-    def test_thinking_module_initializes(self, framework_id):
-        """Test that ThinkingModule initializes with framework."""
-        thinking = ThinkingModule(framework_id=framework_id)
+    def test_persona_reasoner_initializes(self, framework_id):
+        """Test that PersonaReasoner initializes with framework."""
+        reasoner = PersonaReasoner(framework_id=framework_id)
 
-        assert thinking.framework_id == framework_id
-        assert thinking.framework is not None
-        assert thinking.dimensions is not None
-        assert thinking.dimension_ids is not None
-        assert len(thinking.dimension_ids) > 0
+        assert reasoner.framework_id == framework_id
+        assert reasoner.framework is not None
+        assert reasoner.dimensions is not None
+        assert reasoner.dimension_ids is not None
+        assert len(reasoner.dimension_ids) > 0
 
     @pytest.mark.parametrize("framework_id", FRAMEWORKS)
-    def test_dimension_json_template_generation(self, framework_id):
-        """Test that dimension JSON template is generated correctly."""
-        thinking = ThinkingModule(framework_id=framework_id)
+    def test_fallback_result_fields(self, framework_id):
+        """Test that fallback result has required fields."""
+        reasoner = PersonaReasoner(framework_id=framework_id)
         framework = load_framework(framework_id)
 
-        template = thinking._generate_dimension_json_template()
-
-        # Check that all framework dimensions are in the template
-        for dim in framework["dimensions"]:
-            assert dim["id"] in template
-
-    @pytest.mark.parametrize("framework_id", FRAMEWORKS)
-    def test_reasoning_fields_generation(self, framework_id):
-        """Test that reasoning fields are generated for all dimensions."""
-        thinking = ThinkingModule(framework_id=framework_id)
-        framework = load_framework(framework_id)
-
-        fields = thinking._generate_reasoning_fields()
-
-        # Check that all framework dimensions have reasoning fields
-        for dim in framework["dimensions"]:
-            assert dim["id"] in fields
-
-    @pytest.mark.parametrize("framework_id", FRAMEWORKS)
-    def test_dimension_descriptions_formatting(self, framework_id):
-        """Test that dimension descriptions are formatted correctly."""
-        thinking = ThinkingModule(framework_id=framework_id)
-        framework = load_framework(framework_id)
-
-        descriptions = thinking._format_dimension_descriptions()
-
-        # Check that all framework dimensions are described
-        for dim in framework["dimensions"]:
-            assert dim["name_en"] in descriptions or dim["id"] in descriptions
-
-    @pytest.mark.parametrize("framework_id", FRAMEWORKS)
-    def test_fallback_result_has_all_dimensions(self, framework_id):
-        """Test that fallback result includes all framework dimensions."""
-        thinking = ThinkingModule(framework_id=framework_id)
-        framework = load_framework(framework_id)
-
-        # Create system1_scores with all dimensions
         system1_scores = {dim["id"]: 7.5 for dim in framework["dimensions"]}
 
-        fallback = thinking._create_fallback_result(
+        fallback = reasoner._create_fallback_result(
             waypoint_id=1,
             trigger_reason=TriggerReason.VISUAL_CHANGE,
             system1_scores=system1_scores,
             error="Test error"
         )
 
-        # Check that fallback has all dimensions
-        assert len(fallback.revised_scores) == len(framework["dimensions"])
-        assert len(fallback.score_adjustments) == len(framework["dimensions"])
-        assert len(fallback.revision_reasoning) == len(framework["dimensions"])
-
-        for dim in framework["dimensions"]:
-            assert dim["id"] in fallback.revised_scores
-            assert dim["id"] in fallback.score_adjustments
-            assert dim["id"] in fallback.revision_reasoning
-            assert fallback.score_adjustments[dim["id"]] == 0.0
+        assert fallback.waypoint_id == 1
+        assert fallback.trigger_reason == TriggerReason.VISUAL_CHANGE
+        assert fallback.system1_scores == system1_scores
+        assert fallback.confidence == 0.0
+        assert fallback.significance == "low"
 
 
 class TestRouteVisualizerFrameworks:
@@ -214,8 +172,8 @@ class TestWalkingAgentFrameworks:
         assert agent.personality is not None
 
     @pytest.mark.parametrize("framework_id", FRAMEWORKS)
-    def test_thinking_module_uses_framework(self, framework_id):
-        """Test that WalkingAgent's ThinkingModule uses correct framework."""
+    def test_persona_reasoner_uses_framework(self, framework_id):
+        """Test that WalkingAgent's PersonaReasoner uses correct framework."""
         personality = get_preset("balanced", framework_id)
 
         agent = WalkingAgent(
@@ -224,14 +182,14 @@ class TestWalkingAgentFrameworks:
             framework_id=framework_id
         )
 
-        # Access thinking_module to trigger lazy loading
-        thinking = agent.thinking_module
+        # Access persona_reasoner to trigger lazy loading
+        reasoner = agent.persona_reasoner
 
-        assert thinking.framework_id == framework_id
-        assert thinking.framework is not None
+        assert reasoner.framework_id == framework_id
+        assert reasoner.framework is not None
 
         framework = load_framework(framework_id)
-        assert len(thinking.dimension_ids) == len(framework["dimensions"])
+        assert len(reasoner.dimension_ids) == len(framework["dimensions"])
 
     @pytest.mark.parametrize("framework_id", FRAMEWORKS)
     def test_agent_from_preset(self, framework_id):
@@ -244,7 +202,7 @@ class TestWalkingAgentFrameworks:
 
         assert agent.framework_id == framework_id
         assert agent.personality is not None
-        assert agent.thinking_module.framework_id == framework_id
+        assert agent.persona_reasoner.framework_id == framework_id
 
 
 class TestFrameworkSwitching:
@@ -258,8 +216,8 @@ class TestFrameworkSwitching:
         assert agent1.framework_id == "sagai_2025"
         assert agent2.framework_id == "streetagent_5d"
 
-        assert len(agent1.thinking_module.dimension_ids) == 4  # sagai_2025 has 4 dimensions
-        assert len(agent2.thinking_module.dimension_ids) == 5  # streetagent_5d has 5 dimensions
+        assert len(agent1.persona_reasoner.dimension_ids) == 4  # sagai_2025 has 4 dimensions
+        assert len(agent2.persona_reasoner.dimension_ids) == 5  # streetagent_5d has 5 dimensions
 
     def test_visualizers_with_different_frameworks(self):
         """Test that multiple visualizers can use different frameworks."""
@@ -276,10 +234,10 @@ class TestFrameworkSwitching:
 class TestBackwardCompatibility:
     """Test that default framework follows DEFAULT_FRAMEWORK_ID."""
 
-    def test_thinking_module_defaults_to_default_framework(self):
-        """Test that ThinkingModule defaults to configured default."""
-        thinking = ThinkingModule()
-        assert thinking.framework_id == DEFAULT_FRAMEWORK_ID
+    def test_persona_reasoner_defaults_to_default_framework(self):
+        """Test that PersonaReasoner defaults to configured default."""
+        reasoner = PersonaReasoner()
+        assert reasoner.framework_id == DEFAULT_FRAMEWORK_ID
 
     def test_visualizer_defaults_to_default_framework(self):
         """Test that RouteVisualizer defaults to configured default."""

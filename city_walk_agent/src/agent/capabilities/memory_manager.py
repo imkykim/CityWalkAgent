@@ -4,12 +4,12 @@ The MemoryManager serves as the integration layer between:
 - Short-term memory (STM): Real-time context during route traversal
 - Long-term memory (LTM): Persistent storage of key moments and patterns
 - Agent attributes: Personality, profile, and status
-- System 2 reasoning: ThinkingModule activation and context preparation
+- System 2 reasoning: PersonaReasoner activation and context preparation
 
 Key responsibilities:
 1. Apply attention gate to filter what enters STM
 2. Decide when to trigger expensive System 2 (LLM) reasoning
-3. Package complete context for ThinkingModule
+3. Package complete context for PersonaReasoner
 4. Consolidate STM → LTM when routes complete
 5. Use personality to influence memory behavior
 
@@ -37,12 +37,12 @@ Usage::
 
         if trigger_result is not None:
             # System 2 triggered - perform deep reasoning
-            thinking_result = thinking_module.reason(trigger_result)
+            reasoning_result = persona_reasoner.reason(trigger_result)
 
     # Consolidate at route end
     route_summary = memory_manager.complete_route(
         route_data=route_data,
-        thinking_history=thinking_results
+        reasoning_history=reasoning_results
     )
 """
 
@@ -54,7 +54,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from src.agent.capabilities.long_term_memory import LongTermMemory, RouteSummary
 from src.agent.capabilities.short_term_memory import MemoryItem, ShortTermMemory
-from src.agent.capabilities.thinking import TriggerReason
+from src.agent.system2.persona_reasoner import TriggerReason
 from src.agent.config import AgentPersonality
 from src.utils.logging import get_logger
 
@@ -71,7 +71,7 @@ class MemoryManager:
     Key features:
     - **Attention Gate**: Filters waypoints based on significance before STM entry
     - **System 2 Triggering**: Decides when to activate expensive LLM reasoning
-    - **Context Preparation**: Packages STM + LTM + attributes for ThinkingModule
+    - **Context Preparation**: Packages STM + LTM + attributes for PersonaReasoner
     - **Route Consolidation**: Automatically consolidates STM → LTM on completion
     - **Personality Integration**: Uses agent personality to tune all thresholds
 
@@ -342,12 +342,12 @@ class MemoryManager:
     # Context Preparation for System 2
     # ========================================================================
 
-    def prepare_context_for_thinking(
+    def prepare_context_for_reasoning(
         self,
         waypoint_analysis: Any,  # WaypointAnalysis type hint
         trigger_reason: Optional[TriggerReason] = None,
     ) -> Dict[str, Any]:
-        """Package complete context for ThinkingModule reasoning.
+        """Package complete context for PersonaReasoner reasoning.
 
         Now includes System 2 results from previous waypoints in STM context.
         """
@@ -477,7 +477,7 @@ class MemoryManager:
 
             if context is not None:
                 # System 2 triggered - perform deep reasoning
-                thinking_result = thinking_module.reason(context)
+                reasoning_result = persona_reasoner.reason(context)
         """
         self._waypoints_processed += 1
 
@@ -522,7 +522,7 @@ class MemoryManager:
 
         self._system2_triggers += 1
 
-        context = self.prepare_context_for_thinking(
+        context = self.prepare_context_for_reasoning(
             waypoint_analysis,
             trigger_reason=trigger_reason or TriggerReason.VISUAL_CHANGE,
         )
@@ -537,25 +537,16 @@ class MemoryManager:
         return context
 
     def update_with_system2_result(
-        self, waypoint_id: int, thinking_result: Any  # ThinkingResult
+        self, waypoint_id: int, reasoning_result: Any  # ReasoningResult
     ) -> None:
-        """Update STM with System 2 revised scores."""
-        self._system2_results[waypoint_id] = thinking_result
+        """Update memory state with System 2 reasoning output."""
+        self._system2_results[waypoint_id] = reasoning_result
 
-        if getattr(thinking_result, "revised_scores", None):
-            updated = self.stm.update_item_scores(
-                waypoint_id=waypoint_id,
-                new_scores=thinking_result.revised_scores,
-            )
-            if updated:
-                adjustments = (
-                    getattr(thinking_result, "score_adjustments", {}) or {}
-                )
-                self.logger.debug(
-                    "Updated STM with System 2 scores",
-                    waypoint_id=waypoint_id,
-                    adjustments={k: f"{v:+.1f}" for k, v in adjustments.items()},
-                )
+        self.logger.debug(
+            "Updated memory with System 2 result",
+            waypoint_id=waypoint_id,
+            significance=getattr(reasoning_result, "significance", "unknown"),
+        )
 
     # ========================================================================
     # Route Consolidation: STM → LTM
@@ -564,7 +555,7 @@ class MemoryManager:
     def complete_route(
         self,
         route_data: Dict[str, Any],
-        thinking_history: List[Any],  # List[ThinkingResult]
+        reasoning_history: List[Any],  # List[ReasoningResult]
     ) -> RouteSummary:
         """Consolidate STM → LTM when route analysis completes.
 
@@ -577,7 +568,7 @@ class MemoryManager:
 
         Args:
             route_data: Complete route information (route_id, length_km, etc.)
-            thinking_history: All System 2 reasoning results from ThinkingModule
+            reasoning_history: All System 2 reasoning results from PersonaReasoner
 
         Returns:
             RouteSummary object with complete route characterization
@@ -594,7 +585,7 @@ class MemoryManager:
             "Starting route consolidation",
             route_id=route_id,
             stm_size=self.stm.get_memory_size(),
-            thinking_episodes=len(thinking_history),
+            reasoning_episodes=len(reasoning_history),
         )
 
         # Step 1: Get all STM contents
@@ -618,12 +609,12 @@ class MemoryManager:
                     }
                 )
 
-        # Step 2: Add candidate moments from thinking history
-        for thinking_result in thinking_history:
-            # Extract significance from thinking result
-            significance = getattr(thinking_result, "significance", "medium")
-            confidence = getattr(thinking_result, "confidence", 0.5)
-            waypoint_id = getattr(thinking_result, "waypoint_id", 0)
+        # Step 2: Add candidate moments from reasoning history
+        for reasoning_result in reasoning_history:
+            # Extract significance from reasoning result
+            significance = getattr(reasoning_result, "significance", "medium")
+            confidence = getattr(reasoning_result, "confidence", 0.5)
+            waypoint_id = getattr(reasoning_result, "waypoint_id", 0)
 
             # Find corresponding scores from STM
             scores = {}
@@ -643,10 +634,10 @@ class MemoryManager:
                 )
 
         # Step 3: Extract patterns
-        thinking_texts = [getattr(t, "interpretation", "") for t in thinking_history]
+        reasoning_texts = [getattr(r, "interpretation", "") for r in reasoning_history]
 
         self.episodic_ltm.extract_patterns(
-            all_analyses=all_analyses, thinking_history=thinking_texts
+            all_analyses=all_analyses, thinking_history=reasoning_texts
         )
 
         # Step 4: Generate route summary
@@ -690,7 +681,7 @@ class MemoryManager:
             Dictionary containing:
             - waypoints_processed: Total waypoints seen
             - attention_gate_passes: Waypoints that entered STM
-            - system2_triggers: Times ThinkingModule was triggered
+            - system2_triggers: Times PersonaReasoner was triggered
             - stm_size: Current STM occupancy
             - ltm_stats: LTM statistics
         """

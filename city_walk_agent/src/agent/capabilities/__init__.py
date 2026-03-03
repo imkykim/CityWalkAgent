@@ -8,10 +8,10 @@ from src.agent.capabilities.long_term_memory import (
 )
 from src.agent.capabilities.short_term_memory import ShortTermMemory, MemoryItem
 from src.agent.capabilities.memory_manager import MemoryManager
-from src.agent.capabilities.thinking import (
-    ThinkingModule,
+from src.agent.system2.persona_reasoner import (
+    PersonaReasoner,
     TriggerReason,
-    ThinkingResult,
+    ReasoningResult,
 )
 
 __all__ = [
@@ -25,8 +25,8 @@ __all__ = [
     "MemoryItem",
     # Memory manager
     "MemoryManager",
-    # Thinking module (waypoint-level)
-    "ThinkingModule",
+    # Persona reasoner (System 2 waypoint-level reasoning)
+    "PersonaReasoner",
     "TriggerReason",
-    "ThinkingResult",
+    "ReasoningResult",
 ]

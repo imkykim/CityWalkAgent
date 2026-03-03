@@ -1,12 +1,12 @@
 """WalkingAgent - orchestrates all capabilities for route analysis.
 
 This is the main concrete agent implementation that uses ContinuousAnalyzer,
-ShortTermMemory, ThinkingModule, and LongTermMemory to analyze walking routes
+ShortTermMemory, PersonaReasoner, and LongTermMemory to analyze walking routes
 with personality-driven decision making.
 
 Analysis mode: run_with_memory() / run_with_memory_from_folder()
    - Real-time sequential analysis during route traversal
-   - Uses ContinuousAnalyzer → ShortTermMemory → ThinkingModule → LongTermMemory
+   - Uses ContinuousAnalyzer → ShortTermMemory → PersonaReasoner → LongTermMemory
    - Includes pHash detection, triggered reasoning, and moment curation
 """
 
@@ -20,8 +20,8 @@ from src.agent.base import AgentMetadata, AgentState, BaseAgent
 from src.agent.capabilities import (
     LongTermMemory,
     MemoryManager,
+    PersonaReasoner,
     ShortTermMemory,
-    ThinkingModule,
     TriggerReason,
 )
 from src.agent.cognitive_controller import CognitiveController
@@ -109,7 +109,7 @@ class WalkingAgent(BaseAgent):
         # Lazy-loaded memory system components
         self._continuous_analyzer = None
         self._short_term_memory = None
-        self._thinking_module = None
+        self._persona_reasoner = None
         self._memory_manager = None
 
         self.logger.info(
@@ -369,27 +369,22 @@ class WalkingAgent(BaseAgent):
         return self._short_term_memory
 
     @property
-    def thinking_module(self) -> ThinkingModule:
-        """Lazy-load thinking module for waypoint-level reasoning.
+    def persona_reasoner(self) -> PersonaReasoner:
+        """Lazy-load persona reasoner for waypoint-level System 2 reasoning.
 
         Returns:
-            ThinkingModule instance configured for triggered LLM reasoning.
+            PersonaReasoner instance configured for triggered reasoning.
         """
-        if self._thinking_module is None:
-            # Load framework to pass dimensions for enhanced personality system
-            from src.config import load_framework
-            framework = load_framework(self.framework_id)
-
-            self._thinking_module = ThinkingModule(
+        if self._persona_reasoner is None:
+            self._persona_reasoner = PersonaReasoner(
                 framework_id=self.framework_id,
                 distance_trigger_meters=600.0,
                 score_delta_threshold=1.5,
-                framework_dimensions=framework.get("dimensions", []),
             )
             self.logger.debug(
-                "ThinkingModule initialized", framework_id=self.framework_id
+                "PersonaReasoner initialized", framework_id=self.framework_id
             )
-        return self._thinking_module
+        return self._persona_reasoner
 
     @property
     def memory_manager(self) -> MemoryManager:
@@ -821,14 +816,14 @@ class WalkingAgent(BaseAgent):
         end: Tuple[float, float],
         interval: int = 50,
         output_dir: Optional[Path] = None,
-        skip_thinking: bool = False,
+        skip_reasoning: bool = False,
     ) -> Dict[str, Any]:
         """Run agent with full memory system integration.
 
         This method provides waypoint-level analysis with the complete memory pipeline:
         1. ContinuousAnalyzer - per-waypoint VLM evaluation with pHash detection
         2. ShortTermMemory - sliding window context for recent waypoints
-        3. ThinkingModule - triggered LLM-based reasoning at key moments (optional)
+        3. PersonaReasoner - triggered System 2 reasoning at key moments (optional)
         4. LongTermMemory - curated key moments and pattern extraction
 
         This is separate from run() to maintain backward compatibility. Use this
@@ -839,12 +834,12 @@ class WalkingAgent(BaseAgent):
             end: Destination GPS coordinates (lat, lon).
             interval: Sampling interval in meters (default: 50).
             output_dir: Optional directory to save memory artifacts.
-            skip_thinking: If True, skip Phase 3 (ThinkingModule) and use only Phase 2 scores.
+            skip_reasoning: If True, skip Phase 3 (PersonaReasoner) and use only Phase 2 scores.
 
         Returns:
             Dictionary containing:
             - analysis_results: List of waypoint result dicts (System 1/2 scores)
-            - thinking_results: List of ThinkingResult objects
+            - reasoning_results: List of ReasoningResult objects
             - long_term_memory: LongTermMemory instance
             - route_summary: RouteSummary object
             - statistics: Dict with pipeline statistics
@@ -952,10 +947,10 @@ class WalkingAgent(BaseAgent):
         # STM is populated immediately after each analysis so the next
         # waypoint's VLM call receives prior context.
         # ====================================================================
-        if skip_thinking:
-            self.logger.info("Phase 2+3: Continuous analysis (thinking SKIPPED — system1-only mode)")
+        if skip_reasoning:
+            self.logger.info("Phase 2+3: Continuous analysis (reasoning SKIPPED — system1-only mode)")
         else:
-            self.logger.info("Phase 2+3: Interleaved continuous analysis + memory + thinking")
+            self.logger.info("Phase 2+3: Interleaved continuous analysis + memory + reasoning")
 
         # Reset state for new route analysis
         self.cognitive.reset()
@@ -963,7 +958,7 @@ class WalkingAgent(BaseAgent):
         self.logger.debug("CognitiveController and ContinuousAnalyzer state reset for new route")
 
         analysis_results = []
-        thinking_results = []
+        reasoning_results = []
         memory_manager = self.memory_manager
         waypoint_results: List[Dict[str, Any]] = []
 
@@ -996,42 +991,38 @@ class WalkingAgent(BaseAgent):
 
             # Step C: Feed into STM immediately so next waypoint gets context
             is_first_waypoint = analysis.waypoint_id == 0
-            should_think = analysis.visual_change_detected or is_first_waypoint
+            should_reason = analysis.visual_change_detected or is_first_waypoint
 
             # Determine trigger reason based on what caused the trigger
             if is_first_waypoint:
-                reason = "force"
                 trigger_reason = TriggerReason.EXCEPTIONAL_MOMENT
             elif analysis.visual_change_detected:
-                reason = "visual_change"
                 trigger_reason = TriggerReason.VISUAL_CHANGE
             else:
-                # Should not reach here if should_think is False, but keep for safety
-                reason = "no_trigger"
                 trigger_reason = TriggerReason.EXCEPTIONAL_MOMENT
 
             # Process waypoint through memory manager (attention gate + STM)
             context = memory_manager.process_waypoint(
                 analysis,
-                triggered=should_think,
+                triggered=should_reason,
                 trigger_reason=trigger_reason,
             )
 
-            thinking_result = None
+            reasoning_result = None
 
-            # Only run ThinkingModule if skip_thinking is False
-            if not skip_thinking and context is not None:
+            # Only run PersonaReasoner if skip_reasoning is False
+            if not skip_reasoning and context is not None:
                 # Ensure route metadata includes route info
                 route_meta = context.get("route_metadata", {}) or {}
                 route_meta.setdefault("route_id", route_id)
                 route_meta.setdefault("length_km", route_length_km)
 
                 try:
-                    thinking_result = self.thinking_module.think_waypoint(
+                    reasoning_result = self.persona_reasoner.reason(
                         waypoint_id=analysis.waypoint_id,
                         trigger_reason=context["trigger_reason"],
                         current_image_path=context["image_path"],
-                        system1_scores=analysis.persona_scores,  # System 2 receives persona scores
+                        system1_scores=analysis.persona_scores,
                         system1_reasoning=analysis.persona_reasoning,
                         stm_context=context["stm_context"],
                         ltm_patterns=context.get("ltm_patterns"),
@@ -1039,45 +1030,20 @@ class WalkingAgent(BaseAgent):
                         route_metadata=route_meta,
                     )
 
-                    thinking_results.append(thinking_result)
+                    reasoning_results.append(reasoning_result)
 
-                    # Update STM with System 2 revisions for sequential context
+                    # Update STM with reasoning result for sequential context
                     memory_manager.update_with_system2_result(
                         waypoint_id=analysis.waypoint_id,
-                        thinking_result=thinking_result,
+                        reasoning_result=reasoning_result,
                     )
 
-                    # Generate narrative chapter using updated context
-                    try:
-                        narrative_context = (
-                            memory_manager.episodic_ltm.get_narrative_context()
-                        )
-                        visual_description = thinking_result.interpretation
-
-                        narrative_chapter = (
-                            self.thinking_module.generate_narrative_chapter(
-                                waypoint_id=analysis.waypoint_id,
-                                visual_description=visual_description,
-                                system1_scores=analysis.persona_scores,
-                                system2_scores=thinking_result.revised_scores,
-                                score_adjustments=thinking_result.score_adjustments,
-                                stm_context=context["stm_context"],
-                                narrative_context=narrative_context,
-                                personality=self.personality,
-                                trigger_reason=context["trigger_reason"],
-                            )
-                        )
-
-                        narrative_chapter.image_path = analysis.image_path
-                        memory_manager.episodic_ltm.add_narrative_chapter(
-                            narrative_chapter
-                        )
-                    except Exception as e:
-                        self.logger.warning(f"Narrative generation failed: {e}")
+                    # TODO: Narrative will be handled by PersonaReasoner._report()
+                    # when System 2 is complete.
 
                 except Exception as e:
                     self.logger.warning(
-                        f"Thinking failed at waypoint {analysis.waypoint_id}: {e}"
+                        f"Reasoning failed at waypoint {analysis.waypoint_id}: {e}"
                     )
 
             ts_value = analysis.timestamp
@@ -1090,31 +1056,26 @@ class WalkingAgent(BaseAgent):
                     "image_path": str(analysis.image_path),
                     "gps": analysis.gps,
                     "timestamp": ts_value,
-                    "system1_scores": analysis.persona_scores,  # System 1 persona scores
+                    "system1_scores": analysis.persona_scores,
                     "system1_reasoning": analysis.persona_reasoning,
-                    "system2_triggered": thinking_result is not None,
-                    "system2_scores": (
-                        thinking_result.revised_scores if thinking_result else None
-                    ),
+                    "system2_triggered": reasoning_result is not None,
+                    "system2_scores": None,
                     "system2_reasoning": (
-                        thinking_result.revision_reasoning if thinking_result else None
+                        reasoning_result.recommendation if reasoning_result else None
                     ),
-                    "score_adjustments": (
-                        thinking_result.score_adjustments if thinking_result else None
+                    "reasoning_interpretation": (
+                        reasoning_result.interpretation if reasoning_result else None
                     ),
-                    "thinking_interpretation": (
-                        thinking_result.interpretation if thinking_result else None
-                    ),
-                    "thinking_significance": (
-                        thinking_result.significance if thinking_result else None
+                    "reasoning_significance": (
+                        reasoning_result.significance if reasoning_result else None
                     ),
                     "memory_influence": (
-                        thinking_result.memory_influence if thinking_result else None
+                        reasoning_result.memory_influence if reasoning_result else None
                     ),
                     # Dual VLM evaluation fields (objective vs persona-aware)
-                    "objective_scores": analysis.objective_scores,  # Research/comparison
+                    "objective_scores": analysis.objective_scores,
                     "objective_reasoning": analysis.objective_reasoning,
-                    "persona_scores": analysis.persona_scores,  # Final decision-making scores
+                    "persona_scores": analysis.persona_scores,
                     "persona_reasoning": analysis.persona_reasoning,
                 }
             )
@@ -1126,11 +1087,11 @@ class WalkingAgent(BaseAgent):
             visual_changes=analysis_stats["visual_changes_detected"],
         )
 
-        thinking_summary = self.thinking_module.get_thinking_summary()
+        reasoning_summary = self.persona_reasoner.get_summary()
         self.logger.info(
-            "Thinking complete",
-            episodes=len(thinking_results),
-            avg_confidence=thinking_summary.get("avg_confidence", 0),
+            "Reasoning complete",
+            episodes=len(reasoning_results),
+            avg_confidence=reasoning_summary.get("avg_confidence", 0),
         )
 
         # ====================================================================
@@ -1146,22 +1107,22 @@ class WalkingAgent(BaseAgent):
             if not wp.get("system2_triggered"):
                 continue
 
-            thinking_result = next(
-                (t for t in thinking_results if t.waypoint_id == wp["waypoint_id"]),
+            reasoning_result = next(
+                (t for t in reasoning_results if t.waypoint_id == wp["waypoint_id"]),
                 None,
             )
-            if not thinking_result:
+            if not reasoning_result:
                 continue
 
             ltm.add_candidate_moment(
                 waypoint_id=wp["waypoint_id"],
                 image_path=Path(wp["image_path"]),
-                scores=wp.get("system2_scores") or wp["system1_scores"],
-                summary=thinking_result.interpretation[:200],
-                significance=thinking_result.significance,
+                scores=wp["system1_scores"],
+                summary=reasoning_result.interpretation[:200],
+                significance=reasoning_result.significance,
                 gps=wp.get("gps", (0.0, 0.0)),
                 timestamp=wp.get("timestamp"),
-                thinking_confidence=thinking_result.confidence,
+                thinking_confidence=reasoning_result.confidence,
                 visual_change_detected=wp.get("system2_triggered", False),
                 score_delta=None,
             )
@@ -1173,15 +1134,15 @@ class WalkingAgent(BaseAgent):
         analysis_dicts = [
             {
                 "waypoint_id": w["waypoint_id"],
-                "scores": w.get("system2_scores") or w["system1_scores"],
+                "scores": w["system1_scores"],
                 "summary": "",
             }
             for w in waypoint_results
         ]
-        thinking_history = [t.interpretation for t in thinking_results]
+        reasoning_history = [t.interpretation for t in reasoning_results]
 
         ltm.extract_patterns(
-            all_analyses=analysis_dicts, thinking_history=thinking_history
+            all_analyses=analysis_dicts, thinking_history=reasoning_history
         )
 
         # Generate route summary
@@ -1240,11 +1201,9 @@ class WalkingAgent(BaseAgent):
                     "image_path": wp["image_path"],
                     "gps": wp["gps"],
                     "timestamp": wp["timestamp"],
-                    "scores": wp["system2_scores"],
                     "reasoning": wp["system2_reasoning"],
-                    "score_adjustments": wp["score_adjustments"],
-                    "interpretation": wp["thinking_interpretation"],
-                    "significance": wp["thinking_significance"],
+                    "interpretation": wp["reasoning_interpretation"],
+                    "significance": wp["reasoning_significance"],
                     "memory_influence": wp["memory_influence"],
                 }
                 for wp in waypoint_results
@@ -1254,9 +1213,9 @@ class WalkingAgent(BaseAgent):
             with open(system2_file, "w", encoding="utf-8") as f:
                 json.dump(system2_results, f, indent=2)
 
-            # Save thinking results
-            thinking_file = output_dir / "thinking_results.json"
-            with open(thinking_file, "w", encoding="utf-8") as f:
+            # Save reasoning results
+            reasoning_file = output_dir / "reasoning_results.json"
+            with open(reasoning_file, "w", encoding="utf-8") as f:
                 json.dump(
                     [
                         {
@@ -1266,7 +1225,7 @@ class WalkingAgent(BaseAgent):
                             "significance": t.significance,
                             "confidence": t.confidence,
                         }
-                        for t in thinking_results
+                        for t in reasoning_results
                     ],
                     f,
                     indent=2,
@@ -1302,14 +1261,14 @@ class WalkingAgent(BaseAgent):
         # ====================================================================
         result = {
             "analysis_results": waypoint_results,
-            "thinking_results": thinking_results,
+            "reasoning_results": reasoning_results,
             "narrative_chapters": narrative_chapters,
             "complete_narrative": complete_narrative,
             "long_term_memory": ltm,
             "route_summary": route_summary,
             "statistics": {
                 "analysis": analysis_stats,
-                "thinking": thinking_summary,
+                "reasoning": reasoning_summary,
                 "dual_system": self._compute_dual_system_statistics(waypoint_results),
                 "route_length_km": route_length_km,
                 "total_waypoints": len(waypoint_results),
@@ -1336,19 +1295,19 @@ class WalkingAgent(BaseAgent):
         *,
         metadata_filename: str = "collection_metadata.json",
         output_dir: Optional[Path] = None,
-        skip_thinking: bool = False,
+        skip_reasoning: bool = False,
     ) -> Dict[str, Any]:
         """Run memory pipeline using pre-existing folder of route imagery.
 
         This method loads waypoint images and metadata from an existing route folder
         and processes them through the full memory system (continuous analysis,
-        short-term memory, thinking module, and long-term memory).
+        short-term memory, PersonaReasoner, and long-term memory).
 
         Args:
             route_folder: Path to folder containing waypoint images and metadata.
             metadata_filename: Name of the JSON metadata file (default: "collection_metadata.json").
             output_dir: Optional directory to save memory artifacts.
-            skip_thinking: If True, skip Phase 3 (ThinkingModule) and use only Phase 2 scores.
+            skip_reasoning: If True, skip Phase 3 (PersonaReasoner) and use only Phase 2 scores.
 
         Returns:
             Dictionary containing analysis results, thinking results, narrative, etc.
@@ -1522,10 +1481,10 @@ class WalkingAgent(BaseAgent):
         # STM is populated immediately after each analysis so the next
         # waypoint's VLM call receives prior context.
         # ====================================================================
-        if skip_thinking:
-            self.logger.info("Phase 2+3: Continuous analysis (thinking SKIPPED — system1-only mode)")
+        if skip_reasoning:
+            self.logger.info("Phase 2+3: Continuous analysis (reasoning SKIPPED — system1-only mode)")
         else:
-            self.logger.info("Phase 2+3: Interleaved continuous analysis + memory + thinking")
+            self.logger.info("Phase 2+3: Interleaved continuous analysis + memory + reasoning")
 
         # Reset state for new route analysis
         self.cognitive.reset()
@@ -1533,7 +1492,7 @@ class WalkingAgent(BaseAgent):
         self.logger.debug("CognitiveController and ContinuousAnalyzer state reset for new route")
 
         analysis_results = []
-        thinking_results = []
+        reasoning_results = []
         memory_manager = self.memory_manager
         waypoint_results: List[Dict[str, Any]] = []
 
@@ -1566,42 +1525,38 @@ class WalkingAgent(BaseAgent):
 
             # Step C: Feed into STM immediately so next waypoint gets context
             is_first_waypoint = analysis.waypoint_id == 0
-            should_think = analysis.visual_change_detected or is_first_waypoint
+            should_reason = analysis.visual_change_detected or is_first_waypoint
 
             # Determine trigger reason based on what caused the trigger
             if is_first_waypoint:
-                reason = "force"
                 trigger_reason = TriggerReason.EXCEPTIONAL_MOMENT
             elif analysis.visual_change_detected:
-                reason = "visual_change"
                 trigger_reason = TriggerReason.VISUAL_CHANGE
             else:
-                # Should not reach here if should_think is False, but keep for safety
-                reason = "no_trigger"
                 trigger_reason = TriggerReason.EXCEPTIONAL_MOMENT
 
             # Process waypoint through memory manager (attention gate + STM)
             context = memory_manager.process_waypoint(
                 analysis,
-                triggered=should_think,
+                triggered=should_reason,
                 trigger_reason=trigger_reason,
             )
 
-            thinking_result = None
+            reasoning_result = None
 
-            # Only run ThinkingModule if skip_thinking is False
-            if not skip_thinking and context is not None:
+            # Only run PersonaReasoner if skip_reasoning is False
+            if not skip_reasoning and context is not None:
                 # Ensure route metadata includes route info
                 route_meta = context.get("route_metadata", {}) or {}
                 route_meta.setdefault("route_id", route_id)
                 route_meta.setdefault("length_km", route_length_km)
 
                 try:
-                    thinking_result = self.thinking_module.think_waypoint(
+                    reasoning_result = self.persona_reasoner.reason(
                         waypoint_id=analysis.waypoint_id,
                         trigger_reason=context["trigger_reason"],
                         current_image_path=context["image_path"],
-                        system1_scores=analysis.persona_scores,  # System 2 receives persona scores
+                        system1_scores=analysis.persona_scores,
                         system1_reasoning=analysis.persona_reasoning,
                         stm_context=context["stm_context"],
                         ltm_patterns=context.get("ltm_patterns"),
@@ -1609,45 +1564,20 @@ class WalkingAgent(BaseAgent):
                         route_metadata=route_meta,
                     )
 
-                    thinking_results.append(thinking_result)
+                    reasoning_results.append(reasoning_result)
 
-                    # Update STM with System 2 revisions for sequential context
+                    # Update STM with reasoning result for sequential context
                     memory_manager.update_with_system2_result(
                         waypoint_id=analysis.waypoint_id,
-                        thinking_result=thinking_result,
+                        reasoning_result=reasoning_result,
                     )
 
-                    # Generate narrative chapter using updated context
-                    try:
-                        narrative_context = (
-                            memory_manager.episodic_ltm.get_narrative_context()
-                        )
-                        visual_description = thinking_result.interpretation
-
-                        narrative_chapter = (
-                            self.thinking_module.generate_narrative_chapter(
-                                waypoint_id=analysis.waypoint_id,
-                                visual_description=visual_description,
-                                system1_scores=analysis.persona_scores,
-                                system2_scores=thinking_result.revised_scores,
-                                score_adjustments=thinking_result.score_adjustments,
-                                stm_context=context["stm_context"],
-                                narrative_context=narrative_context,
-                                personality=self.personality,
-                                trigger_reason=context["trigger_reason"],
-                            )
-                        )
-
-                        narrative_chapter.image_path = analysis.image_path
-                        memory_manager.episodic_ltm.add_narrative_chapter(
-                            narrative_chapter
-                        )
-                    except Exception as e:
-                        self.logger.warning(f"Narrative generation failed: {e}")
+                    # TODO: Narrative will be handled by PersonaReasoner._report()
+                    # when System 2 is complete.
 
                 except Exception as e:
                     self.logger.warning(
-                        f"Thinking failed at waypoint {analysis.waypoint_id}: {e}"
+                        f"Reasoning failed at waypoint {analysis.waypoint_id}: {e}"
                     )
 
             ts_value = analysis.timestamp
@@ -1660,31 +1590,26 @@ class WalkingAgent(BaseAgent):
                     "image_path": str(analysis.image_path),
                     "gps": analysis.gps,
                     "timestamp": ts_value,
-                    "system1_scores": analysis.persona_scores,  # System 1 persona scores
+                    "system1_scores": analysis.persona_scores,
                     "system1_reasoning": analysis.persona_reasoning,
-                    "system2_triggered": thinking_result is not None,
-                    "system2_scores": (
-                        thinking_result.revised_scores if thinking_result else None
-                    ),
+                    "system2_triggered": reasoning_result is not None,
+                    "system2_scores": None,
                     "system2_reasoning": (
-                        thinking_result.revision_reasoning if thinking_result else None
+                        reasoning_result.recommendation if reasoning_result else None
                     ),
-                    "score_adjustments": (
-                        thinking_result.score_adjustments if thinking_result else None
+                    "reasoning_interpretation": (
+                        reasoning_result.interpretation if reasoning_result else None
                     ),
-                    "thinking_interpretation": (
-                        thinking_result.interpretation if thinking_result else None
-                    ),
-                    "thinking_significance": (
-                        thinking_result.significance if thinking_result else None
+                    "reasoning_significance": (
+                        reasoning_result.significance if reasoning_result else None
                     ),
                     "memory_influence": (
-                        thinking_result.memory_influence if thinking_result else None
+                        reasoning_result.memory_influence if reasoning_result else None
                     ),
                     # Dual VLM evaluation fields (objective vs persona-aware)
-                    "objective_scores": analysis.objective_scores,  # Research/comparison
+                    "objective_scores": analysis.objective_scores,
                     "objective_reasoning": analysis.objective_reasoning,
-                    "persona_scores": analysis.persona_scores,  # Final decision-making scores
+                    "persona_scores": analysis.persona_scores,
                     "persona_reasoning": analysis.persona_reasoning,
                 }
             )
@@ -1696,11 +1621,11 @@ class WalkingAgent(BaseAgent):
             visual_changes=analysis_stats["visual_changes_detected"],
         )
 
-        thinking_summary = self.thinking_module.get_thinking_summary()
+        reasoning_summary = self.persona_reasoner.get_summary()
         self.logger.info(
-            "Thinking complete",
-            episodes=len(thinking_results),
-            avg_confidence=thinking_summary.get("avg_confidence", 0),
+            "Reasoning complete",
+            episodes=len(reasoning_results),
+            avg_confidence=reasoning_summary.get("avg_confidence", 0),
         )
 
         # Phase 4: Long-Term Memory Formation
@@ -1714,22 +1639,22 @@ class WalkingAgent(BaseAgent):
             if not wp.get("system2_triggered"):
                 continue
 
-            thinking_result = next(
-                (t for t in thinking_results if t.waypoint_id == wp["waypoint_id"]),
+            reasoning_result = next(
+                (t for t in reasoning_results if t.waypoint_id == wp["waypoint_id"]),
                 None,
             )
-            if not thinking_result:
+            if not reasoning_result:
                 continue
 
             ltm.add_candidate_moment(
                 waypoint_id=wp["waypoint_id"],
                 image_path=Path(wp["image_path"]),
-                scores=wp.get("system2_scores") or wp["system1_scores"],
-                summary=thinking_result.interpretation[:200],
-                significance=thinking_result.significance,
+                scores=wp["system1_scores"],
+                summary=reasoning_result.interpretation[:200],
+                significance=reasoning_result.significance,
                 gps=wp.get("gps", (0.0, 0.0)),
                 timestamp=wp.get("timestamp"),
-                thinking_confidence=thinking_result.confidence,
+                thinking_confidence=reasoning_result.confidence,
                 visual_change_detected=wp.get("system2_triggered", False),
                 score_delta=None,
             )
@@ -1741,15 +1666,15 @@ class WalkingAgent(BaseAgent):
         analysis_dicts = [
             {
                 "waypoint_id": w["waypoint_id"],
-                "scores": w.get("system2_scores") or w["system1_scores"],
+                "scores": w["system1_scores"],
                 "summary": "",
             }
             for w in waypoint_results
         ]
-        thinking_history = [t.interpretation for t in thinking_results]
+        reasoning_history = [t.interpretation for t in reasoning_results]
 
         ltm.extract_patterns(
-            all_analyses=analysis_dicts, thinking_history=thinking_history
+            all_analyses=analysis_dicts, thinking_history=reasoning_history
         )
 
         # Generate route summary
@@ -1806,11 +1731,9 @@ class WalkingAgent(BaseAgent):
                     "image_path": wp["image_path"],
                     "gps": wp["gps"],
                     "timestamp": wp["timestamp"],
-                    "scores": wp["system2_scores"],
                     "reasoning": wp["system2_reasoning"],
-                    "score_adjustments": wp["score_adjustments"],
-                    "interpretation": wp["thinking_interpretation"],
-                    "significance": wp["thinking_significance"],
+                    "interpretation": wp["reasoning_interpretation"],
+                    "significance": wp["reasoning_significance"],
                     "memory_influence": wp["memory_influence"],
                 }
                 for wp in waypoint_results
@@ -1820,9 +1743,9 @@ class WalkingAgent(BaseAgent):
             with open(system2_file, "w", encoding="utf-8") as f:
                 json.dump(system2_results, f, indent=2)
 
-            # Save thinking results
-            thinking_file = output_dir / "thinking_results.json"
-            with open(thinking_file, "w", encoding="utf-8") as f:
+            # Save reasoning results
+            reasoning_file = output_dir / "reasoning_results.json"
+            with open(reasoning_file, "w", encoding="utf-8") as f:
                 json.dump(
                     [
                         {
@@ -1832,7 +1755,7 @@ class WalkingAgent(BaseAgent):
                             "significance": t.significance,
                             "confidence": t.confidence,
                         }
-                        for t in thinking_results
+                        for t in reasoning_results
                     ],
                     f,
                     indent=2,
@@ -1866,14 +1789,14 @@ class WalkingAgent(BaseAgent):
         # Build final result
         result = {
             "analysis_results": waypoint_results,
-            "thinking_results": thinking_results,
+            "reasoning_results": reasoning_results,
             "narrative_chapters": narrative_chapters,
             "complete_narrative": complete_narrative,
             "long_term_memory": ltm,
             "route_summary": route_summary,
             "statistics": {
                 "analysis": analysis_stats,
-                "thinking": thinking_summary,
+                "reasoning": reasoning_summary,
                 "dual_system": self._compute_dual_system_statistics(waypoint_results),
                 "route_length_km": route_length_km,
                 "total_waypoints": len(waypoint_results),

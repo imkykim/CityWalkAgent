@@ -4,7 +4,7 @@ Test suite for Memory System components.
 Tests cover:
 - ShortTermMemory: sliding window, trend computation, context management
 - LongTermMemory: moment curation, pattern extraction, route summaries
-- ThinkingModule: trigger detection, waypoint reasoning, LLM integration
+- PersonaReasoner: trigger detection, waypoint reasoning
 - ContinuousAnalyzer: pHash detection, visual change tracking, VLM analysis
 - Integration: full memory pipeline workflows
 - Error handling: edge cases and failure modes
@@ -25,10 +25,10 @@ from src.agent.capabilities.long_term_memory import (
     RoutePattern,
     RouteSummary
 )
-from src.agent.capabilities.thinking import (
-    ThinkingModule,
+from src.agent.system2.persona_reasoner import (
+    PersonaReasoner,
     TriggerReason,
-    ThinkingResult
+    ReasoningResult,
 )
 from src.analysis.continuous_analyzer import ContinuousAnalyzer, WaypointAnalysis
 
@@ -97,19 +97,21 @@ def mock_key_moment() -> KeyMoment:
 
 
 @pytest.fixture
-def mock_thinking_result() -> ThinkingResult:
-    """Create a mock ThinkingResult for testing."""
-    return ThinkingResult(
+def mock_reasoning_result() -> ReasoningResult:
+    """Create a mock ReasoningResult for testing."""
+    return ReasoningResult(
         waypoint_id=3,
         trigger_reason=TriggerReason.VISUAL_CHANGE,
         interpretation="Significant improvement in environment quality",
+        score_change_reason=None,
+        persona_divergence=None,
         significance="high",
-        pattern_detected="trend_upward",
+        avoid_recommendation=False,
+        decision_reason=None,
         prediction="Route quality will continue improving",
+        alternative_suggestion=None,
         recommendation="Continue on current path",
-        used_vlm=False,
         confidence=0.85,
-        timestamp="2025-01-01T12:03:00"
     )
 
 
@@ -629,239 +631,29 @@ class TestLongTermMemory:
 
 
 # ============================================================================
-# ThinkingModule Tests
+# PersonaReasoner Tests
 # ============================================================================
 
 
-class TestThinkingModule:
-    """Test ThinkingModule functionality."""
+class TestPersonaReasoner:
+    """Test PersonaReasoner functionality."""
 
     def test_initialization(self):
-        """Test thinking module initializes with correct parameters."""
-        tm = ThinkingModule(
+        """Test PersonaReasoner initializes with correct parameters."""
+        reasoner = PersonaReasoner(
             distance_trigger_meters=500.0,
             score_delta_threshold=1.5,
-            enable_vlm_deep_dive=False
         )
 
-        assert tm.distance_trigger_meters == 500.0
-        assert tm.score_delta_threshold == 1.5
-        assert tm.enable_vlm_deep_dive is False
+        assert reasoner.distance_trigger_meters == 500.0
+        assert reasoner.score_delta_threshold == 1.5
 
-    def test_should_trigger_exceptional_moment(self):
-        """Test triggering on exceptional moments."""
-        tm = ThinkingModule()
+    def test_initialization_defaults(self):
+        """Test PersonaReasoner initializes with defaults."""
+        reasoner = PersonaReasoner()
 
-        trigger = tm.should_trigger(
-            waypoint_id=5,
-            visual_change=False,
-            score_delta=0.5,
-            distance_from_last=100.0,
-            is_exceptional=True
-        )
-
-        assert trigger == TriggerReason.EXCEPTIONAL_MOMENT
-
-    def test_should_trigger_visual_change(self):
-        """Test triggering on visual changes."""
-        tm = ThinkingModule()
-
-        trigger = tm.should_trigger(
-            waypoint_id=3,
-            visual_change=True,
-            score_delta=0.5,
-            distance_from_last=100.0,
-            is_exceptional=False
-        )
-
-        assert trigger == TriggerReason.VISUAL_CHANGE
-
-    def test_should_trigger_score_volatility(self):
-        """Test triggering on score volatility."""
-        tm = ThinkingModule(score_delta_threshold=1.0)
-
-        trigger = tm.should_trigger(
-            waypoint_id=7,
-            visual_change=False,
-            score_delta=1.5,  # Above threshold
-            distance_from_last=100.0,
-            is_exceptional=False
-        )
-
-        assert trigger == TriggerReason.SCORE_VOLATILITY
-
-    def test_should_trigger_distance_milestone(self):
-        """Test triggering on distance milestones."""
-        tm = ThinkingModule(distance_trigger_meters=500.0)
-
-        trigger = tm.should_trigger(
-            waypoint_id=10,
-            visual_change=False,
-            score_delta=0.3,
-            distance_from_last=650.0,  # Above threshold
-            is_exceptional=False
-        )
-
-        assert trigger == TriggerReason.DISTANCE_MILESTONE
-
-    def test_should_not_trigger(self):
-        """Test no trigger when conditions not met."""
-        tm = ThinkingModule(
-            distance_trigger_meters=500.0,
-            score_delta_threshold=1.5
-        )
-
-        trigger = tm.should_trigger(
-            waypoint_id=2,
-            visual_change=False,
-            score_delta=0.5,  # Below threshold
-            distance_from_last=200.0,  # Below threshold
-            is_exceptional=False
-        )
-
-        assert trigger is None
-
-    def test_think_waypoint_without_vlm(self):
-        """Test waypoint thinking without VLM (heuristic mode)."""
-        tm = ThinkingModule(enable_vlm_deep_dive=False)
-
-        # Create mock short-term memory context
-        stm_context = {
-            "recent_scores": [
-                {"safety": 7.0},
-                {"safety": 7.5},
-                {"safety": 8.0}
-            ],
-            "recent_summaries": ["Good", "Better", "Best"],
-            "trend": "improving"
-        }
-
-        # Create mock current analysis
-        current_analysis = WaypointAnalysis(
-            waypoint_id=2,
-            image_path=Path("/test/waypoint_2.jpg"),
-            scores={"safety": 8.0},
-            reasoning={"safety": "Excellent conditions"},
-            timestamp="2025-01-01T12:02:00",
-            gps=(37.7749, -122.4194),
-            heading=90.0,
-            visual_change_detected=True,
-            phash_distance=25.0
-        )
-
-        result = tm.think_waypoint(
-            waypoint_id=2,
-            trigger_reason=TriggerReason.VISUAL_CHANGE,
-            current_analysis=current_analysis,
-            short_term_context=stm_context
-        )
-
-        assert isinstance(result, ThinkingResult)
-        assert result.waypoint_id == 2
-        assert result.trigger_reason == TriggerReason.VISUAL_CHANGE
-        assert result.used_vlm is False
-        assert 0.0 <= result.confidence <= 1.0
-
-    @patch('requests.post')
-    def test_think_waypoint_with_vlm_success(self, mock_post):
-        """Test waypoint thinking with VLM API success."""
-        tm = ThinkingModule(
-            enable_vlm_deep_dive=True,
-            llm_api_url="http://test-api.com/chat"
-        )
-
-        # Mock successful API response
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "choices": [{
-                "message": {
-                    "content": """```json
-                    {
-                        "interpretation": "Significant environmental improvement",
-                        "significance": "high",
-                        "pattern_detected": "upward_trend",
-                        "prediction": "Continued improvement expected",
-                        "recommendation": "Maintain current direction",
-                        "confidence": 0.90
-                    }
-                    ```"""
-                }
-            }]
-        }
-        mock_post.return_value = mock_response
-
-        stm_context = {
-            "recent_scores": [{"safety": 7.0}, {"safety": 8.0}],
-            "recent_summaries": ["Good", "Better"],
-            "trend": "improving"
-        }
-
-        current_analysis = WaypointAnalysis(
-            waypoint_id=5,
-            image_path=Path("/test/waypoint_5.jpg"),
-            scores={"safety": 8.5},
-            reasoning={"safety": "Excellent"},
-            timestamp="2025-01-01T12:05:00",
-            gps=(37.7750, -122.4180),
-            heading=90.0,
-            visual_change_detected=True,
-            phash_distance=30.0
-        )
-
-        result = tm.think_waypoint(
-            waypoint_id=5,
-            trigger_reason=TriggerReason.EXCEPTIONAL_MOMENT,
-            current_analysis=current_analysis,
-            short_term_context=stm_context,
-            image_path=Path("/test/waypoint_5.jpg")
-        )
-
-        assert isinstance(result, ThinkingResult)
-        assert result.used_vlm is True
-        assert result.confidence == 0.90
-        assert result.interpretation == "Significant environmental improvement"
-        assert result.significance == "high"
-
-    @patch('requests.post')
-    def test_think_waypoint_with_vlm_failure_fallback(self, mock_post):
-        """Test VLM API failure falls back to heuristic."""
-        tm = ThinkingModule(
-            enable_vlm_deep_dive=True,
-            llm_api_url="http://test-api.com/chat"
-        )
-
-        # Mock API failure
-        mock_post.side_effect = Exception("API connection failed")
-
-        stm_context = {
-            "recent_scores": [{"safety": 7.0}],
-            "recent_summaries": ["Good"],
-            "trend": "stable"
-        }
-
-        current_analysis = WaypointAnalysis(
-            waypoint_id=3,
-            image_path=Path("/test/waypoint_3.jpg"),
-            scores={"safety": 7.5},
-            reasoning={"safety": "Good"},
-            timestamp="2025-01-01T12:03:00",
-            gps=(37.7749, -122.4194),
-            heading=90.0,
-            visual_change_detected=False,
-            phash_distance=None
-        )
-
-        result = tm.think_waypoint(
-            waypoint_id=3,
-            trigger_reason=TriggerReason.DISTANCE_MILESTONE,
-            current_analysis=current_analysis,
-            short_term_context=stm_context
-        )
-
-        assert isinstance(result, ThinkingResult)
-        assert result.used_vlm is False
-        assert result.confidence < 0.7  # Lower confidence for fallback
+        assert reasoner.framework_id is not None
+        assert reasoner.dimensions is not None
 
     def test_trigger_reason_enum_values(self):
         """Test TriggerReason enum has expected values."""
@@ -870,6 +662,25 @@ class TestThinkingModule:
         assert hasattr(TriggerReason, "DISTANCE_MILESTONE")
         assert hasattr(TriggerReason, "USER_REQUEST")
         assert hasattr(TriggerReason, "EXCEPTIONAL_MOMENT")
+
+    def test_fallback_result_fields(self):
+        """Test fallback result has correct fields."""
+        reasoner = PersonaReasoner()
+        system1_scores = {"safety": 7.5, "comfort": 8.0}
+
+        fallback = reasoner._create_fallback_result(
+            waypoint_id=1,
+            trigger_reason=TriggerReason.VISUAL_CHANGE,
+            system1_scores=system1_scores,
+            error="Test error"
+        )
+
+        assert isinstance(fallback, ReasoningResult)
+        assert fallback.waypoint_id == 1
+        assert fallback.trigger_reason == TriggerReason.VISUAL_CHANGE
+        assert fallback.system1_scores == system1_scores
+        assert fallback.confidence == 0.0
+        assert fallback.significance == "low"
 
 
 # ============================================================================
@@ -1148,7 +959,7 @@ class TestMemorySystemIntegration:
         # Initialize components
         analyzer = ContinuousAnalyzer(framework_id="sagai_2025")
         stm = ShortTermMemory(window_size=5)
-        thinking = ThinkingModule(enable_vlm_deep_dive=False)
+        reasoner = PersonaReasoner()
         ltm = LongTermMemory(agent_id="integration_test", storage_path=temp_memory_dir)
 
         # Simulate waypoint processing
@@ -1175,38 +986,6 @@ class TestMemorySystemIntegration:
                     image_path=analysis.image_path,
                     gps=analysis.gps
                 )
-
-                # Check for thinking trigger
-                stm_context = stm.get_context()
-                trigger = thinking.should_trigger(
-                    waypoint_id=i,
-                    visual_change=analysis.visual_change_detected,
-                    score_delta=0.5,
-                    distance_from_last=100.0,
-                    is_exceptional=False
-                )
-
-                if trigger:
-                    result = thinking.think_waypoint(
-                        waypoint_id=i,
-                        trigger_reason=trigger,
-                        current_analysis=analysis,
-                        short_term_context=stm_context
-                    )
-
-                    # Add to LTM as candidate moment
-                    ltm.add_candidate_moment(
-                        waypoint_id=i,
-                        image_path=analysis.image_path,
-                        scores=analysis.scores,
-                        summary=result.interpretation,
-                        significance=result.significance,
-                        gps=analysis.gps,
-                        timestamp=analysis.timestamp,
-                        thinking_confidence=result.confidence,
-                        visual_change_detected=analysis.visual_change_detected,
-                        score_delta=0.5
-                    )
 
         # Verify pipeline results
         assert stm.get_memory_size() == 3
@@ -1277,32 +1056,19 @@ class TestErrorHandling:
 
         assert ltm.agent_id == "test_agent"
 
-    def test_thinking_module_missing_context(self):
-        """Test thinking module handles missing context gracefully."""
-        tm = ThinkingModule(enable_vlm_deep_dive=False)
+    def test_persona_reasoner_fallback_on_empty_context(self):
+        """Test PersonaReasoner fallback result has correct waypoint_id."""
+        reasoner = PersonaReasoner()
 
-        # Minimal analysis without much context
-        analysis = WaypointAnalysis(
-            waypoint_id=0,
-            image_path=Path("/test/waypoint_0.jpg"),
-            scores={},
-            reasoning={},
-            timestamp="2025-01-01T12:00:00",
-            gps=(37.7749, -122.4194),
-            heading=90.0,
-            visual_change_detected=False,
-            phash_distance=None
-        )
-
-        result = tm.think_waypoint(
+        fallback = reasoner._create_fallback_result(
             waypoint_id=0,
             trigger_reason=TriggerReason.USER_REQUEST,
-            current_analysis=analysis,
-            short_term_context={}
+            system1_scores={},
+            error="No context available"
         )
 
-        assert isinstance(result, ThinkingResult)
-        assert result.waypoint_id == 0
+        assert isinstance(fallback, ReasoningResult)
+        assert fallback.waypoint_id == 0
 
     @patch('src.analysis.continuous_analyzer.load_framework')
     @patch('src.analysis.continuous_analyzer.Evaluator')
