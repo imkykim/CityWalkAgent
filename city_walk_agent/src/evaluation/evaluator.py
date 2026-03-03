@@ -90,11 +90,10 @@ class Evaluator:
 
         # Build prompts for all dimensions
         self.prompts = self.prompt_builder.build_all_prompts(language="cn")
-        self.logger.info(
+        self.logger.debug(
             "Evaluator initialized",
             framework_id=self.framework_id,
             dimensions=len(self.prompts),
-            max_concurrent=max_concurrent
         )
 
     def evaluate_image(

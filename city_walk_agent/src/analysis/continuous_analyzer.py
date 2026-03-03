@@ -93,7 +93,7 @@ class ContinuousAnalyzer:
             persona: Optional EnhancedPersonalityConfig for persona-aware evaluation
             memory_manager: Optional MemoryManager for STM integration
         """
-        logger.info(f"Initializing ContinuousAnalyzer with framework: {framework_id}")
+        logger.debug(f"Initializing ContinuousAnalyzer with framework: {framework_id}")
 
         # Initialize Evaluator (reuse existing VLM evaluation logic)
         framework = load_framework(framework_id)
@@ -121,7 +121,7 @@ class ContinuousAnalyzer:
         # Memory manager for STM integration (Phase 2)
         self.memory_manager = memory_manager
 
-        logger.info(
+        logger.debug(
             f"Analyzer initialized - context_window={context_window}, "
             f"multi_image: {'enabled' if enable_multi_image else 'disabled'}, "
             f"persona_aware: {persona is not None}, "
@@ -205,17 +205,7 @@ class ContinuousAnalyzer:
             use_multi_image = self.enable_multi_image and visual_change_detected and self.analysis_history
 
             if use_multi_image:
-                logger.info(
-                    f"🔶 Dual evaluation with MULTI-IMAGE for waypoint {waypoint_id} "
-                    f"(persona: {self.persona.name}, visual change detected)"
-                )
                 self.multi_image_evaluations += 1
-            else:
-                context_type = "STM text context" if stm_context else "no prior context"
-                logger.info(
-                    f"🔶 Dual evaluation with SINGLE-IMAGE for waypoint {waypoint_id} "
-                    f"(persona: {self.persona.name}, using {context_type})"
-                )
 
             # Single call returns both objective and persona results
             # Note: Multi-image evaluation is controlled by previous_context containing image info
@@ -239,7 +229,7 @@ class ContinuousAnalyzer:
                 persona_scores[result.dimension_id] = result.persona_score
                 persona_reasoning[result.dimension_id] = result.persona_reasoning
 
-            # Log significant differences between objective and persona scores
+            # Compute significant persona vs objective differences
             score_differences = {
                 dim: round(persona_scores[dim] - objective_scores[dim], 2)
                 for dim in objective_scores
@@ -248,10 +238,15 @@ class ContinuousAnalyzer:
                 dim: diff for dim, diff in score_differences.items()
                 if abs(diff) >= 0.5
             }
-            if significant_diffs:
-                logger.info(
-                    f"   Objective vs Persona differences (WP {waypoint_id}): {significant_diffs}"
-                )
+
+            # One-line summary per waypoint
+            img_mode = "MULTI" if use_multi_image else "SINGLE"
+            ctx_tag = "▲" if use_multi_image else " "
+            diff_str = (
+                "  persona diff: " + " ".join(f"{k}={v:+.1f}" for k, v in significant_diffs.items())
+                if significant_diffs else ""
+            )
+            logger.info(f"WP {waypoint_id:>3} {ctx_tag} {img_mode:<5}{diff_str}")
 
         else:
             # No persona - run objective evaluation only
@@ -259,13 +254,10 @@ class ContinuousAnalyzer:
             use_multi_image = self.enable_multi_image and visual_change_detected and self.analysis_history
 
             if use_multi_image:
-                logger.info(
-                    f"Objective-only evaluation with MULTI-IMAGE for waypoint {waypoint_id} "
-                    f"(visual change detected)"
-                )
                 self.multi_image_evaluations += 1
-            else:
-                logger.info(f"Objective-only evaluation with SINGLE-IMAGE for waypoint {waypoint_id}")
+            img_mode = "MULTI" if use_multi_image else "SINGLE"
+            ctx_tag = "▲" if use_multi_image else " "
+            logger.info(f"WP {waypoint_id:>3} {ctx_tag} {img_mode:<5}")
 
             eval_results = self.evaluator.evaluate_image(
                 str(image_path),

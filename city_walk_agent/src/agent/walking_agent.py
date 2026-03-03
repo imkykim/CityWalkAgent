@@ -113,10 +113,7 @@ class WalkingAgent(BaseAgent):
         self._memory_manager = None
 
         self.logger.info(
-            "WalkingAgent created",
-            agent_id=agent_id,
-            personality=personality.name,
-            framework_id=self.framework_id,
+            f"Agent: {personality.name} | framework={self.framework_id}"
         )
 
     @classmethod
@@ -183,7 +180,7 @@ class WalkingAgent(BaseAgent):
         """
         if phash_threshold is not None:
             self._phash_threshold = phash_threshold
-            self.logger.info(f"pHash threshold set to {phash_threshold}")
+            self.logger.debug(f"pHash threshold set to {phash_threshold}")
 
     def run_from_folder(
         self,
@@ -338,14 +335,8 @@ class WalkingAgent(BaseAgent):
             # Get enhanced persona configuration if available
             enhanced_persona = self._get_enhanced_persona()
 
-            if enhanced_persona:
-                self.logger.info(
-                    f"ContinuousAnalyzer: Dual evaluation enabled with persona '{enhanced_persona.name}'"
-                )
-            else:
-                self.logger.warning(
-                    "ContinuousAnalyzer: No persona - will use objective evaluation only"
-                )
+            if not enhanced_persona:
+                self.logger.warning("No persona configured — using objective evaluation only")
 
             self._continuous_analyzer = ContinuousAnalyzer(
                 framework_id=self.framework_id,
@@ -515,9 +506,7 @@ class WalkingAgent(BaseAgent):
             self.logger.debug(f"Loading enhanced personality: '{personality_id}'")
             enhanced = get_enhanced_personality(personality_id)
 
-            self.logger.info(
-                f"✓ Loaded enhanced persona '{enhanced.name}' for dual evaluation"
-            )
+            self.logger.debug(f"Enhanced persona loaded: '{enhanced.name}'")
             return enhanced
 
         except (ImportError, ValueError, AttributeError) as e:
@@ -768,7 +757,7 @@ class WalkingAgent(BaseAgent):
             Logs: Warnings for missing files, reconstruction summary
         """
         total_count = len(image_paths)
-        self.logger.info("Validating waypoint images", total_waypoints=total_count)
+        self.logger.debug("Validating waypoint images", total_waypoints=total_count)
 
         valid_image_paths: List[Path] = []
         valid_waypoints: List[Any] = []
@@ -806,7 +795,7 @@ class WalkingAgent(BaseAgent):
                 retention_rate=f"{retention_rate:.1f}%"
             )
         else:
-            self.logger.info("All waypoint images validated", total_count=total_count)
+            self.logger.debug("All waypoint images validated", total_count=total_count)
 
         return valid_image_paths, valid_waypoints, valid_metadata
 
@@ -948,9 +937,9 @@ class WalkingAgent(BaseAgent):
         # waypoint's VLM call receives prior context.
         # ====================================================================
         if skip_reasoning:
-            self.logger.info("Phase 2+3: Continuous analysis (reasoning SKIPPED — system1-only mode)")
+            self.logger.debug("Phase 2+3: Continuous analysis (reasoning SKIPPED — system1-only mode)")
         else:
-            self.logger.info("Phase 2+3: Interleaved continuous analysis + memory + reasoning")
+            self.logger.debug("Phase 2+3: Interleaved continuous analysis + memory + reasoning")
 
         # Reset state for new route analysis
         self.cognitive.reset()
@@ -1040,6 +1029,11 @@ class WalkingAgent(BaseAgent):
 
                     # TODO: Narrative will be handled by PersonaReasoner._report()
                     # when System 2 is complete.
+
+                    self.logger.info(
+                        f"WP {analysis.waypoint_id:>3}   S2 {context['trigger_reason'].value}"
+                        f"  significance={reasoning_result.significance}"
+                    )
 
                 except Exception as e:
                     self.logger.warning(
@@ -1332,10 +1326,7 @@ class WalkingAgent(BaseAgent):
                 f"Route folder is missing metadata file '{metadata_filename}' in {folder_path}"
             )
 
-        self.logger.info(
-            "Loading route from folder for memory pipeline",
-            folder_path=str(folder_path)
-        )
+        self.logger.debug("Loading route from folder", folder_path=str(folder_path))
 
         # Load metadata
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -1432,12 +1423,7 @@ class WalkingAgent(BaseAgent):
             interval_meters=int(interval),
         )
 
-        self.logger.info(
-            "Route loaded from folder",
-            route_id=route_id,
-            waypoints=len(resolved_waypoints),
-            interval=interval,
-        )
+        self.logger.debug("Route loaded", route_id=route_id, waypoints=len(resolved_waypoints))
 
         # Prepare metadata for continuous analyzer
         waypoint_metadata = [
@@ -1469,11 +1455,11 @@ class WalkingAgent(BaseAgent):
             ).meters
         route_length_km /= 1000.0
 
+        enhanced_persona = self._get_enhanced_persona()
+        dual_eval = enhanced_persona is not None
         self.logger.info(
-            "Starting memory pipeline analysis",
-            route_id=route_id,
-            waypoints=len(resolved_waypoints),
-            route_length_km=route_length_km,
+            f"Route: {len(resolved_waypoints)} waypoints, {route_length_km:.2f} km"
+            f" | persona={'dual' if dual_eval else 'objective-only'}"
         )
 
         # ====================================================================
@@ -1482,9 +1468,9 @@ class WalkingAgent(BaseAgent):
         # waypoint's VLM call receives prior context.
         # ====================================================================
         if skip_reasoning:
-            self.logger.info("Phase 2+3: Continuous analysis (reasoning SKIPPED — system1-only mode)")
+            self.logger.debug("Phase 2+3: Continuous analysis (reasoning SKIPPED — system1-only mode)")
         else:
-            self.logger.info("Phase 2+3: Interleaved continuous analysis + memory + reasoning")
+            self.logger.debug("Phase 2+3: Interleaved continuous analysis + memory + reasoning")
 
         # Reset state for new route analysis
         self.cognitive.reset()
@@ -1574,6 +1560,11 @@ class WalkingAgent(BaseAgent):
 
                     # TODO: Narrative will be handled by PersonaReasoner._report()
                     # when System 2 is complete.
+
+                    self.logger.info(
+                        f"WP {analysis.waypoint_id:>3}   S2 {context['trigger_reason'].value}"
+                        f"  significance={reasoning_result.significance}"
+                    )
 
                 except Exception as e:
                     self.logger.warning(

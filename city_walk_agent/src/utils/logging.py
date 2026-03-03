@@ -29,6 +29,7 @@ class StructuredLogger:
         """
         self.logger = logging.getLogger(name)
         self.logger.setLevel(level)
+        self.logger.propagate = False
 
         # Clear any existing handlers
         self.logger.handlers.clear()

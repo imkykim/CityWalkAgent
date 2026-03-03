@@ -114,7 +114,7 @@ class MemoryManager:
         self._system2_results: Dict[int, Any] = {}
 
         self.logger = get_logger(f"{__name__}.{agent_id}")
-        self.logger.info("MemoryManager initialized", agent_id=agent_id)
+        self.logger.debug("MemoryManager initialized", agent_id=agent_id)
 
     # ========================================================================
     # Properties: Lazy-loaded Memory Components
@@ -183,10 +183,9 @@ class MemoryManager:
         self.profile = profile
         self.status = status
 
-        self.logger.info(
+        self.logger.debug(
             "Agent attributes configured",
             personality=personality.name,
-            profile_keys=list(profile.keys()),
             status=status,
         )
 
@@ -527,7 +526,7 @@ class MemoryManager:
             trigger_reason=trigger_reason or TriggerReason.VISUAL_CHANGE,
         )
 
-        self.logger.info(
+        self.logger.debug(
             "System 2 reasoning triggered",
             waypoint_id=waypoint_analysis.waypoint_id,
             total_triggers=self._system2_triggers,

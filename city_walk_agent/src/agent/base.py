@@ -99,7 +99,7 @@ class BaseAgent(ABC):
         self._pipeline = None
         self._memory_system: Optional[LongTermMemory] = None
 
-        self.logger.info(
+        self.logger.debug(
             "Agent initialized",
             agent_id=metadata.agent_id,
             name=metadata.name,

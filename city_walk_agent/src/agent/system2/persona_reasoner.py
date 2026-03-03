@@ -134,7 +134,7 @@ class PersonaReasoner:
 
         self.logger = get_logger(f"{__name__}.PersonaReasoner")
 
-        self.logger.info(
+        self.logger.debug(
             "PersonaReasoner initialized",
             distance_trigger=distance_trigger_meters,
             score_delta_threshold=score_delta_threshold,
@@ -278,7 +278,7 @@ class PersonaReasoner:
 
         self.reasoning_history.append(result)
 
-        self.logger.info(
+        self.logger.debug(
             "System 2 reasoning complete",
             waypoint_id=waypoint_id,
             trigger=trigger_reason.value,
