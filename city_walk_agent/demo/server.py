@@ -154,11 +154,12 @@ async def analyze_waypoint(req: AnalyzeRequest):
 
     # 2. Write to a temp file so Evaluator can read it (it expects a file path)
     import tempfile
-    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-        tmp.write(image_bytes)
-        tmp_path = tmp.name
-
+    tmp_path = None
     try:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp.write(image_bytes)
+            tmp_path = tmp.name
+
         # 3. Build persona object (None = objective)
         persona = None
         if req.persona and req.persona != "objective":
@@ -189,19 +190,19 @@ async def analyze_waypoint(req: AnalyzeRequest):
             scores[r["dimension_id"]] = r["score"]
             reasoning[r["dimension_id"]] = r["reasoning"]
 
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        return AnalyzeResponse(
+            scores=scores,
+            reasoning=reasoning,
+            image_base64=image_b64,
+            persona=req.persona,
+            waypoint_id=req.waypoint_id or 0,
+            processing_time_sec=round(time.time() - t0, 2),
+        )
     finally:
-        Path(tmp_path).unlink(missing_ok=True)
-
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-    return AnalyzeResponse(
-        scores=scores,
-        reasoning=reasoning,
-        image_base64=image_b64,
-        persona=req.persona,
-        waypoint_id=req.waypoint_id or 0,
-        processing_time_sec=round(time.time() - t0, 2),
-    )
+        if tmp_path:
+            Path(tmp_path).unlink(missing_ok=True)
 
 
 @app.get("/image")

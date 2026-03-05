@@ -1104,28 +1104,22 @@
         advance(next);
       }
 
-      async function advance(idx) {
-        if (!isRunning) {
-          log("Run stopped", "warn");
-          return;
+      async function advance(startIdx) {
+        for (let idx = startIdx; idx < waypoints.length; idx++) {
+          if (!isRunning) break;
+          log(`advance → idx=${idx}`);
+          try {
+            await goTo(idx, true);
+          } catch (e) {
+            log(`advance error at idx=${idx}: ${e.message}`, "err");
+          }
         }
-        if (idx >= waypoints.length) {
+        if (isRunning) {
           log(`Route complete — ${waypoints.length} waypoints`, "ok");
           setStatus(`Complete — all ${waypoints.length} waypoints`);
           if (agentMarker && agentIndex >= 0) moveAgent(agentIndex, false);
           stopRun();
-          return;
         }
-
-        log(`advance → idx=${idx}`);
-        try {
-          await goTo(idx, true);
-        } catch (e) {
-          log(`advance error at idx=${idx}: ${e.message}`, "err");
-        }
-
-        if (!isRunning) return;
-        advance(idx + 1);
       }
 
       function stopRun() {
