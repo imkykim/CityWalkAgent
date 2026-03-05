@@ -25,7 +25,7 @@ class VLMConfig:
     api_url: str
     max_tokens: int = 300
     temperature: float = 0.7
-    rate_limit_delay: float = 0.5  # seconds between requests
+    rate_limit_delay: float = 0.1  # seconds between requests
     max_retries: int = DEFAULT_RETRY_ATTEMPTS
     retry_delay: float = 1.0
 

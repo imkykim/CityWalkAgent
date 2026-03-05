@@ -1,0 +1,1375 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CityWalk</title>
+
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+    <style>
+      :root {
+        --accent: #0071e3;
+        --green: #30d158;
+        --red: #ff453a;
+        --orange: #ff9f0a;
+        --border: #e5e5ea;
+        --bg: #ffffff;
+        --surface: #f5f5f7;
+        --text-1: #1d1d1f;
+        --text-2: #6e6e73;
+        --text-3: #aeaeb2;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+          sans-serif;
+        background: var(--bg);
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        color: var(--text-1);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* ── topbar ── */
+      #topbar {
+        height: 50px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 20px;
+        background: rgba(255, 255, 255, 0.9);
+        backdrop-filter: blur(20px);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+        z-index: 200;
+      }
+      #topbar h1 {
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: -0.2px;
+        margin-right: 4px;
+      }
+      .div {
+        width: 1px;
+        height: 16px;
+        background: var(--border);
+        margin: 0 2px;
+      }
+
+      .pill {
+        padding: 4px 12px;
+        border: none;
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 500;
+        background: var(--surface);
+        color: var(--text-2);
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
+      .pill:hover {
+        background: #e5e5ea;
+        color: var(--text-1);
+      }
+      .pill.active {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      #run-btn {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 13px;
+        border: none;
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 600;
+        background: var(--green);
+        color: #fff;
+        transition: opacity 0.15s;
+      }
+      #run-btn:hover {
+        opacity: 0.85;
+      }
+      #run-btn.running {
+        background: var(--red);
+      }
+
+      #step-btn {
+        padding: 4px 12px;
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 500;
+        background: transparent;
+        color: var(--text-2);
+        transition: background 0.15s;
+      }
+      #step-btn:hover:not(:disabled) {
+        background: var(--surface);
+        color: var(--text-1);
+      }
+      #step-btn:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+      }
+
+      #speed-wrap {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 11px;
+        color: var(--text-3);
+      }
+      #speed-select {
+        background: var(--surface);
+        color: var(--text-2);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 3px 5px;
+        font-size: 11px;
+        cursor: pointer;
+      }
+
+      #wp-counter {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--accent);
+      }
+      #status-msg {
+        margin-left: auto;
+        font-size: 11px;
+        color: var(--text-3);
+        max-width: 300px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* log toggle */
+      #log-toggle {
+        padding: 4px 10px;
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        cursor: pointer;
+        font-size: 11px;
+        background: transparent;
+        color: var(--text-3);
+      }
+      #log-toggle:hover {
+        background: var(--surface);
+        color: var(--text-2);
+      }
+      #log-toggle.active {
+        background: var(--surface);
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+
+      /* ── main ── */
+      #main {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+      }
+
+      /* ── LEFT: Street View ── */
+      #sv-col {
+        width: 60%;
+        min-width: 200px;
+        max-width: 85%;
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+      }
+
+      /* ── vertical drag handle (left ↔ right) ── */
+      #drag-h {
+        width: 5px;
+        flex-shrink: 0;
+        background: var(--border);
+        cursor: col-resize;
+        transition: background 0.15s;
+        z-index: 50;
+        position: relative;
+      }
+      #drag-h:hover,
+      #drag-h.dragging {
+        background: var(--accent);
+      }
+      #drag-h::after {
+        content: "";
+        position: absolute;
+        inset: 0 -4px; /* wider hit area */
+      }
+
+      #sv-wrap {
+        flex: 1;
+        position: relative;
+        background: var(--surface);
+        overflow: hidden;
+      }
+      #sv-image {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: none;
+        transition: opacity 0.25s;
+      }
+      #sv-hint {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        color: var(--text-3);
+      }
+      #sv-hint .icon {
+        font-size: 24px;
+        opacity: 0.4;
+      }
+      #sv-hint p {
+        font-size: 13px;
+      }
+
+      /* overlaid badge top-left */
+      #sv-badge {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        z-index: 10;
+        background: rgba(255, 255, 255, 0.88);
+        backdrop-filter: blur(8px);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 3px 9px;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-2);
+        display: none;
+      }
+
+      /* analysis state badge top-right */
+      #analysis-badge {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        z-index: 10;
+        background: rgba(255, 255, 255, 0.88);
+        backdrop-filter: blur(8px);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 3px 9px;
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-2);
+        display: none;
+        align-items: center;
+        gap: 5px;
+      }
+      #analysis-badge .mini-spin {
+        width: 10px;
+        height: 10px;
+        border: 1.5px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* heading arrow overlay — bottom-center of street view */
+      #heading-arrow {
+        position: absolute;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        pointer-events: none;
+      }
+      #heading-arrow .arrow-ring {
+        width: 52px;
+        height: 52px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.88);
+        backdrop-filter: blur(8px);
+        border: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #heading-arrow svg {
+        display: block;
+      }
+      #heading-arrow .heading-label {
+        font-size: 10px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.9);
+        background: rgba(0, 0, 0, 0.35);
+        backdrop-filter: blur(4px);
+        padding: 2px 7px;
+        border-radius: 10px;
+        letter-spacing: 0.3px;
+      }
+
+      /* flash */
+      #sv-wrap.flash::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 113, 227, 0.1);
+        animation: flash-out 0.35s ease-out forwards;
+        pointer-events: none;
+        z-index: 5;
+      }
+      @keyframes flash-out {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0;
+        }
+      }
+
+      /* ── RIGHT: map (top) + info (bottom) ── */
+      #right-col {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        overflow: hidden;
+      }
+
+      #map {
+        height: 40%;
+        min-height: 80px;
+        z-index: 1;
+        flex-shrink: 0;
+      }
+
+      /* ── horizontal drag handle (map ↕ info) ── */
+      #drag-v {
+        height: 5px;
+        flex-shrink: 0;
+        background: var(--border);
+        cursor: row-resize;
+        transition: background 0.15s;
+        z-index: 50;
+        position: relative;
+      }
+      #drag-v:hover,
+      #drag-v.dragging {
+        background: var(--accent);
+      }
+      #drag-v::after {
+        content: "";
+        position: absolute;
+        inset: -4px 0; /* taller hit area */
+      }
+
+      #info {
+        flex: 1;
+        overflow-y: auto;
+        padding: 14px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .sec-label {
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--text-3);
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        margin-bottom: 7px;
+      }
+
+      #persona-select {
+        width: 100%;
+        padding: 7px 28px 7px 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        font-size: 13px;
+        background: var(--surface);
+        color: var(--text-1);
+        cursor: pointer;
+        appearance: none;
+        -webkit-appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23aeaeb2'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 10px center;
+      }
+
+      .score-row {
+        margin-bottom: 8px;
+      }
+      .score-hdr {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 4px;
+      }
+      .dim-name {
+        font-size: 12px;
+        color: var(--text-2);
+        text-transform: capitalize;
+      }
+      .dim-val {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-1);
+      }
+      .bar-track {
+        height: 4px;
+        background: var(--surface);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .bar-fill {
+        height: 100%;
+        border-radius: 2px;
+        width: 0%;
+        transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      .r-item {
+        border-bottom: 1px solid var(--surface);
+      }
+      .r-item:last-child {
+        border-bottom: none;
+      }
+      .r-btn {
+        width: 100%;
+        background: none;
+        border: none;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 7px 0;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-2);
+        text-align: left;
+        text-transform: capitalize;
+      }
+      .r-btn .chev {
+        font-size: 9px;
+        color: var(--text-3);
+        transition: transform 0.2s;
+      }
+      .r-btn.open .chev {
+        transform: rotate(180deg);
+      }
+      .r-body {
+        display: none;
+        font-size: 13px;
+        color: var(--text-2);
+        line-height: 1.7;
+        padding-bottom: 7px;
+      }
+      .r-body.open {
+        display: block;
+      }
+
+      #meta-line {
+        font-size: 10px;
+        color: var(--text-3);
+      }
+      .ph {
+        font-size: 12px;
+        color: var(--text-3);
+      }
+
+      /* ── Log drawer ── */
+      #log-drawer {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 200px;
+        background: rgba(255, 255, 255, 0.96);
+        backdrop-filter: blur(12px);
+        border-top: 1px solid var(--border);
+        display: none;
+        flex-direction: column;
+        z-index: 300;
+      }
+      #log-drawer.open {
+        display: flex;
+      }
+      #log-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 14px;
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      #log-header span {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-2);
+      }
+      #log-clear {
+        font-size: 11px;
+        color: var(--text-3);
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+      #log-clear:hover {
+        background: var(--surface);
+        color: var(--text-2);
+      }
+      #log-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 6px 14px;
+        font-family: "SF Mono", "Menlo", monospace;
+        font-size: 11px;
+        line-height: 1.6;
+      }
+      .log-line {
+        display: flex;
+        gap: 10px;
+      }
+      .log-time {
+        color: var(--text-3);
+        flex-shrink: 0;
+      }
+      .log-info {
+        color: var(--text-2);
+      }
+      .log-ok {
+        color: var(--green);
+      }
+      .log-warn {
+        color: var(--orange);
+      }
+      .log-err {
+        color: var(--red);
+      }
+
+      /* agent bobbing */
+      @keyframes bob {
+        0%,
+        100% {
+          transform: translateY(0);
+        }
+        50% {
+          transform: translateY(-3px);
+        }
+      }
+      .agent-bob {
+        animation: bob 0.55s ease-in-out infinite;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- topbar -->
+    <div id="topbar">
+      <h1>CityWalk</h1>
+      <div class="div"></div>
+      <button class="pill active" onclick="loadRoute('singapore')">
+        Singapore
+      </button>
+      <button class="pill" onclick="loadRoute('hongkong')">Hong Kong</button>
+      <div class="div"></div>
+      <button id="run-btn" onclick="toggleRun()">▶ Run</button>
+      <button id="step-btn" onclick="stepOnce()" disabled>Step</button>
+      <span id="wp-counter"></span>
+      <span id="status-msg">Loading…</span>
+      <button id="log-toggle" onclick="toggleLog()">Log</button>
+    </div>
+
+    <!-- main -->
+    <div id="main">
+      <!-- LEFT: Street View -->
+      <div id="sv-col">
+        <div id="sv-wrap">
+          <img id="sv-image" />
+          <div id="sv-hint">
+            <span class="icon">🗺</span>
+            <p>Select a waypoint or Run Agent</p>
+          </div>
+          <div id="sv-badge"></div>
+          <div id="heading-arrow">
+            <div class="arrow-ring">
+              <!-- arrow SVG — rotated via JS -->
+              <svg id="heading-svg" width="28" height="28" viewBox="0 0 28 28">
+                <polygon points="14,3 21,22 14,18 7,22" fill="#0071e3" />
+              </svg>
+            </div>
+            <span class="heading-label" id="heading-label">0°</span>
+          </div>
+          <div id="analysis-badge">
+            <div class="mini-spin"></div>
+            <span id="analysis-badge-text">Analyzing…</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- vertical splitter -->
+      <div id="drag-h"></div>
+
+      <!-- RIGHT: map + info -->
+      <div id="right-col">
+        <div id="map"></div>
+        <!-- horizontal splitter -->
+        <div id="drag-v"></div>
+        <div id="info">
+          <div>
+            <div class="sec-label">Persona</div>
+            <select id="persona-select" onchange="onPersonaChange()">
+              <option value="objective">Objective</option>
+            </select>
+          </div>
+
+          <div>
+            <div class="sec-label">Scores</div>
+            <div id="scores-area"><div class="ph">—</div></div>
+          </div>
+
+          <div>
+            <div class="sec-label">Reasoning</div>
+            <div id="reasoning-area"><div class="ph">—</div></div>
+            <div id="meta-line" style="margin-top: 6px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log drawer -->
+    <div id="log-drawer">
+      <div id="log-header">
+        <span>Console Log</span>
+        <button id="log-clear" onclick="clearLog()">Clear</button>
+      </div>
+      <div id="log-body"></div>
+    </div>
+
+    <script>
+      // ═══════════════════════════════════════════════════════
+      // LOGGING
+      // ═══════════════════════════════════════════════════════
+      let logOpen = false;
+
+      function toggleLog() {
+        logOpen = !logOpen;
+        document.getElementById("log-drawer").classList.toggle("open", logOpen);
+        document
+          .getElementById("log-toggle")
+          .classList.toggle("active", logOpen);
+      }
+      function clearLog() {
+        document.getElementById("log-body").innerHTML = "";
+      }
+
+      function log(msg, level = "info") {
+        const now = new Date();
+        const t = now.toTimeString().slice(0, 8);
+        const el = document.createElement("div");
+        el.className = "log-line";
+        el.innerHTML = `<span class="log-time">${t}</span><span class="log-${level}">${escHtml(msg)}</span>`;
+        const body = document.getElementById("log-body");
+        body.appendChild(el);
+        body.scrollTop = body.scrollHeight;
+        // also console
+        if (level === "err") console.error(msg);
+        else if (level === "warn") console.warn(msg);
+        else console.log(msg);
+      }
+
+      // ═══════════════════════════════════════════════════════
+      // STATE
+      // ═══════════════════════════════════════════════════════
+      const API = "";
+      let map,
+        waypoints = [],
+        markers = [],
+        polyline = null,
+        trailLine = null,
+        agentMarker = null;
+      let agentIndex = -1;
+      let currentPersona = "objective";
+      let cache = {}; // `${persona}:${wpId}` → result
+      let isRunning = false;
+      let analysisAbort = null; // AbortController for in-flight /analyze
+
+      // ── Agent icon ────────────────────────────────────────
+      // Set to a PNG/SVG file path to use an image, or null to use the built-in SVG pin.
+      const AGENT_ICON_URL = "/static/runner.png";
+      const AGENT_ICON_SIZE = [80, 80]; // [width, height] in px
+      const AGENT_ICON_ANCHOR = [40, 40]; // anchor point (usually center for images)
+
+      const AGENT_SVG_FALLBACK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 38" width="28" height="38">
+  <path d="M14 1C8.5 1 4 5.5 4 11c0 7.5 10 25 10 25S24 18.5 24 11C24 5.5 19.5 1 14 1Z"
+    fill="#0071e3" stroke="white" stroke-width="1.5"/>
+  <circle cx="14" cy="10" r="3" fill="white"/>
+  <line x1="14" y1="13" x2="14" y2="19" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="9.5" y1="15.5" x2="18.5" y2="15.5" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="14" y1="19" x2="10.5" y2="24" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+  <line x1="14" y1="19" x2="17.5" y2="24" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
+</svg>`;
+
+      // ═══════════════════════════════════════════════════════
+      // INIT
+      // ═══════════════════════════════════════════════════════
+      document.addEventListener("DOMContentLoaded", async () => {
+        log("App init");
+
+        // ── resizable panels ──────────────────────────────────
+        // Left ↔ Right (vertical splitter)
+        const dragH = document.getElementById("drag-h");
+        const svCol = document.getElementById("sv-col");
+        const main = document.getElementById("main");
+        dragH.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          dragH.classList.add("dragging");
+          document.body.style.cursor = "col-resize";
+          document.body.style.userSelect = "none";
+          const onMove = (e) => {
+            const mainRect = main.getBoundingClientRect();
+            const pct = ((e.clientX - mainRect.left) / mainRect.width) * 100;
+            svCol.style.width = Math.min(85, Math.max(15, pct)) + "%";
+            map.invalidateSize();
+          };
+          const onUp = () => {
+            dragH.classList.remove("dragging");
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+          };
+          document.addEventListener("mousemove", onMove);
+          document.addEventListener("mouseup", onUp);
+        });
+
+        // Map ↕ Info (horizontal splitter)
+        const dragV = document.getElementById("drag-v");
+        const mapEl = document.getElementById("map");
+        const rightCol = document.getElementById("right-col");
+        dragV.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          dragV.classList.add("dragging");
+          document.body.style.cursor = "row-resize";
+          document.body.style.userSelect = "none";
+          const onMove = (e) => {
+            const rcRect = rightCol.getBoundingClientRect();
+            const pct = ((e.clientY - rcRect.top) / rcRect.height) * 100;
+            mapEl.style.height = Math.min(85, Math.max(10, pct)) + "%";
+            map.invalidateSize();
+          };
+          const onUp = () => {
+            dragV.classList.remove("dragging");
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+          };
+          document.addEventListener("mousemove", onMove);
+          document.addEventListener("mouseup", onUp);
+        });
+
+        map = L.map("map").setView([1.2835, 103.858], 15);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "© OpenStreetMap",
+          maxZoom: 19,
+        }).addTo(map);
+        await loadPersonas();
+        await loadRoute("singapore");
+      });
+
+      // ═══════════════════════════════════════════════════════
+      // ROUTE
+      // ═══════════════════════════════════════════════════════
+      async function loadRoute(id) {
+        stopRun();
+        cache = {};
+        agentIndex = -1;
+        resetPanel();
+        document
+          .querySelectorAll(".pill")
+          .forEach((b) =>
+            b.classList.toggle(
+              "active",
+              b.textContent.toLowerCase().includes(id),
+            ),
+          );
+        setStatus("Loading…");
+        log(`Loading route: ${id}`);
+        try {
+          const r = await fetch(`${API}/route/${id}`);
+          if (!r.ok) throw new Error(await r.text());
+          const d = await r.json();
+          waypoints = d.waypoints;
+          log(`Loaded ${waypoints.length} waypoints`, "ok");
+          drawRoute();
+          setStatus(`${waypoints.length} waypoints · click Run or a marker`);
+          document.getElementById("step-btn").disabled = false;
+          updateCounter();
+        } catch (e) {
+          log(`loadRoute error: ${e.message}`, "err");
+          setStatus(`Error: ${e.message}`);
+        }
+      }
+
+      function drawRoute() {
+        markers.forEach((m) => map.removeLayer(m));
+        markers = [];
+        [polyline, trailLine, agentMarker].forEach(
+          (l) => l && map.removeLayer(l),
+        );
+        polyline = trailLine = agentMarker = null;
+
+        if (!waypoints.length) return;
+        polyline = L.polyline(
+          waypoints.map((w) => [w.lat, w.lon]),
+          { color: "#e5e5ea", weight: 2.5 },
+        ).addTo(map);
+        waypoints.forEach((w) => {
+          const m = mkMarker(w);
+          m.addTo(map);
+          markers.push(m);
+        });
+        map.fitBounds(polyline.getBounds(), { padding: [36, 36] });
+      }
+
+      function mkMarker(w) {
+        const m = L.circleMarker([w.lat, w.lon], mStyle("default", false));
+        m.on("click", () => {
+          if (!isRunning) goTo(waypoints.indexOf(w), false);
+        });
+        return m;
+      }
+
+      function mStyle(state, sel) {
+        const base = {
+          radius: sel ? 8 : 5.5,
+          weight: 1.5,
+          opacity: 1,
+          fillOpacity: 0.9,
+        };
+        if (state === "default")
+          return { ...base, color: "#c7c7cc", fillColor: "#e5e5ea" };
+        if (state === "analyzing")
+          return { ...base, color: "#0071e3", fillColor: "#b8d8f8" };
+        return {
+          ...base,
+          color: "white",
+          fillColor: sel ? "#0071e3" : scoreColor(state),
+        };
+      }
+      function scoreColor(v) {
+        return v >= 7 ? "#30d158" : v >= 5 ? "#ff9f0a" : "#ff453a";
+      }
+      function avg(scores) {
+        const v = Object.values(scores);
+        return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 5;
+      }
+
+      // ═══════════════════════════════════════════════════════
+      // AGENT MARKER
+      // ═══════════════════════════════════════════════════════
+      function agentIcon(bob) {
+        const cls = bob ? "agent-bob" : "";
+        const inner = AGENT_ICON_URL
+          ? `<img src="${AGENT_ICON_URL}" width="${AGENT_ICON_SIZE[0]}" height="${AGENT_ICON_SIZE[1]}" style="display:block">`
+          : AGENT_SVG_FALLBACK;
+        const w = AGENT_ICON_URL ? AGENT_ICON_SIZE[0] : 28;
+        const h = AGENT_ICON_URL ? AGENT_ICON_SIZE[1] : 38;
+        const ax = AGENT_ICON_URL ? AGENT_ICON_ANCHOR[0] : 14;
+        const ay = AGENT_ICON_URL ? AGENT_ICON_ANCHOR[1] : 36;
+        return L.divIcon({
+          html: `<div class="${cls}">${inner}</div>`,
+          iconSize: [w, h],
+          iconAnchor: [ax, ay],
+          className: "",
+        });
+      }
+      function moveAgent(idx, bob) {
+        const w = waypoints[idx];
+        if (!agentMarker) {
+          agentMarker = L.marker([w.lat, w.lon], {
+            icon: agentIcon(bob),
+            zIndexOffset: 1000,
+          }).addTo(map);
+        } else {
+          agentMarker.setLatLng([w.lat, w.lon]);
+          agentMarker.setIcon(agentIcon(bob));
+        }
+      }
+      function drawTrail(idx) {
+        if (trailLine) {
+          map.removeLayer(trailLine);
+          trailLine = null;
+        }
+        if (idx < 1) return;
+        trailLine = L.polyline(
+          waypoints.slice(0, idx + 1).map((w) => [w.lat, w.lon]),
+          { color: "#0071e3", weight: 2.5, opacity: 0.55 },
+        ).addTo(map);
+      }
+
+      // ── bearing between two GPS coords (degrees, 0=N clockwise) ──
+      function bearing(lat1, lon1, lat2, lon2) {
+        const toRad = (d) => (d * Math.PI) / 180;
+        const dLon = toRad(lon2 - lon1);
+        const φ1 = toRad(lat1),
+          φ2 = toRad(lat2);
+        const x = Math.sin(dLon) * Math.cos(φ2);
+        const y =
+          Math.cos(φ1) * Math.sin(φ2) -
+          Math.sin(φ1) * Math.cos(φ2) * Math.cos(dLon);
+        return ((Math.atan2(x, y) * 180) / Math.PI + 360) % 360;
+      }
+
+      // ═══════════════════════════════════════════════════════
+      // GO TO WAYPOINT
+      // Two-phase: 1) show image immediately, 2) run VLM analysis
+      // ═══════════════════════════════════════════════════════
+      async function goTo(idx, bob) {
+        if (idx < 0 || idx >= waypoints.length) return;
+        const w = waypoints[idx];
+        agentIndex = idx;
+        log(`→ WP ${w.id} (${w.lat.toFixed(5)}, ${w.lon.toFixed(5)})`);
+
+        // Move agent on map
+        moveAgent(idx, bob);
+        drawTrail(idx);
+        map.panTo([w.lat, w.lon], { animate: true, duration: 0.4 });
+        updateCounter();
+        setBadge(`WP ${w.id}`);
+        // heading arrow = direction to next waypoint, relative to camera heading
+        const next = waypoints[idx + 1];
+        const absBearing = next
+          ? bearing(w.lat, w.lon, next.lat, next.lon)
+          : null;
+        const relAngle =
+          absBearing !== null
+            ? (absBearing - (w.heading || 0) + 360) % 360
+            : null;
+        setHeadingArrow(relAngle);
+
+        // Update all marker styles
+        markers.forEach((m, i) => {
+          const ck = `${currentPersona}:${waypoints[i].id}`;
+          const c = cache[ck];
+          m.setStyle(mStyle(c ? avg(c.scores) : "default", i === idx));
+        });
+
+        // ── Phase 1: show image immediately ──────────────────
+        const ck = `${currentPersona}:${w.id}`;
+        if (cache[ck]) {
+          // already have full result — just show it
+          log(`WP ${w.id} — cache hit`, "ok");
+          renderResult(cache[ck]);
+          return;
+        }
+
+        // Show the local image right away (before VLM)
+        if (w.image_path) {
+          showImageUrl(
+            `${API}/image?image_path=${encodeURIComponent(w.image_path)}`,
+          );
+          log(`WP ${w.id} — image loaded, starting analysis…`);
+        } else {
+          showSpinnerOverlay(true);
+          log(
+            `WP ${w.id} — no local image, fetching from Street View…`,
+            "warn",
+          );
+        }
+
+        // Set marker to analyzing
+        markers[idx]?.setStyle(mStyle("analyzing", true));
+        showAnalysisBadge(true, `Analyzing WP ${w.id}…`);
+        setStatus(`Analyzing WP ${w.id}…`);
+
+        // ── Phase 2: VLM analysis ────────────────────────────
+        // Cancel any previous in-flight request
+        if (analysisAbort) analysisAbort.abort();
+        analysisAbort = new AbortController();
+        const signal = analysisAbort.signal;
+
+        try {
+          const t0 = Date.now();
+          const res = await fetch(`${API}/analyze`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              lat: w.lat,
+              lon: w.lon,
+              heading: w.heading || 0,
+              persona: currentPersona,
+              image_path: w.image_path || null,
+              waypoint_id: w.id,
+            }),
+            signal,
+          });
+          if (!res.ok) {
+            const err = await res
+              .json()
+              .catch(() => ({ detail: res.statusText }));
+            throw new Error(err.detail || res.statusText);
+          }
+
+          const result = await res.json();
+          const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+          cache[ck] = result;
+
+          // Update marker with score color
+          markers[idx]?.setStyle(mStyle(avg(result.scores), true));
+          showAnalysisBadge(false);
+
+          // If image came from /analyze response (Street View case), update it
+          if (!w.image_path && result.image_base64) {
+            showImageB64(result.image_base64);
+          }
+
+          renderScores(result.scores);
+          renderReasoning(result.reasoning);
+          document.getElementById("meta-line").textContent =
+            `${elapsed}s · ${result.persona}`;
+
+          const scoreStr = Object.entries(result.scores)
+            .map(([k, v]) => `${k}:${v.toFixed(1)}`)
+            .join(" ");
+          log(`WP ${w.id} done — ${elapsed}s — ${scoreStr}`, "ok");
+          setStatus(`WP ${w.id} · ${elapsed}s`);
+        } catch (e) {
+          if (e.name === "AbortError") {
+            log(`WP ${w.id} — request aborted (moved on)`, "warn");
+            return; // not a real error — we moved to next waypoint
+          }
+          log(`WP ${w.id} ERROR: ${e.message}`, "err");
+          showAnalysisBadge(false);
+          setStatus(`Error WP ${w.id}: ${e.message}`);
+          document.getElementById("scores-area").innerHTML =
+            `<div style="color:var(--red);font-size:12px">⚠ ${escHtml(e.message)}</div>`;
+          markers[idx]?.setStyle(mStyle("default", idx === agentIndex));
+          // Don't stopRun on error — let the agent continue
+        }
+      }
+
+      // ═══════════════════════════════════════════════════════
+      // RUN / STEP
+      // ═══════════════════════════════════════════════════════
+      function toggleRun() {
+        isRunning ? stopRun() : startRun();
+      }
+
+      function startRun() {
+        if (!waypoints.length) return;
+        isRunning = true;
+        const btn = document.getElementById("run-btn");
+        btn.innerHTML = "⏹ Stop";
+        btn.classList.add("running");
+        document.getElementById("step-btn").disabled = true;
+        const next = agentIndex >= waypoints.length - 1 ? 0 : agentIndex + 1;
+        log(`Run started from WP index ${next}`, "info");
+        advance(next);
+      }
+
+      async function advance(idx) {
+        if (!isRunning) {
+          log("Run stopped", "warn");
+          return;
+        }
+        if (idx >= waypoints.length) {
+          log(`Route complete — ${waypoints.length} waypoints`, "ok");
+          setStatus(`Complete — all ${waypoints.length} waypoints`);
+          if (agentMarker && agentIndex >= 0) moveAgent(agentIndex, false);
+          stopRun();
+          return;
+        }
+
+        log(`advance → idx=${idx}`);
+        try {
+          await goTo(idx, true);
+        } catch (e) {
+          log(`advance error at idx=${idx}: ${e.message}`, "err");
+        }
+
+        if (!isRunning) return;
+        advance(idx + 1);
+      }
+
+      function stopRun() {
+        isRunning = false;
+        const btn = document.getElementById("run-btn");
+        btn.innerHTML = "▶ Run";
+        btn.classList.remove("running");
+        document.getElementById("step-btn").disabled = waypoints.length === 0;
+        if (agentMarker && agentIndex >= 0) moveAgent(agentIndex, false);
+        log("Run stopped");
+      }
+
+      async function stepOnce() {
+        if (isRunning || !waypoints.length) return;
+        const next = agentIndex >= waypoints.length - 1 ? 0 : agentIndex + 1;
+        log(`Step → WP index ${next}`);
+        await goTo(next, false);
+      }
+
+      function updateCounter() {
+        document.getElementById("wp-counter").textContent =
+          agentIndex < 0 ? "" : `${agentIndex + 1} / ${waypoints.length}`;
+      }
+
+      // ═══════════════════════════════════════════════════════
+      // PERSONA
+      // ═══════════════════════════════════════════════════════
+      function onPersonaChange() {
+        const p = document.getElementById("persona-select").value;
+        if (p === currentPersona) return;
+        log(`Persona changed: ${currentPersona} → ${p}`);
+        currentPersona = p;
+        cache = {};
+        agentIndex = -1;
+        resetPanel();
+        if (agentMarker) {
+          map.removeLayer(agentMarker);
+          agentMarker = null;
+        }
+        if (trailLine) {
+          map.removeLayer(trailLine);
+          trailLine = null;
+        }
+        markers.forEach((m) => m.setStyle(mStyle("default", false)));
+        updateCounter();
+        setStatus("Persona changed");
+      }
+
+      // ═══════════════════════════════════════════════════════
+      // RENDER
+      // ═══════════════════════════════════════════════════════
+      function renderResult(result) {
+        showAnalysisBadge(false);
+        if (result.image_base64) showImageB64(result.image_base64);
+        renderScores(result.scores);
+        renderReasoning(result.reasoning);
+        document.getElementById("meta-line").textContent =
+          `${result.processing_time_sec}s · ${result.persona}`;
+      }
+
+      function renderScores(scores) {
+        const area = document.getElementById("scores-area");
+        const dims = Object.keys(scores);
+        if (!dims.length) {
+          area.innerHTML = '<div class="ph">—</div>';
+          return;
+        }
+        area.innerHTML = dims
+          .map((d) => {
+            const v = scores[d] ?? 0;
+            return `<div class="score-row">
+      <div class="score-hdr">
+        <span class="dim-name">${d}</span>
+        <span class="dim-val">${v.toFixed(1)}</span>
+      </div>
+      <div class="bar-track">
+        <div class="bar-fill" id="bar-${d}" style="background:${scoreColor(v)}"></div>
+      </div>
+    </div>`;
+          })
+          .join("");
+        requestAnimationFrame(() =>
+          dims.forEach((d) => {
+            const el = document.getElementById(`bar-${d}`);
+            if (el) el.style.width = `${((scores[d] ?? 0) / 10) * 100}%`;
+          }),
+        );
+      }
+
+      function renderReasoning(reasoning) {
+        const area = document.getElementById("reasoning-area");
+        const dims = Object.keys(reasoning);
+        if (!dims.length) {
+          area.innerHTML = '<div class="ph">—</div>';
+          return;
+        }
+        area.innerHTML = dims
+          .map(
+            (d) => `
+    <div class="r-item">
+      <button class="r-btn open" onclick="toggleR('rd-${d}',this)">
+        <span>${d}</span><span class="chev">▼</span>
+      </button>
+      <div class="r-body open" id="rd-${d}">${escHtml(reasoning[d] || "—")}</div>
+    </div>`,
+          )
+          .join("");
+      }
+
+      function toggleR(id, btn) {
+        document.getElementById(id).classList.toggle("open");
+        btn.classList.toggle("open");
+      }
+
+      // ── image display ──────────────────────────────────────
+      function showImageUrl(url) {
+        // Reset src first to force a fresh load and avoid stale onload callbacks
+        const img = document.getElementById("sv-image");
+        img.onload = null;
+        img.onerror = null;
+        img.src = "";
+
+        img.onload = () => {
+          log(`Image displayed`, "ok");
+          img.style.display = "block";
+          document.getElementById("sv-hint").style.display = "none";
+          showSpinnerOverlay(false);
+          flashSV();
+        };
+        img.onerror = () => {
+          log(`Image load failed: ${url}`, "err");
+          showSpinnerOverlay(true);
+        };
+        log(`Fetching image: ${url}`);
+        img.src = url;
+      }
+
+      function showImageB64(b64) {
+        const img = document.getElementById("sv-image");
+        img.src = `data:image/jpeg;base64,${b64}`;
+        img.style.display = "block";
+        document.getElementById("sv-hint").style.display = "none";
+        showSpinnerOverlay(false);
+        flashSV();
+      }
+
+      function flashSV() {
+        const wrap = document.getElementById("sv-wrap");
+        wrap.classList.remove("flash");
+        void wrap.offsetWidth;
+        wrap.classList.add("flash");
+      }
+
+      function showSpinnerOverlay(v) {
+        // We no longer use a full-screen spinner — image shows first
+        // This only activates when there's no local image (Street View fallback)
+        const hint = document.getElementById("sv-hint");
+        if (v) {
+          hint.innerHTML = `<div class="mini-spin" style="width:20px;height:20px;border:2px solid #e5e5ea;border-top-color:#0071e3;border-radius:50%;animation:spin .7s linear infinite"></div><p>Fetching Street View…</p>`;
+          hint.style.display = "flex";
+          document.getElementById("sv-image").style.display = "none";
+        }
+      }
+
+      function showAnalysisBadge(v, text = "") {
+        const b = document.getElementById("analysis-badge");
+        b.style.display = v ? "flex" : "none";
+        if (text)
+          document.getElementById("analysis-badge-text").textContent = text;
+      }
+
+      function setBadge(text) {
+        const b = document.getElementById("sv-badge");
+        b.textContent = text;
+        b.style.display = text ? "block" : "none";
+      }
+
+      function setHeadingArrow(heading) {
+        const el = document.getElementById("heading-arrow");
+        if (heading === null || heading === undefined) {
+          el.style.display = "none";
+          return;
+        }
+        el.style.display = "flex";
+        document.getElementById("heading-svg").style.transform =
+          `rotate(${heading}deg)`;
+        // compass label: N/NE/E/SE/S/SW/W/NW
+        const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+        const label = dirs[Math.round(heading / 45) % 8];
+        document.getElementById("heading-label").textContent =
+          `${Math.round(heading)}° ${label}`;
+      }
+
+      function resetPanel() {
+        showAnalysisBadge(false);
+        const img = document.getElementById("sv-image");
+        img.src = "";
+        img.style.display = "none";
+        document.getElementById("sv-hint").innerHTML =
+          `<span class="icon">🗺</span><p>Select a waypoint or Run Agent</p>`;
+        document.getElementById("sv-hint").style.display = "flex";
+        setBadge("");
+        setHeadingArrow(null);
+        document.getElementById("scores-area").innerHTML =
+          '<div class="ph">—</div>';
+        document.getElementById("reasoning-area").innerHTML =
+          '<div class="ph">—</div>';
+        document.getElementById("meta-line").textContent = "";
+      }
+
+      function setStatus(msg) {
+        document.getElementById("status-msg").textContent = msg;
+      }
+      function escHtml(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      // ═══════════════════════════════════════════════════════
+      // PERSONAS
+      // ═══════════════════════════════════════════════════════
+      async function loadPersonas() {
+        try {
+          const r = await fetch(`${API}/personas`);
+          const ps = await r.json();
+          document.getElementById("persona-select").innerHTML = ps
+            .map((p) => {
+              const label =
+                p === "objective"
+                  ? "Objective"
+                  : p
+                      .split("_")
+                      .map((w) => w[0].toUpperCase() + w.slice(1))
+                      .join(" ");
+              return `<option value="${p}">${label}</option>`;
+            })
+            .join("");
+          log(`Loaded ${ps.length} personas: ${ps.join(", ")}`, "ok");
+        } catch (e) {
+          log(`loadPersonas error: ${e.message}`, "err");
+        }
+      }
+    </script>
+  </body>
+</html>
