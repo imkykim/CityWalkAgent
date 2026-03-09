@@ -16,6 +16,7 @@ from .interpreter import Interpreter
 from .decider     import Decider
 from .planner     import Planner
 from .reporter    import Reporter
+from .llm_client  import call_llm
 from .models import (
     System1Evidence,
     InterpretResult,
@@ -30,6 +31,7 @@ __all__ = [
     "Decider",
     "Planner",
     "Reporter",
+    "call_llm",
     "System1Evidence",
     "InterpretResult",
     "DecideResult",
