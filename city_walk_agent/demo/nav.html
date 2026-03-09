@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Street View Navigation Demo</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #ffffff;
+    color: #1d1d1f;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 12px 20px;
+    border-bottom: 1px solid #e5e5ea;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+  .panel {
+    width: 40%;
+    overflow-y: auto;
+    padding: 16px;
+    border-right: 1px solid #e5e5ea;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  #map-container {
+    width: 60%;
+    position: relative;
+  }
+  #map {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Status pill */
+  .status-pill {
+    display: inline-block;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .status-ok { background: #d1f5d3; color: #1a7f2a; }
+  .status-err { background: #ffd5d5; color: #c0392b; }
+
+  /* Section headers */
+  .section-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #6e6e73;
+    margin-bottom: 6px;
+  }
+
+  /* Inputs */
+  .input-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .input-row label {
+    font-size: 12px;
+    color: #6e6e73;
+    white-space: nowrap;
+  }
+  .input-row input {
+    flex: 1;
+    padding: 7px 10px;
+    border: 1px solid #d2d2d7;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+  }
+  .input-row input:focus {
+    border-color: #0071e3;
+  }
+
+  /* Buttons */
+  .btn-primary {
+    padding: 8px 18px;
+    background: #0071e3;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-primary:hover { background: #0058b8; }
+  .btn-primary:disabled { background: #b0c9f0; cursor: not-allowed; }
+
+  /* Info card */
+  .info-card {
+    background: #f5f5f7;
+    border-radius: 12px;
+    padding: 12px 14px;
+    font-size: 13px;
+  }
+  .info-card.intersection {
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+  }
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 3px 0;
+    border-bottom: 1px solid rgba(0,0,0,0.06);
+  }
+  .info-row:last-child { border-bottom: none; }
+  .info-label { color: #6e6e73; }
+  .info-value { font-weight: 500; font-family: monospace; font-size: 12px; }
+
+  /* Street view image */
+  .sv-container {
+    position: relative;
+    background: #e5e5ea;
+    border-radius: 12px;
+    overflow: hidden;
+    height: 200px;
+  }
+  .sv-container img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .sv-spinner {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(229,229,234,0.8);
+    font-size: 24px;
+  }
+  .sv-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #6e6e73;
+    font-size: 13px;
+  }
+
+  /* Link cards */
+  .links-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .link-card {
+    background: #f5f5f7;
+    border: 1.5px solid transparent;
+    border-radius: 10px;
+    padding: 10px 12px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .link-card:hover { border-color: #0071e3; background: #e8f0fb; }
+  .link-card.active { border-color: #0071e3; background: #ddeeff; }
+  .link-dir {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .link-deg {
+    font-size: 11px;
+    color: #6e6e73;
+    font-family: monospace;
+  }
+  .link-pano {
+    font-size: 10px;
+    color: #aeaeb2;
+    font-family: monospace;
+    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* History */
+  .history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .history-item {
+    padding: 6px 10px;
+    background: #f5f5f7;
+    border-radius: 8px;
+    font-size: 11px;
+    font-family: monospace;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .history-item:hover { background: #e5e5ea; }
+  .history-item.current { background: #ddeeff; font-weight: 600; }
+
+  /* Error */
+  .error-msg {
+    padding: 10px 14px;
+    background: #fff0f0;
+    border: 1px solid #ff453a;
+    border-radius: 8px;
+    color: #ff453a;
+    font-size: 13px;
+  }
+
+  .empty-msg {
+    color: #aeaeb2;
+    font-size: 12px;
+    font-style: italic;
+  }
+
+  /* Spinner animation */
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  .spinner-icon {
+    display: inline-block;
+    animation: spin 0.8s linear infinite;
+  }
+</style>
+</head>
+<body>
+<header>🗺️ Street View Navigation Demo</header>
+<div class="main">
+  <!-- Left Panel -->
+  <div class="panel">
+
+    <!-- Status -->
+    <div>
+      <div class="section-title">API 상태</div>
+      <span id="status-pill" class="status-pill">확인 중...</span>
+    </div>
+
+    <!-- Start input -->
+    <div>
+      <div class="section-title">시작 위치</div>
+      <div class="input-row" style="margin-bottom:8px;">
+        <label>위도</label>
+        <input type="number" id="lat-input" value="37.5665" step="0.0001">
+        <label>경도</label>
+        <input type="number" id="lng-input" value="126.9780" step="0.0001">
+      </div>
+      <button class="btn-primary" id="start-btn" onclick="startNav()">▶ 시작</button>
+      <span style="font-size:12px;color:#6e6e73;margin-left:8px;">또는 지도 클릭</span>
+    </div>
+
+    <!-- Error -->
+    <div id="error-box" style="display:none;"></div>
+
+    <!-- Pano info -->
+    <div id="pano-section" style="display:none;">
+      <div class="section-title">현재 파노라마</div>
+      <div id="pano-card" class="info-card"></div>
+    </div>
+
+    <!-- Street view image -->
+    <div id="sv-section" style="display:none;">
+      <div class="section-title">Street View</div>
+      <div class="sv-container">
+        <img id="sv-img" src="" alt="Street View" style="display:none;" onload="onImgLoad()" onerror="onImgError()">
+        <div id="sv-overlay" class="sv-placeholder">이미지 없음</div>
+      </div>
+    </div>
+
+    <!-- Links -->
+    <div id="links-section" style="display:none;">
+      <div class="section-title">이동 가능 방향</div>
+      <div id="links-grid" class="links-grid"></div>
+    </div>
+
+    <!-- History -->
+    <div id="history-section" style="display:none;">
+      <div class="section-title">이동 히스토리</div>
+      <div id="history-list" class="history-list"></div>
+    </div>
+
+  </div>
+
+  <!-- Right: Map -->
+  <div id="map-container">
+    <div id="map"></div>
+  </div>
+</div>
+
+<script>
+const API = 'http://localhost:8001';
+
+// State
+let currentPano = null;
+let history = [];
+let map, currentMarker, polyline;
+let historyMarkers = [];
+let polylinePoints = [];
+let activeCardIdx = null;
+
+// --- Map setup ---
+map = L.map('map').setView([37.5665, 126.9780], 15);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+map.on('click', (e) => {
+  document.getElementById('lat-input').value = e.latlng.lat.toFixed(6);
+  document.getElementById('lng-input').value = e.latlng.lng.toFixed(6);
+});
+
+// --- Status check ---
+async function checkStatus() {
+  const pill = document.getElementById('status-pill');
+  try {
+    const res = await fetch(`${API}/api/status`);
+    const data = await res.json();
+    if (data.session_ok) {
+      pill.className = 'status-pill status-ok';
+      pill.textContent = '✅ API 연결됨';
+    } else {
+      pill.className = 'status-pill status-err';
+      pill.textContent = `❌ API 키 오류: ${data.error || '알 수 없음'}`;
+    }
+  } catch (e) {
+    pill.className = 'status-pill status-err';
+    pill.textContent = '❌ 서버 연결 실패';
+  }
+}
+
+// --- Navigation ---
+async function startNav() {
+  const lat = parseFloat(document.getElementById('lat-input').value);
+  const lng = parseFloat(document.getElementById('lng-input').value);
+  if (isNaN(lat) || isNaN(lng)) { showError('올바른 좌표를 입력하세요.'); return; }
+  hideError();
+  setLoading(true);
+  try {
+    const res = await fetch(`${API}/api/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lat, lng })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || res.statusText);
+    }
+    const data = await res.json();
+    updateUI(data, true);
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function navigateTo(panoId, heading) {
+  hideError();
+  setLoading(true);
+  try {
+    const res = await fetch(`${API}/api/navigate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pano_id: panoId, heading: heading ?? null })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || res.statusText);
+    }
+    const data = await res.json();
+    updateUI(data, false);
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+// --- UI update ---
+function updateUI(data, isStart) {
+  currentPano = data;
+
+  // Add to history
+  if (isStart) {
+    history = [data.pano_id];
+    polylinePoints = [];
+    historyMarkers.forEach(m => map.removeLayer(m));
+    historyMarkers = [];
+    if (polyline) map.removeLayer(polyline);
+  } else {
+    if (history[history.length - 1] !== data.pano_id) {
+      history.push(data.pano_id);
+      if (history.length > 10) history.shift();
+    }
+  }
+
+  // Map update
+  const latlng = [data.lat, data.lng];
+  polylinePoints.push(latlng);
+
+  if (currentMarker) {
+    // Re-add as gray history marker (remove and recreate to avoid setIcon bug)
+    const prevLatLng = currentMarker.getLatLng();
+    map.removeLayer(currentMarker);
+    const grayIcon = L.divIcon({
+      html: '<div style="width:10px;height:10px;background:#aeaeb2;border-radius:50%;border:2px solid #fff;"></div>',
+      className: '',
+      iconSize: [10, 10], iconAnchor: [5, 5]
+    });
+    const histMarker = L.marker(prevLatLng, { icon: grayIcon }).addTo(map);
+    historyMarkers.push(histMarker);
+  }
+
+  const blueIcon = L.divIcon({
+    html: '<div style="width:14px;height:14px;background:#0071e3;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>',
+    className: '',
+    iconSize: [14, 14], iconAnchor: [7, 7]
+  });
+  currentMarker = L.marker(latlng, { icon: blueIcon }).addTo(map);
+
+  if (polyline) map.removeLayer(polyline);
+  if (polylinePoints.length > 1) {
+    polyline = L.polyline(polylinePoints, { color: '#0071e3', dashArray: '6,4', weight: 2 }).addTo(map);
+  }
+  map.panTo(latlng);
+
+  // Pano info
+  const isIntersection = data.is_intersection;
+  const panoCard = document.getElementById('pano-card');
+  panoCard.className = `info-card${isIntersection ? ' intersection' : ''}`;
+  panoCard.innerHTML = `
+    <div class="info-row"><span class="info-label">Pano ID</span><span class="info-value" title="${data.pano_id}">${data.pano_id.substring(0,24)}…</span></div>
+    <div class="info-row"><span class="info-label">위도/경도</span><span class="info-value">${data.lat.toFixed(6)}, ${data.lng.toFixed(6)}</span></div>
+    <div class="info-row"><span class="info-label">촬영 날짜</span><span class="info-value">${data.date || '알 수 없음'}</span></div>
+    <div class="info-row"><span class="info-label">유형</span><span class="info-value">${isIntersection ? '🔴 교차로' : '⚪ 직선'}</span></div>
+    <div class="info-row"><span class="info-label">링크 수</span><span class="info-value">${data.link_count}</span></div>
+  `;
+
+  // Street view image
+  const img = document.getElementById('sv-img');
+  const overlay = document.getElementById('sv-overlay');
+  img.style.display = 'none';
+  overlay.innerHTML = '<span class="spinner-icon">⏳</span>';
+  overlay.style.display = 'flex';
+  img.src = data.street_view_image_url;
+
+  // Links
+  activeCardIdx = null;
+  const grid = document.getElementById('links-grid');
+  grid.innerHTML = '';
+  if (data.links.length === 0) {
+    grid.innerHTML = '<span class="empty-msg">이동 가능한 방향이 없습니다.</span>';
+  } else {
+    data.links.forEach((link, i) => {
+      const dir = headingToDir(link.heading);
+      const card = document.createElement('div');
+      card.className = 'link-card';
+      card.innerHTML = `
+        <div class="link-dir">${dir} (${Math.round(link.heading)}°)</div>
+        <div class="link-pano">${link.panoId.substring(0,20)}…</div>
+      `;
+      card.onclick = () => {
+        document.querySelectorAll('.link-card').forEach(c => c.classList.remove('active'));
+        card.classList.add('active');
+        activeCardIdx = i;
+        navigateTo(link.panoId, link.heading);
+      };
+      grid.appendChild(card);
+    });
+  }
+
+  // History
+  renderHistory();
+
+  // Show sections
+  document.getElementById('pano-section').style.display = '';
+  document.getElementById('sv-section').style.display = '';
+  document.getElementById('links-section').style.display = '';
+  document.getElementById('history-section').style.display = '';
+}
+
+function renderHistory() {
+  const list = document.getElementById('history-list');
+  list.innerHTML = '';
+  [...history].reverse().forEach((panoId, i) => {
+    const isCurrent = i === 0;
+    const item = document.createElement('div');
+    item.className = `history-item${isCurrent ? ' current' : ''}`;
+    item.textContent = (isCurrent ? '▶ ' : '') + panoId.substring(0, 30) + '…';
+    item.title = panoId;
+    if (!isCurrent) {
+      item.onclick = () => navigateTo(panoId, null);
+    }
+    list.appendChild(item);
+  });
+}
+
+function onImgLoad() {
+  document.getElementById('sv-img').style.display = 'block';
+  document.getElementById('sv-overlay').style.display = 'none';
+}
+
+function onImgError() {
+  const overlay = document.getElementById('sv-overlay');
+  overlay.innerHTML = '이미지를 불러올 수 없습니다';
+  overlay.style.display = 'flex';
+}
+
+// --- Helpers ---
+function headingToDir(h) {
+  const dirs = ['북', '북동', '동', '남동', '남', '남서', '서', '북서'];
+  const idx = Math.round(((h % 360) + 360) / 45) % 8;
+  return dirs[idx];
+}
+
+function showError(msg) {
+  const box = document.getElementById('error-box');
+  box.innerHTML = `<div class="error-msg">⚠️ ${msg}</div>`;
+  box.style.display = '';
+}
+
+function hideError() {
+  document.getElementById('error-box').style.display = 'none';
+}
+
+function setLoading(on) {
+  document.getElementById('start-btn').disabled = on;
+  document.getElementById('start-btn').textContent = on ? '⏳ 로딩...' : '▶ 시작';
+}
+
+// --- Init ---
+checkStatus();
+</script>
+</body>
+</html>
