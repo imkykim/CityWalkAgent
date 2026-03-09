@@ -1807,20 +1807,22 @@ class CityWalkAgent(BaseAgent):
 
         return result
 
-    def run_system2(
+    def synthesize_route(
         self,
         analysis_results: List[Any],
         route_metadata: Dict[str, Any],
         candidate_routes: Optional[List[Any]] = None,
+        reasoning_results: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
-        """Run System 2 reasoning on System 1 analysis results.
+        """경로 완주 후 전체 결과를 종합하는 route-level System 2 파이프라인.
 
-        Pipeline: Interpret → Decide → Plan → Report
+        waypoint-level PersonaReasoner.reason()과 구분되는 경로 전체 요약 단계.
 
         Args:
-            analysis_results: Output from run_with_memory() or run_with_memory_from_folder().
-            route_metadata:   Route-level info dict (route_id, length_km, etc.).
-            candidate_routes: Optional pre-generated alternative routes for Planner.
+            analysis_results:  Output from run_with_memory() or run_with_memory_from_folder().
+            route_metadata:    Route-level info dict (route_id, length_km, etc.).
+            candidate_routes:  Optional pre-generated alternative routes for Planner.
+            reasoning_results: Optional PersonaReasoner waypoint-level results.
 
         Returns:
             Dict with keys: interpret, decide, plan, report.
@@ -1835,6 +1837,7 @@ class CityWalkAgent(BaseAgent):
         evidence = System1Evidence(
             waypoint_results=analysis_results,
             route_metadata=route_metadata,
+            reasoning_results=reasoning_results if reasoning_results is not None else [],
         )
 
         interpret_result = self.interpreter.interpret(evidence, enhanced_persona)

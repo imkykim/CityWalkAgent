@@ -10,17 +10,19 @@ class System1Evidence:
     """Aggregated System 1 output passed into System 2.
 
     Attributes:
-        waypoint_results: Per-waypoint analysis dicts from ContinuousAnalyzer.
-        route_metadata:   Route-level info (route_id, length_km, framework_id, personality).
-        visual_changes:   Waypoint IDs where visual change was detected.
-        barriers:         Detected hidden barrier dicts.
-        overall_stats:    Aggregate statistics (avg scores, volatility, etc.).
+        waypoint_results:  Per-waypoint analysis dicts from ContinuousAnalyzer.
+        route_metadata:    Route-level info (route_id, length_km, framework_id, personality).
+        visual_changes:    Waypoint IDs where visual change was detected.
+        barriers:          Detected hidden barrier dicts.
+        overall_stats:     Aggregate statistics (avg scores, volatility, etc.).
+        reasoning_results: Waypoint-level PersonaReasoner results.
     """
-    waypoint_results: List[Dict[str, Any]]
-    route_metadata:   Dict[str, Any]
-    visual_changes:   List[int]            = field(default_factory=list)
-    barriers:         List[Dict[str, Any]] = field(default_factory=list)
-    overall_stats:    Dict[str, Any]       = field(default_factory=dict)
+    waypoint_results:  List[Dict[str, Any]]
+    route_metadata:    Dict[str, Any]
+    visual_changes:    List[int]            = field(default_factory=list)
+    barriers:          List[Dict[str, Any]] = field(default_factory=list)
+    overall_stats:     Dict[str, Any]       = field(default_factory=dict)
+    reasoning_results: List[Any]            = field(default_factory=list)
 
 
 @dataclass

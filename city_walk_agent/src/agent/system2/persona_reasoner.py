@@ -346,11 +346,126 @@ class PersonaReasoner:
     # System 2 Pipeline Stubs
     # ========================================================================
 
-    def _interpret(self, **kwargs) -> Dict[str, Any]:
-        """Step 1: Interpret — why is this waypoint noteworthy?
+    def _call_llm(self, prompt: str, max_tokens: int = 512) -> Optional[Dict]:
+        """text-only LLM call → JSON 파싱 반환. 실패 시 None."""
+        import httpx
+        import json
 
-        TODO: Implement LLM call with STM context and persona.
-        """
+        url = self._prepare_chat_endpoint(
+            getattr(settings, "qwen_vlm_api_url", None)
+            or getattr(settings, "qwen_api_url", None)
+        )
+        api_key = (
+            getattr(settings, "qwen_vlm_api_key", None)
+            or getattr(settings, "qwen_api_key", None)
+        )
+        model = (
+            getattr(settings, "qwen_vlm_model", None)
+            or getattr(settings, "qwen_model", None)
+        )
+
+        if not url or not api_key:
+            self.logger.warning("LLM credentials not found in settings")
+            return None
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": 0.3,
+        }
+
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                resp = client.post(url, headers=headers, json=payload)
+                resp.raise_for_status()
+                content = resp.json()["choices"][0]["message"]["content"]
+                clean = content.strip()
+                # JSON 펜스 제거
+                if clean.startswith("```"):
+                    clean = clean.split("```")[1]
+                    if clean.startswith("json"):
+                        clean = clean[4:]
+                clean = clean.strip()
+                return json.loads(clean)
+        except Exception as e:
+            self.logger.warning(f"_call_llm failed: {e}")
+            return None
+
+    def _interpret(self, **kwargs) -> Dict[str, Any]:
+        """Step 1: Interpret — why is this waypoint noteworthy?"""
+        waypoint_id = kwargs["waypoint_id"]
+        system1_scores = kwargs.get("system1_scores", {})
+        system1_reasoning = kwargs.get("system1_reasoning", {})
+        stm_context = kwargs.get("stm_context", {})
+        trigger_reason = kwargs.get("trigger_reason")
+        personality = kwargs.get("personality")
+
+        enhanced = self._get_enhanced_config(personality)
+        persona_name = getattr(personality, "name", "Unknown Persona")
+        persona_desc = getattr(personality, "description", "")
+
+        thresholds_text = ""
+        if enhanced and enhanced.thresholds:
+            thresholds_text = ", ".join(
+                f"{k}={v}" for k, v in enhanced.thresholds.items()
+            )
+
+        scores_text = self._format_system1_results(system1_scores, system1_reasoning)
+
+        recent = stm_context.get("recent_scores", [])[-3:]
+        trend = stm_context.get("trend", "unknown")
+        recent_text = ""
+        if recent:
+            for i, s in enumerate(recent):
+                avg = sum(s.values()) / len(s) if s else 0
+                recent_text += f"  - [{i+1}] avg={avg:.1f}, scores={s}\n"
+        else:
+            recent_text = "  (no prior context)\n"
+
+        trigger_text = self._explain_trigger(trigger_reason) if trigger_reason else "Unknown trigger"
+
+        prompt = f"""You are analyzing a street waypoint from the perspective of a specific persona.
+
+Persona: {persona_name}
+Description: {persona_desc}
+Decision thresholds: {thresholds_text if thresholds_text else "default"}
+
+Current waypoint ID: {waypoint_id}
+Trigger reason: {trigger_text}
+
+System 1 scores and reasoning (per dimension):
+{scores_text}
+
+Recent waypoint scores (most recent last, up to 3):
+{recent_text}Trend: {trend}
+
+Based on this information, interpret what is happening at this waypoint from the persona's perspective.
+
+Respond ONLY with valid JSON matching this exact schema:
+{{
+  "text": "2-3 sentences describing what happened at this waypoint from the persona's perspective",
+  "score_change_reason": "reason for score change compared to previous waypoints, or null if no significant change",
+  "key_concern": "the single most important concern for this persona at this waypoint, or null"
+}}"""
+
+        result = self._call_llm(prompt, max_tokens=512)
+        if result and "text" in result:
+            return {
+                "text": result.get("text", ""),
+                "score_change_reason": result.get("score_change_reason"),
+                "persona_divergence": None,
+            }
+
+        # Fallback to heuristic
+        return self._interpret_fallback(**kwargs)
+
+    def _interpret_fallback(self, **kwargs) -> Dict[str, Any]:
+        """Heuristic fallback for _interpret."""
         scores = kwargs.get("system1_scores", {})
         stm = kwargs.get("stm_context", {})
         recent = stm.get("recent_scores", [])
@@ -370,10 +485,75 @@ class PersonaReasoner:
         return {"text": text, "score_change_reason": None, "persona_divergence": None}
 
     def _decide(self, **kwargs) -> Dict[str, Any]:
-        """Step 2: Decide — what judgment is needed at this point?
+        """Step 2: Decide — what judgment is needed at this point?"""
+        interpretation = kwargs.get("interpretation", {})
+        system1_scores = kwargs.get("system1_scores", {})
+        ltm_patterns = kwargs.get("ltm_patterns")
+        personality = kwargs.get("personality")
 
-        TODO: Implement LLM call with persona priorities and LTM patterns.
-        """
+        enhanced = self._get_enhanced_config(personality)
+        persona_name = getattr(personality, "name", "Unknown Persona")
+        persona_desc = getattr(personality, "description", "")
+
+        thresholds_text = ""
+        if enhanced and enhanced.thresholds:
+            thresholds_text = ", ".join(
+                f"{k}={v}" for k, v in enhanced.thresholds.items()
+            )
+
+        scores_text = "\n".join(
+            f"  - {dim}: {score:.1f}/10"
+            for dim, score in system1_scores.items()
+        )
+
+        ltm_text = self._format_ltm_patterns(ltm_patterns[:3] if ltm_patterns else None)
+
+        prompt = f"""You are making a routing decision for a specific persona at a street waypoint.
+
+Persona: {persona_name}
+Description: {persona_desc}
+Decision thresholds: {thresholds_text if thresholds_text else "default"}
+
+Waypoint interpretation:
+{interpretation.get("text", "(none)")}
+
+Current System 1 scores:
+{scores_text}
+
+Long-term memory patterns:
+{ltm_text}
+
+Make a judgment about this waypoint for the persona. Apply these criteria:
+- significance=high: if a core dimension for this persona changed sharply, OR average score < 3.5 or > 8.5
+- significance=medium: moderate changes or moderate scores
+- significance=low: no significant changes, scores within normal range
+- avoid=true: if a priority dimension for this persona falls below their acceptable threshold
+- Ensure the judgment reflects this persona's specific priorities (different personas judge the same environment differently)
+
+Respond ONLY with valid JSON matching this exact schema:
+{{
+  "significance": "high|medium|low",
+  "avoid": true or false,
+  "reason": "one sentence justification for the decision, or null",
+  "concerns": ["list of concerns for this persona"],
+  "opportunities": ["list of positive aspects for this persona"]
+}}"""
+
+        result = self._call_llm(prompt, max_tokens=512)
+        if result and "significance" in result:
+            return {
+                "significance": result.get("significance", "medium"),
+                "avoid": result.get("avoid", False),
+                "reason": result.get("reason"),
+                "concerns": result.get("concerns", []),
+                "opportunities": result.get("opportunities", []),
+            }
+
+        # Fallback to heuristic
+        return self._decide_fallback(**kwargs)
+
+    def _decide_fallback(self, **kwargs) -> Dict[str, Any]:
+        """Heuristic fallback for _decide."""
         scores = kwargs.get("system1_scores", {})
         avg = sum(scores.values()) / len(scores) if scores else 5.0
         avoid = avg < 4.0
@@ -382,6 +562,8 @@ class PersonaReasoner:
             "significance": significance,
             "avoid": avoid,
             "reason": "Low quality threshold exceeded" if avoid else None,
+            "concerns": [],
+            "opportunities": [],
         }
 
     def _plan(self, **kwargs) -> Dict[str, Any]:
@@ -392,10 +574,54 @@ class PersonaReasoner:
         return {"prediction": None, "alternative": None}
 
     def _report(self, **kwargs) -> Dict[str, Any]:
-        """Step 4: Report — generate final user-facing message.
+        """Step 4: Report — generate final user-facing message."""
+        waypoint_id = kwargs.get("waypoint_id")
+        interpretation = kwargs.get("interpretation", {})
+        decision = kwargs.get("decision", {})
+        personality = kwargs.get("personality")
 
-        TODO: Implement LLM call for human-readable recommendation.
-        """
+        persona_name = getattr(personality, "name", "Unknown Persona")
+        avoid = decision.get("avoid", False)
+        reason = decision.get("reason", "")
+        concerns = decision.get("concerns", [])
+
+        prompt = f"""You are generating a concise, actionable walking recommendation for a specific persona.
+
+Persona: {persona_name}
+Waypoint ID: {waypoint_id}
+
+Situation summary:
+{interpretation.get("text", "(none)")}
+
+Decision: {"AVOID this segment" if avoid else "This segment is acceptable"}
+Reason: {reason or "(none)"}
+Concerns: {", ".join(concerns) if concerns else "none"}
+
+Generate a single, specific sentence of walking advice from the persona's perspective.
+
+Examples:
+- parent_with_kids + avoid=true: "이 구간은 인도가 좁고 차량 통행이 많아 유아차 이동이 위험합니다."
+- runner + avoid=false: "평탄한 보도와 충분한 공간으로 페이스 유지에 적합한 구간입니다."
+
+Write in English. Be specific about what the persona should do or expect.
+
+Respond ONLY with valid JSON matching this exact schema:
+{{
+  "message": "one concrete action-oriented sentence for the persona",
+  "confidence": 0.0 to 1.0
+}}"""
+
+        result = self._call_llm(prompt, max_tokens=256)
+        if result and "message" in result:
+            confidence = float(result.get("confidence", 0.7))
+            confidence = max(0.0, min(1.0, confidence))
+            return {"message": result["message"], "confidence": confidence}
+
+        # Fallback to heuristic
+        return self._report_fallback(**kwargs)
+
+    def _report_fallback(self, **kwargs) -> Dict[str, Any]:
+        """Heuristic fallback for _report."""
         avoid = kwargs.get("decision", {}).get("avoid", False)
         msg = "Consider an alternative route." if avoid else "Conditions are acceptable."
         return {"message": msg, "confidence": 0.6}
