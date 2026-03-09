@@ -460,6 +460,18 @@ class CityWalkAgent(BaseAgent):
             self.logger.debug("System2 Reporter initialized")
         return self._reporter
 
+    def _get_prev_avg_score(self, stm_context: Optional[Dict]) -> float:
+        """STM context에서 직전 waypoint 평균 점수 반환. 없으면 0.0."""
+        if not stm_context:
+            return 0.0
+        recent = stm_context.get("recent_scores", [])
+        if not recent:
+            return 0.0
+        last = recent[-1]
+        if not last:
+            return 0.0
+        return sum(last.values()) / len(last)
+
     def _get_enhanced_persona(self):
         """Get EnhancedPersonalityConfig from current personality.
 
@@ -977,17 +989,35 @@ class CityWalkAgent(BaseAgent):
             self.continuous_analyzer.analysis_history.append(analysis)
             analysis_results.append(analysis)
 
-            # Step C: Feed into STM immediately so next waypoint gets context
-            is_first_waypoint = analysis.waypoint_id == 0
-            should_reason = analysis.visual_change_detected or is_first_waypoint
+            # Step C: PersonaReasoner.should_trigger()로 종합 판단
+            stm_context_for_trigger = self.memory_manager.stm.get_context()
 
-            # Determine trigger reason based on what caused the trigger
-            if is_first_waypoint:
-                trigger_reason = TriggerReason.EXCEPTIONAL_MOMENT
-            elif analysis.visual_change_detected:
-                trigger_reason = TriggerReason.VISUAL_CHANGE
-            else:
-                trigger_reason = TriggerReason.EXCEPTIONAL_MOMENT
+            # score_delta 계산
+            current_scores = analysis.persona_scores or analysis.scores
+            current_avg = sum(current_scores.values()) / len(current_scores) if current_scores else 5.0
+            prev_avg = self._get_prev_avg_score(stm_context_for_trigger)
+            score_delta = abs(current_avg - prev_avg)
+
+            # distance_from_last: 메타데이터에서 추출, 없으면 0
+            distance_from_last = float(meta.get("distance_from_prev_m", 0) or 0)
+
+            # PersonaReasoner.should_trigger()로 종합 판단
+            trigger_reason = self.persona_reasoner.should_trigger(
+                waypoint_id=i,
+                visual_change=visual_change_result.changed,
+                score_delta=score_delta,
+                distance_from_last=distance_from_last,
+                is_exceptional=(i == 0),
+            )
+            should_reason = trigger_reason is not None
+
+            self.logger.debug(
+                f"System 2 trigger decision for waypoint {i}",
+                trigger=trigger_reason.value if trigger_reason else None,
+                visual_change=visual_change_result.changed,
+                score_delta=round(score_delta, 2),
+                distance_from_last=distance_from_last,
+            )
 
             # Process waypoint through memory manager (attention gate + STM)
             context = memory_manager.process_waypoint(
@@ -1508,17 +1538,35 @@ class CityWalkAgent(BaseAgent):
             self.continuous_analyzer.analysis_history.append(analysis)
             analysis_results.append(analysis)
 
-            # Step C: Feed into STM immediately so next waypoint gets context
-            is_first_waypoint = analysis.waypoint_id == 0
-            should_reason = analysis.visual_change_detected or is_first_waypoint
+            # Step C: PersonaReasoner.should_trigger()로 종합 판단
+            stm_context_for_trigger = self.memory_manager.stm.get_context()
 
-            # Determine trigger reason based on what caused the trigger
-            if is_first_waypoint:
-                trigger_reason = TriggerReason.EXCEPTIONAL_MOMENT
-            elif analysis.visual_change_detected:
-                trigger_reason = TriggerReason.VISUAL_CHANGE
-            else:
-                trigger_reason = TriggerReason.EXCEPTIONAL_MOMENT
+            # score_delta 계산
+            current_scores = analysis.persona_scores or analysis.scores
+            current_avg = sum(current_scores.values()) / len(current_scores) if current_scores else 5.0
+            prev_avg = self._get_prev_avg_score(stm_context_for_trigger)
+            score_delta = abs(current_avg - prev_avg)
+
+            # distance_from_last: 메타데이터에서 추출, 없으면 0
+            distance_from_last = float(meta.get("distance_from_prev_m", 0) or 0)
+
+            # PersonaReasoner.should_trigger()로 종합 판단
+            trigger_reason = self.persona_reasoner.should_trigger(
+                waypoint_id=i,
+                visual_change=visual_change_result.changed,
+                score_delta=score_delta,
+                distance_from_last=distance_from_last,
+                is_exceptional=(i == 0),
+            )
+            should_reason = trigger_reason is not None
+
+            self.logger.debug(
+                f"System 2 trigger decision for waypoint {i}",
+                trigger=trigger_reason.value if trigger_reason else None,
+                visual_change=visual_change_result.changed,
+                score_delta=round(score_delta, 2),
+                distance_from_last=distance_from_last,
+            )
 
             # Process waypoint through memory manager (attention gate + STM)
             context = memory_manager.process_waypoint(
