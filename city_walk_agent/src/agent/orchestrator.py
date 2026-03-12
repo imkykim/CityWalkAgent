@@ -998,8 +998,18 @@ class CityWalkAgent(BaseAgent):
             prev_avg = self._get_prev_avg_score(stm_context_for_trigger)
             score_delta = abs(current_avg - prev_avg)
 
-            # distance_from_last: 메타데이터에서 추출, 없으면 0
-            distance_from_last = float(meta.get("distance_from_prev_m", 0) or 0)
+            # distance_from_last: lat/lon으로 직접 계산
+            if i == 0:
+                distance_from_last = 0.0
+            else:
+                prev_meta = metadata[i - 1]
+                try:
+                    distance_from_last = geodesic(
+                        (prev_meta.get("lat", 0), prev_meta.get("lon", 0)),
+                        (meta.get("lat", 0), meta.get("lon", 0)),
+                    ).meters
+                except Exception:
+                    distance_from_last = 0.0
 
             # PersonaReasoner.should_trigger()로 종합 판단
             trigger_reason = self.persona_reasoner.should_trigger(
@@ -1060,8 +1070,13 @@ class CityWalkAgent(BaseAgent):
                     # when System 2 is complete.
 
                     self.logger.info(
-                        f"WP {analysis.waypoint_id:>3}   S2 {context['trigger_reason'].value}"
-                        f"  significance={reasoning_result.significance}"
+                        f"WP {analysis.waypoint_id:>3}   S2 {context['trigger_reason'].value:<20}"
+                        f" significance={reasoning_result.significance}"
+                        f" avoid={reasoning_result.avoid_recommendation}"
+                        f" | {reasoning_result.interpretation[:80]}"
+                    )
+                    self.logger.info(
+                        f"WP {analysis.waypoint_id:>3}   S2 rec: {reasoning_result.recommendation}"
                     )
 
                 except Exception as e:
@@ -1485,10 +1500,10 @@ class CityWalkAgent(BaseAgent):
         route_length_km /= 1000.0
 
         enhanced_persona = self._get_enhanced_persona()
-        dual_eval = enhanced_persona is not None
+        persona_name = getattr(enhanced_persona, 'name', 'objective') if enhanced_persona is not None else 'objective'
         self.logger.info(
             f"Route: {len(resolved_waypoints)} waypoints, {route_length_km:.2f} km"
-            f" | persona={'dual' if dual_eval else 'objective-only'}"
+            f" | persona={persona_name}"
         )
 
         # ====================================================================
@@ -1547,8 +1562,18 @@ class CityWalkAgent(BaseAgent):
             prev_avg = self._get_prev_avg_score(stm_context_for_trigger)
             score_delta = abs(current_avg - prev_avg)
 
-            # distance_from_last: 메타데이터에서 추출, 없으면 0
-            distance_from_last = float(meta.get("distance_from_prev_m", 0) or 0)
+            # distance_from_last: lat/lon으로 직접 계산
+            if i == 0:
+                distance_from_last = 0.0
+            else:
+                prev_meta = waypoint_metadata[i - 1]
+                try:
+                    distance_from_last = geodesic(
+                        (prev_meta.get("lat", 0), prev_meta.get("lon", 0)),
+                        (meta.get("lat", 0), meta.get("lon", 0)),
+                    ).meters
+                except Exception:
+                    distance_from_last = 0.0
 
             # PersonaReasoner.should_trigger()로 종합 판단
             trigger_reason = self.persona_reasoner.should_trigger(
@@ -1609,8 +1634,13 @@ class CityWalkAgent(BaseAgent):
                     # when System 2 is complete.
 
                     self.logger.info(
-                        f"WP {analysis.waypoint_id:>3}   S2 {context['trigger_reason'].value}"
-                        f"  significance={reasoning_result.significance}"
+                        f"WP {analysis.waypoint_id:>3}   S2 {context['trigger_reason'].value:<20}"
+                        f" significance={reasoning_result.significance}"
+                        f" avoid={reasoning_result.avoid_recommendation}"
+                        f" | {reasoning_result.interpretation[:80]}"
+                    )
+                    self.logger.info(
+                        f"WP {analysis.waypoint_id:>3}   S2 rec: {reasoning_result.recommendation}"
                     )
 
                 except Exception as e:

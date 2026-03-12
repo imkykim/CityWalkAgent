@@ -117,8 +117,10 @@ Respond ONLY with valid JSON matching this exact schema:
   "opportunities": ["list of positive aspects for this persona"]
 }}"""
 
+        self.logger.debug(f"[Decider] waypoint={waypoint_id} calling LLM")
         result = call_llm(prompt, max_tokens=512)
         if result and "significance" in result:
+            self.logger.debug(f"[Decider] LLM ok | significance={result.get('significance')} avoid={result.get('avoid')}")
             return {
                 "significance": result.get("significance", "medium"),
                 "avoid": result.get("avoid", False),
@@ -127,6 +129,7 @@ Respond ONLY with valid JSON matching this exact schema:
                 "opportunities": result.get("opportunities", []),
             }
 
+        self.logger.warning(f"[Decider] LLM failed → fallback heuristic")
         return self._decide_fallback(system1_scores=system1_scores)
 
     def _decide_fallback(self, system1_scores: Dict[str, float]) -> Dict[str, Any]:

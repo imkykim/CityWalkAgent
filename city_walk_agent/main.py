@@ -29,7 +29,7 @@ for p in (PROJECT_ROOT, SRC_DIR):
 from src.core import DEFAULT_FRAMEWORK_ID, settings
 from src.agent.orchestrator import CityWalkAgent
 from src.utils.visualization import RouteVisualizer
-from src.utils.logging import get_logger
+from src.utils.logging import get_logger, set_global_log_level
 
 logger = get_logger(__name__)
 
@@ -291,6 +291,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--personality", default="balanced",
                        help="Persona preset (homebuyer, runner, photographer, …)")
     p_run.add_argument("--framework-id", default=DEFAULT_FRAMEWORK_ID)
+    p_run.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        type=str.upper,
+        help="Logging verbosity",
+    )
     p_run.add_argument("--output-dir", default="outputs/run", type=str)
     p_run.add_argument("--interval", type=int, default=20, help="Waypoint interval in metres")
     p_run.add_argument("--phash-threshold", type=int, default=30)
@@ -304,6 +311,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_col.add_argument("--start",  type=parse_coord, required=True, metavar="LAT,LON")
     p_col.add_argument("--end",    type=parse_coord, required=True, metavar="LAT,LON")
     p_col.add_argument("--output", required=True, help="Output directory for images")
+    p_col.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        type=str.upper,
+        help="Logging verbosity",
+    )
     p_col.add_argument("--interval", type=int, default=20, help="Waypoint interval in metres")
     p_col.add_argument("--route-name", type=str, default=None)
 
@@ -313,6 +327,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    set_global_log_level(args.log_level)
 
     if args.command == "run":
         cmd_run(args)

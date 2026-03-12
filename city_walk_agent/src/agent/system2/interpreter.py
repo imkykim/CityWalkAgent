@@ -128,14 +128,17 @@ Respond ONLY with valid JSON matching this exact schema:
   "key_concern": "the single most important concern for this persona at this waypoint, or null"
 }}"""
 
+        self.logger.debug(f"[Interpreter] waypoint={waypoint_id} persona={getattr(personality, 'name', '?')} calling LLM")
         result = call_llm(prompt, max_tokens=512)
         if result and "text" in result:
+            self.logger.debug(f"[Interpreter] LLM ok | text={result.get('text','')[:60]}")
             return {
                 "text": result.get("text", ""),
                 "score_change_reason": result.get("score_change_reason"),
                 "persona_divergence": None,
             }
 
+        self.logger.warning(f"[Interpreter] LLM failed → fallback heuristic")
         return self._interpret_fallback(
             waypoint_id=waypoint_id,
             system1_scores=system1_scores,

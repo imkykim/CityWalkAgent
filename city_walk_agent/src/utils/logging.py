@@ -4,7 +4,7 @@ Structured logging utilities for CityWalkAgent
 
 import logging
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 from pathlib import Path
 
 
@@ -123,6 +123,34 @@ class StructuredFormatter(logging.Formatter):
 
 # Named logger cache
 _loggers: Dict[str, StructuredLogger] = {}
+_default_log_level: int = logging.INFO
+
+
+def _resolve_log_level(level: Union[str, int]) -> int:
+    """Resolve a string/int log level to logging module integer constant."""
+    if isinstance(level, int):
+        return level
+
+    level_name = level.strip().upper()
+    resolved = getattr(logging, level_name, None)
+    if not isinstance(resolved, int):
+        raise ValueError(
+            f"Invalid log level: {level}. "
+            "Use one of DEBUG, INFO, WARNING, ERROR, CRITICAL."
+        )
+    return resolved
+
+
+def set_global_log_level(level: Union[str, int]) -> None:
+    """Set default log level and update all existing structured loggers."""
+    global _default_log_level
+    resolved_level = _resolve_log_level(level)
+    _default_log_level = resolved_level
+
+    for structured_logger in _loggers.values():
+        structured_logger.logger.setLevel(resolved_level)
+        for handler in structured_logger.logger.handlers:
+            handler.setLevel(resolved_level)
 
 
 def get_logger(name: str = "city_walk_agent") -> StructuredLogger:
@@ -136,6 +164,6 @@ def get_logger(name: str = "city_walk_agent") -> StructuredLogger:
         StructuredLogger instance
     """
     if name not in _loggers:
-        _loggers[name] = StructuredLogger(name)
+        _loggers[name] = StructuredLogger(name, level=_default_log_level)
 
     return _loggers[name]

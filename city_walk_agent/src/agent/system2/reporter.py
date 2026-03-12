@@ -116,12 +116,15 @@ Respond ONLY with valid JSON matching this exact schema:
   "confidence": 0.0 to 1.0
 }}"""
 
+        self.logger.debug(f"[Reporter] waypoint={waypoint_id} calling LLM")
         result = call_llm(prompt, max_tokens=256)
         if result and "message" in result:
+            self.logger.debug(f"[Reporter] LLM ok | message={result.get('message','')[:60]}")
             confidence = float(result.get("confidence", 0.7))
             confidence = max(0.0, min(1.0, confidence))
             return {"message": result["message"], "confidence": confidence}
 
+        self.logger.warning(f"[Reporter] LLM failed → fallback heuristic")
         return self._report_fallback(avoid=avoid)
 
     def _report_fallback(self, avoid: bool) -> Dict[str, Any]:

@@ -207,46 +207,31 @@ class ContinuousAnalyzer:
             if use_multi_image:
                 self.multi_image_evaluations += 1
 
-            # Single call returns both objective and persona results
+            # Single call returns persona evaluation results
             # Note: Multi-image evaluation is controlled by previous_context containing image info
-            dual_results = self.evaluator.evaluate_image(
+            persona_results = self.evaluator.evaluate_image(
                 str(image_path),
                 previous_context=previous_context,
                 persona=self.persona,
-                evaluation_mode="dual"
+                evaluation_mode="persona"
             )
 
-            # Extract objective and persona scores from DualEvaluationResult objects
-            objective_scores = {}
-            objective_reasoning = {}
+            # Extract persona scores from result dicts
             persona_scores = {}
             persona_reasoning = {}
 
-            for result in dual_results:
-                # result is a DualEvaluationResult object
-                objective_scores[result.dimension_id] = result.objective_score
-                objective_reasoning[result.dimension_id] = result.objective_reasoning
-                persona_scores[result.dimension_id] = result.persona_score
-                persona_reasoning[result.dimension_id] = result.persona_reasoning
+            for result in persona_results:
+                persona_scores[result["dimension_id"]] = result["score"]
+                persona_reasoning[result["dimension_id"]] = result["reasoning"]
 
-            # Compute significant persona vs objective differences
-            score_differences = {
-                dim: round(persona_scores[dim] - objective_scores[dim], 2)
-                for dim in objective_scores
-            }
-            significant_diffs = {
-                dim: diff for dim, diff in score_differences.items()
-                if abs(diff) >= 0.5
-            }
+            # persona-only 모드: objective 필드는 비움 (구조만 유지)
+            objective_scores = {}
+            objective_reasoning = {}
 
             # One-line summary per waypoint
             img_mode = "MULTI" if use_multi_image else "SINGLE"
             ctx_tag = "▲" if use_multi_image else " "
-            diff_str = (
-                "  persona diff: " + " ".join(f"{k}={v:+.1f}" for k, v in significant_diffs.items())
-                if significant_diffs else ""
-            )
-            logger.info(f"WP {waypoint_id:>3} {ctx_tag} {img_mode:<5}{diff_str}")
+            logger.info(f"WP {waypoint_id:>3} {ctx_tag} {img_mode:<5}")
 
         else:
             # No persona - run objective evaluation only
@@ -288,11 +273,10 @@ class ContinuousAnalyzer:
             phash_distance=phash_distance,
         )
 
-        avg_obj = f"{sum(objective_scores.values()) / len(objective_scores):.2f}" if objective_scores else "N/A"
         avg_per = f"{sum(persona_scores.values()) / len(persona_scores):.2f}" if persona_scores else "N/A"
         logger.debug(
             f"Waypoint {waypoint_id} analyzed - "
-            f"avg_objective={avg_obj}, avg_persona={avg_per}, "
+            f"avg_persona={avg_per}, "
             f"visual_change={visual_change_detected}"
         )
 
