@@ -85,7 +85,7 @@ class Decider:
             for dim_id in dimension_ids
         )
 
-        ltm_text = _format_ltm_patterns(ltm_patterns[:3] if ltm_patterns else None)
+        ltm_text = _format_ltm_patterns(ltm_patterns if ltm_patterns else None)
 
         key_concern_text = interpretation.get("key_concern") or "(none identified)"
 
@@ -150,14 +150,63 @@ Respond ONLY with valid JSON matching this exact schema:
         }
 
 
-def _format_ltm_patterns(patterns: Optional[List[Dict[str, Any]]]) -> str:
-    """Format long-term memory patterns into human-readable summary."""
-    if not patterns:
-        return "No relevant past patterns found"
-    lines = ["**Relevant patterns from past routes:**"]
-    for pattern in patterns:
-        pattern_name = pattern.get("pattern_type", "unknown")
-        description = pattern.get("description", "")
-        frequency = pattern.get("frequency", 0)
-        lines.append(f"- **{pattern_name}** (seen {frequency}x): {description}")
-    return "\n".join(lines)
+def _format_ltm_patterns(ltm_patterns) -> str:
+    """Format route context for Decider prompt."""
+    if not ltm_patterns:
+        return "No route context available (first System 2 trigger)."
+
+    # Handle new dict format {route_stats, reasoning_episodes}
+    if isinstance(ltm_patterns, dict):
+        lines = []
+
+        stats = ltm_patterns.get("route_stats", {})
+        if stats:
+            n = stats.get("waypoints_so_far", 0)
+            trend = stats.get("overall_trend", "unknown")
+            worst = stats.get("worst_dimension", "N/A")
+            traj = stats.get("current_trajectory", 0.0)
+            barriers = stats.get("barrier_segments", [])
+            per_dim = stats.get("per_dimension_avg", {})
+
+            traj_str = f"+{traj:.1f}" if traj > 0 else f"{traj:.1f}"
+            lines.append(
+                f"Route so far ({n} waypoints): trend={trend.upper()}, "
+                f"trajectory={traj_str}, worst={worst}"
+            )
+            if per_dim:
+                dim_str = ", ".join(
+                    f"{k}={v:.1f}" for k, v in per_dim.items()
+                )
+                lines.append(f"  Dimension averages: {dim_str}")
+            if barriers:
+                seg_str = ", ".join(f"WP{s}-{e}" for s, e in barriers)
+                lines.append(f"  ⚠ Barrier segments: {seg_str}")
+
+        episodes = ltm_patterns.get("reasoning_episodes", [])
+        if episodes:
+            lines.append(f"Prior System 2 episodes ({len(episodes)}):")
+            for ep in episodes[-5:]:  # most recent 5
+                wp = ep.get("waypoint_id", "?")
+                sig = ep.get("significance", "?")
+                avoid = ep.get("avoid", False)
+                text = (ep.get("interpretation") or "")[:80]
+                concern = ep.get("key_concern") or ""
+                avoid_str = " ⚠AVOID" if avoid else ""
+                lines.append(f"  WP{wp} [{sig.upper()}{avoid_str}]: {text}")
+                if concern:
+                    lines.append(f"    concern: {concern}")
+        else:
+            lines.append("No prior System 2 episodes in this route.")
+
+        return "\n".join(lines)
+
+    # Legacy list format fallback
+    if isinstance(ltm_patterns, list):
+        if not ltm_patterns:
+            return "No prior waypoint reasoning in this route."
+        lines = ["Prior route patterns:"]
+        for p in ltm_patterns[:5]:
+            lines.append(f"  - {p.get('pattern_type', '?')}: {p.get('description', '')}")
+        return "\n".join(lines)
+
+    return "No route context available."

@@ -113,6 +113,12 @@ class MemoryManager:
         # Track System 2 results for sequential context
         self._system2_results: Dict[int, Any] = {}
 
+        # Within-route System 2 accumulation (reset each route)
+        self._route_reasoning_log: List[Dict[str, Any]] = []
+
+        # Full score history for all waypoints this route (for trend computation)
+        self._route_score_history: List[Dict[str, Any]] = []
+
         self.logger = get_logger(f"{__name__}.{agent_id}")
         self.logger.debug("MemoryManager initialized", agent_id=agent_id)
 
@@ -338,6 +344,95 @@ class MemoryManager:
             return 5.0  # Standard
 
     # ========================================================================
+    # Route Statistics
+    # ========================================================================
+
+    def _compute_route_stats(self) -> Dict[str, Any]:
+        """Compute aggregate statistics from full route score history."""
+        history = self._route_score_history
+        if not history:
+            return {}
+
+        n = len(history)
+        all_scores = [h["scores"] for h in history]
+        dimensions = list(all_scores[0].keys()) if all_scores else []
+
+        # Per-waypoint average scores
+        wp_avgs = [
+            sum(s.values()) / len(s) for s in all_scores if s
+        ]
+
+        # Overall trend: compare first half vs second half
+        mid = max(1, n // 2)
+        first_half_avg = sum(wp_avgs[:mid]) / mid
+        second_half_avg = sum(wp_avgs[mid:]) / max(1, n - mid)
+        diff = second_half_avg - first_half_avg
+        if abs(diff) < 0.3:
+            overall_trend = "stable"
+        elif diff > 0:
+            overall_trend = "improving"
+        else:
+            overall_trend = "declining"
+
+        # Check volatility (override trend if highly volatile)
+        if n >= 3:
+            import statistics as stats_lib
+            try:
+                vol = stats_lib.stdev(wp_avgs)
+                if vol > 1.5:
+                    overall_trend = "volatile"
+            except Exception:
+                vol = 0.0
+        else:
+            vol = 0.0
+
+        # Per-dimension averages
+        per_dim_avg = {}
+        for dim in dimensions:
+            dim_scores = [s.get(dim, 0.0) for s in all_scores]
+            per_dim_avg[dim] = round(sum(dim_scores) / len(dim_scores), 2)
+
+        worst_dim = min(per_dim_avg, key=per_dim_avg.get) if per_dim_avg else None
+
+        # Current trajectory: recent 5 avg minus prior 5 avg
+        if n >= 10:
+            recent_avg = sum(wp_avgs[-5:]) / 5
+            prior_avg = sum(wp_avgs[-10:-5]) / 5
+            current_trajectory = round(recent_avg - prior_avg, 2)
+        elif n >= 2:
+            current_trajectory = round(wp_avgs[-1] - wp_avgs[0], 2)
+        else:
+            current_trajectory = 0.0
+
+        # Barrier segments: 3+ consecutive waypoints with avg < 4.5
+        barrier_segments = []
+        seg_start = None
+        for i, avg in enumerate(wp_avgs):
+            wp_id = history[i]["waypoint_id"]
+            if avg < 4.5:
+                if seg_start is None:
+                    seg_start = wp_id
+            else:
+                if seg_start is not None and i >= 1:
+                    end_id = history[i - 1]["waypoint_id"]
+                    if end_id != seg_start:  # at least 2 waypoints
+                        barrier_segments.append((seg_start, end_id))
+                seg_start = None
+        # Close open segment
+        if seg_start is not None:
+            barrier_segments.append((seg_start, history[-1]["waypoint_id"]))
+
+        return {
+            "waypoints_so_far": n,
+            "overall_trend": overall_trend,
+            "per_dimension_avg": per_dim_avg,
+            "worst_dimension": worst_dim,
+            "barrier_segments": barrier_segments,
+            "current_trajectory": current_trajectory,
+            "score_volatility": round(vol, 2),
+        }
+
+    # ========================================================================
     # Context Preparation for System 2
     # ========================================================================
 
@@ -425,7 +520,10 @@ class MemoryManager:
             },
             "stm_context": stm_context,
             "recent_context": recent_context,
-            "ltm_patterns": past_experience,
+            "ltm_patterns": {
+                "route_stats": self._compute_route_stats(),
+                "reasoning_episodes": list(self._route_reasoning_log),
+            },
             "personality": personality_info,
             "agent_profile": self.profile,
             "current_status": self.status,
@@ -509,6 +607,11 @@ class MemoryManager:
             timestamp=waypoint_analysis.timestamp,
         )
 
+        self._route_score_history.append({
+            "waypoint_id": waypoint_analysis.waypoint_id,
+            "scores": dict(persona_scores),
+        })
+
         self.logger.debug(
             "Waypoint added to STM",
             waypoint_id=waypoint_analysis.waypoint_id,
@@ -541,10 +644,26 @@ class MemoryManager:
         """Update memory state with System 2 reasoning output."""
         self._system2_results[waypoint_id] = reasoning_result
 
+        self._route_reasoning_log.append({
+            "waypoint_id": waypoint_id,
+            "significance": getattr(reasoning_result, "significance", "medium"),
+            "avoid": getattr(reasoning_result, "avoid_recommendation", False),
+            "interpretation": getattr(reasoning_result, "interpretation", ""),
+            "key_concern": getattr(reasoning_result, "key_concern", None),
+            "score_change_reason": getattr(reasoning_result, "score_change_reason", None),
+            "scores": getattr(reasoning_result, "system1_scores", {}),
+            "trigger_reason": getattr(reasoning_result, "trigger_reason", None),
+        })
+
         self.logger.debug(
             "Updated memory with System 2 result",
             waypoint_id=waypoint_id,
             significance=getattr(reasoning_result, "significance", "unknown"),
+        )
+        self.logger.debug(
+            "Route reasoning log updated",
+            waypoint_id=waypoint_id,
+            log_size=len(self._route_reasoning_log),
         )
 
     # ========================================================================
@@ -647,8 +766,11 @@ class MemoryManager:
             all_analyses=all_analyses,
         )
 
-        # Step 5: Clear STM for next route
+        # Step 5: Clear STM and route logs for next route
         self.stm.clear()
+        self._route_reasoning_log = []
+        self._route_score_history = []
+        self.logger.debug("Route reasoning log and score history cleared for next route")
 
         # Log statistics
         self.logger.info(

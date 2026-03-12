@@ -676,6 +676,143 @@ def test_statistics_reset_after_route_completion(configured_memory_manager):
 
 
 # ============================================================================
+# Test 10: Within-route LTM accumulation
+# ============================================================================
+
+def test_route_reasoning_log_accumulates(memory_manager):
+    """Test _route_reasoning_log accumulates System 2 results within a route."""
+    class FakeResult:
+        waypoint_id = 3
+        significance = "high"
+        avoid_recommendation = True
+        interpretation = "Safety issue detected"
+        key_concern = "Narrow sidewalk"
+        score_change_reason = "Safety dropped"
+        system1_scores = {"safety": 3.0}
+        trigger_reason = None
+
+    memory_manager.update_with_system2_result(3, FakeResult())
+    assert len(memory_manager._route_reasoning_log) == 1
+    entry = memory_manager._route_reasoning_log[0]
+    assert entry["waypoint_id"] == 3
+    assert entry["significance"] == "high"
+    assert entry["avoid"] is True
+    assert entry["key_concern"] == "Narrow sidewalk"
+
+
+def test_prepare_context_ltm_patterns_is_dict(configured_memory_manager):
+    """Test prepare_context_for_reasoning returns ltm_patterns as a dict."""
+    from src.agent.system2.persona_reasoner import TriggerReason
+
+    waypoint = create_waypoint_analysis(
+        waypoint_id=1,
+        scores={"safety": 7.0, "comfort": 7.0},
+        visual_change=True,
+    )
+    context = configured_memory_manager.prepare_context_for_reasoning(
+        waypoint, trigger_reason=TriggerReason.VISUAL_CHANGE
+    )
+
+    ltm = context["ltm_patterns"]
+    assert isinstance(ltm, dict)
+    assert "route_stats" in ltm
+    assert "reasoning_episodes" in ltm
+
+
+def test_route_reasoning_log_cleared_after_complete_route(configured_memory_manager):
+    """Test _route_reasoning_log is reset after complete_route."""
+    class FakeResult:
+        significance = "medium"
+        avoid_recommendation = False
+        interpretation = "Normal"
+        key_concern = None
+        score_change_reason = None
+        system1_scores = {}
+        trigger_reason = None
+
+    configured_memory_manager.update_with_system2_result(1, FakeResult())
+    assert len(configured_memory_manager._route_reasoning_log) == 1
+
+    configured_memory_manager.complete_route({"route_id": "r1", "length_km": 1.0}, [])
+    assert len(configured_memory_manager._route_reasoning_log) == 0
+
+
+# ============================================================================
+# Test 11: Route score history and statistics
+# ============================================================================
+
+def test_route_score_history_accumulates(configured_memory_manager):
+    """Test _route_score_history accumulates for every waypoint passing attention gate."""
+    for i in range(3):
+        wp = create_waypoint_analysis(
+            waypoint_id=i,
+            scores={"safety": 7.0, "comfort": 6.0},
+            visual_change=True,
+        )
+        configured_memory_manager.process_waypoint(wp, triggered=False)
+
+    assert len(configured_memory_manager._route_score_history) == 3
+
+
+def test_route_score_history_cleared_after_complete_route(configured_memory_manager):
+    """Test _route_score_history is reset after complete_route."""
+    for i in range(3):
+        wp = create_waypoint_analysis(
+            waypoint_id=i,
+            scores={"safety": 7.0},
+            visual_change=True,
+        )
+        configured_memory_manager.process_waypoint(wp, triggered=False)
+
+    configured_memory_manager.complete_route({"route_id": "r1", "length_km": 1.0}, [])
+    assert len(configured_memory_manager._route_score_history) == 0
+
+
+def test_compute_route_stats_empty(memory_manager):
+    """Test _compute_route_stats returns empty dict when no history."""
+    assert memory_manager._compute_route_stats() == {}
+
+
+def test_compute_route_stats_trend(memory_manager):
+    """Test _compute_route_stats computes trend correctly."""
+    # Declining scores
+    for i in range(10):
+        memory_manager._route_score_history.append({
+            "waypoint_id": i,
+            "scores": {"safety": 8.0 - i * 0.5},
+        })
+    stats = memory_manager._compute_route_stats()
+    assert stats["overall_trend"] in ("declining", "volatile", "stable")
+    assert stats["waypoints_so_far"] == 10
+    assert "per_dimension_avg" in stats
+    assert "worst_dimension" in stats
+    assert "barrier_segments" in stats
+    assert "current_trajectory" in stats
+
+
+def test_compute_route_stats_barrier_segments(memory_manager):
+    """Test barrier segment detection: WP 3-6 below 4.5 avg."""
+    scores_by_wp = {
+        0: 7.0, 1: 7.0, 2: 7.0,
+        3: 3.0, 4: 3.5, 5: 4.0, 6: 3.8,
+        7: 7.0, 8: 7.0, 9: 7.0,
+        10: 7.0, 11: 7.0, 12: 7.0,
+        13: 7.0, 14: 7.0,
+    }
+    for wp_id, score in scores_by_wp.items():
+        memory_manager._route_score_history.append({
+            "waypoint_id": wp_id,
+            "scores": {"safety": score},
+        })
+    stats = memory_manager._compute_route_stats()
+    barriers = stats["barrier_segments"]
+    assert len(barriers) >= 1
+    seg_start, seg_end = barriers[0]
+    assert seg_start == 3
+    assert seg_end == 6
+
+
+# ============================================================================
 # Run Tests
 # ============================================================================
 
