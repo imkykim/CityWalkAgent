@@ -5,36 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CityWalk</title>
 
-    <link
-      rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"
-    />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 
     <style>
       :root {
-        --accent: #0071e3;
-        --green: #30d158;
-        --red: #ff453a;
-        --orange: #ff9f0a;
-        --border: #e5e5ea;
-        --bg: #ffffff;
+        --accent:  #0071e3;
+        --green:   #30d158;
+        --red:     #ff453a;
+        --orange:  #ff9f0a;
+        --border:  #e5e5ea;
+        --bg:      #ffffff;
         --surface: #f5f5f7;
-        --text-1: #1d1d1f;
-        --text-2: #6e6e73;
-        --text-3: #aeaeb2;
+        --text-1:  #1d1d1f;
+        --text-2:  #6e6e73;
+        --text-3:  #aeaeb2;
       }
 
-      * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
 
       body {
-        font-family:
-          -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
-          sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
         background: var(--bg);
         height: 100vh;
         display: flex;
@@ -50,629 +41,506 @@
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 0 20px;
-        background: rgba(255, 255, 255, 0.9);
+        padding: 0 16px;
+        background: rgba(255,255,255,0.92);
         backdrop-filter: blur(20px);
         border-bottom: 1px solid var(--border);
         flex-shrink: 0;
         z-index: 200;
       }
-      #topbar h1 {
-        font-size: 14px;
-        font-weight: 600;
-        letter-spacing: -0.2px;
-        margin-right: 4px;
-      }
-      .div {
-        width: 1px;
-        height: 16px;
-        background: var(--border);
-        margin: 0 2px;
-      }
+      #topbar h1 { font-size: 14px; font-weight: 600; letter-spacing: -0.2px; margin-right: 2px; }
+      .divider { width: 1px; height: 16px; background: var(--border); margin: 0 2px; flex-shrink: 0; }
 
       .pill {
-        padding: 4px 12px;
-        border: none;
-        border-radius: 20px;
-        cursor: pointer;
-        font-size: 12px;
-        font-weight: 500;
-        background: var(--surface);
-        color: var(--text-2);
-        transition:
-          background 0.15s,
-          color 0.15s;
-      }
-      .pill:hover {
-        background: #e5e5ea;
-        color: var(--text-1);
-      }
-      .pill.active {
-        background: var(--accent);
-        color: #fff;
-      }
-
-      #run-btn {
-        display: flex;
-        align-items: center;
-        gap: 5px;
-        padding: 4px 13px;
-        border: none;
-        border-radius: 20px;
-        cursor: pointer;
-        font-size: 12px;
-        font-weight: 600;
-        background: var(--green);
-        color: #fff;
-        transition: opacity 0.15s;
-      }
-      #run-btn:hover {
-        opacity: 0.85;
-      }
-      #run-btn.running {
-        background: var(--red);
-      }
-
-      #step-btn {
-        padding: 4px 12px;
-        border: 1px solid var(--border);
-        border-radius: 20px;
-        cursor: pointer;
-        font-size: 12px;
-        font-weight: 500;
-        background: transparent;
-        color: var(--text-2);
-        transition: background 0.15s;
-      }
-      #step-btn:hover:not(:disabled) {
-        background: var(--surface);
-        color: var(--text-1);
-      }
-      #step-btn:disabled {
-        opacity: 0.35;
-        cursor: not-allowed;
-      }
-
-      #speed-wrap {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        font-size: 11px;
-        color: var(--text-3);
-      }
-      #speed-select {
-        background: var(--surface);
-        color: var(--text-2);
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 3px 5px;
-        font-size: 11px;
-        cursor: pointer;
-      }
-
-      #wp-counter {
-        font-size: 11px;
-        font-weight: 600;
-        color: var(--accent);
-      }
-      #status-msg {
-        margin-left: auto;
-        font-size: 11px;
-        color: var(--text-3);
-        max-width: 300px;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        padding: 4px 11px;
+        border: none; border-radius: 20px; cursor: pointer;
+        font-size: 12px; font-weight: 500;
+        background: var(--surface); color: var(--text-2);
+        transition: background .15s, color .15s;
         white-space: nowrap;
       }
+      .pill:hover { background: #e5e5ea; color: var(--text-1); }
+      .pill.active { background: var(--accent); color: #fff; }
 
-      /* log toggle */
-      #log-toggle {
-        padding: 4px 10px;
-        border: 1px solid var(--border);
-        border-radius: 20px;
-        cursor: pointer;
-        font-size: 11px;
-        background: transparent;
-        color: var(--text-3);
+      #status-msg {
+        margin-left: auto;
+        font-size: 11px; color: var(--text-3);
+        max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
-      #log-toggle:hover {
-        background: var(--surface);
-        color: var(--text-2);
+      #nav-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--text-3); flex-shrink: 0;
+        transition: background .3s;
       }
-      #log-toggle.active {
-        background: var(--surface);
-        color: var(--accent);
-        border-color: var(--accent);
-      }
+      #nav-dot.ok  { background: var(--green); }
+      #nav-dot.err { background: var(--red); }
 
-      /* ── main ── */
+      /* ── main viewport (sv-pane + map side by side) ── */
       #main {
         display: flex;
         flex: 1;
         overflow: hidden;
+        min-height: 0;
       }
 
-      /* ── LEFT: Street View ── */
-      #sv-col {
-        width: 60%;
+      /* sv-pane */
+      #sv-pane {
+        width: 65%;
         min-width: 200px;
         max-width: 85%;
         flex-shrink: 0;
-        display: flex;
-        flex-direction: column;
-        position: relative;
-      }
-
-      /* ── vertical drag handle (left ↔ right) ── */
-      #drag-h {
-        width: 5px;
-        flex-shrink: 0;
-        background: var(--border);
-        cursor: col-resize;
-        transition: background 0.15s;
-        z-index: 50;
-        position: relative;
-      }
-      #drag-h:hover,
-      #drag-h.dragging {
-        background: var(--accent);
-      }
-      #drag-h::after {
-        content: "";
-        position: absolute;
-        inset: 0 -4px; /* wider hit area */
-      }
-
-      #sv-wrap {
-        flex: 1;
         position: relative;
         background: var(--surface);
         overflow: hidden;
       }
       #sv-image {
-        width: 100%;
-        height: 100%;
+        width: 100%; height: 100%;
         object-fit: cover;
         display: none;
-        transition: opacity 0.25s;
+        transition: opacity .25s;
       }
       #sv-hint {
-        position: absolute;
-        inset: 0;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        color: var(--text-3);
+        position: absolute; inset: 0;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 8px; color: var(--text-3);
       }
-      #sv-hint .icon {
-        font-size: 24px;
-        opacity: 0.4;
-      }
-      #sv-hint p {
-        font-size: 13px;
-      }
+      #sv-hint .icon { font-size: 28px; opacity: .4; }
+      #sv-hint p { font-size: 13px; }
 
-      /* overlaid badge top-left */
       #sv-badge {
-        position: absolute;
-        top: 12px;
-        left: 12px;
-        z-index: 10;
-        background: rgba(255, 255, 255, 0.88);
-        backdrop-filter: blur(8px);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 3px 9px;
-        font-size: 11px;
-        font-weight: 600;
-        color: var(--text-2);
-        display: none;
+        position: absolute; top: 12px; left: 12px; z-index: 10;
+        background: rgba(255,255,255,.88); backdrop-filter: blur(8px);
+        border: 1px solid var(--border); border-radius: 8px;
+        padding: 3px 9px; font-size: 11px; font-weight: 600;
+        color: var(--text-2); display: none;
       }
-
-      /* analysis state badge top-right */
       #analysis-badge {
+        position: absolute; top: 12px; right: 12px; z-index: 10;
+        background: rgba(255,255,255,.88); backdrop-filter: blur(8px);
+        border: 1px solid var(--border); border-radius: 8px;
+        padding: 3px 9px; font-size: 11px; font-weight: 500;
+        color: var(--text-2); display: none; align-items: center; gap: 5px;
+      }
+      .mini-spin {
+        width: 10px; height: 10px;
+        border: 1.5px solid var(--border); border-top-color: var(--accent);
+        border-radius: 50%; animation: spin .7s linear infinite;
+      }
+
+      /* Hide Google's hover circle (pegman cursor ring) but keep link arrows */
+      #sv-wrap .gm-style-mot { display: none !important; }
+
+      /* VLM heading arrow overlay — bottom-center of panorama */
+      #vlm-heading-overlay {
         position: absolute;
-        top: 12px;
-        right: 12px;
-        z-index: 10;
-        background: rgba(255, 255, 255, 0.88);
-        backdrop-filter: blur(8px);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 3px 9px;
-        font-size: 11px;
-        font-weight: 500;
-        color: var(--text-2);
-        display: none;
-        align-items: center;
-        gap: 5px;
+        bottom: 20px; left: 50%; transform: translateX(-50%);
+        z-index: 20; pointer-events: none;
+        display: none; flex-direction: column;
+        align-items: center; gap: 4px;
       }
-      #analysis-badge .mini-spin {
-        width: 10px;
-        height: 10px;
-        border: 1.5px solid var(--border);
-        border-top-color: var(--accent);
-        border-radius: 50%;
-        animation: spin 0.7s linear infinite;
+      #vlm-heading-ring {
+        width: 52px; height: 52px; border-radius: 50%;
+        background: rgba(255,255,255,0.88); backdrop-filter: blur(8px);
+        border: 1px solid rgba(0,0,0,0.12);
+        display: flex; align-items: center; justify-content: center;
+      }
+      #vlm-heading-svg { transition: transform 0.3s ease; }
+      #vlm-heading-label {
+        font-size: 10px; font-weight: 600;
+        color: rgba(255,255,255,0.9);
+        background: rgba(0,0,0,0.38); backdrop-filter: blur(4px);
+        padding: 2px 7px; border-radius: 10px;
       }
 
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
+      /* VLM analysis image thumbnail — bottom-left, toggleable */
+      #vlm-thumb-wrap {
+        position: absolute; bottom: 16px; left: 16px; z-index: 20;
+        display: none; flex-direction: column;
+        border-radius: 10px; overflow: hidden;
+        border: 1px solid rgba(255,255,255,0.2);
+        box-shadow: 0 2px 12px rgba(0,0,0,0.35);
+        cursor: pointer;
+      }
+      #vlm-thumb {
+        width: 140px; height: 105px; object-fit: cover; display: block;
+      }
+      #vlm-expand-btn {
+        position: absolute; top: 5px; right: 5px; z-index: 22;
+        width: 22px; height: 22px;
+        background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+        border: 1px solid rgba(255,255,255,0.25); border-radius: 5px;
+        display: none; align-items: center; justify-content: center;
+        cursor: pointer; pointer-events: auto;
+      }
+      #vlm-expand-btn svg { display: block; }
+      #vlm-thumb-wrap:hover #vlm-expand-btn { display: flex; }
+      #vlm-thumb-toggle {
+        position: absolute; bottom: 125px; left: 16px; z-index: 21;
+        background: rgba(0,0,0,0.45); backdrop-filter: blur(6px);
+        color: rgba(255,255,255,0.85); font-size: 10px; font-weight: 600;
+        border: 1px solid rgba(255,255,255,0.2); border-radius: 6px;
+        padding: 3px 7px; cursor: pointer; display: none;
+      }
+      #vlm-thumb-toggle:hover { background: rgba(0,0,0,0.65); }
+
+      /* Lightbox */
+      #vlm-lightbox {
+        position: fixed; inset: 0; z-index: 1000;
+        background: rgba(0,0,0,0.82); backdrop-filter: blur(12px);
+        display: none; align-items: center; justify-content: center;
+      }
+      #vlm-lightbox.open { display: flex; }
+      #vlm-lightbox-img {
+        max-width: 90vw; max-height: 85vh;
+        border-radius: 12px; box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+        object-fit: contain;
+      }
+      #vlm-lightbox-close {
+        position: absolute; top: 20px; right: 24px;
+        width: 36px; height: 36px; border-radius: 50%;
+        background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2);
+        color: #fff; font-size: 18px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+      }
+      #vlm-lightbox-close:hover { background: rgba(255,255,255,0.22); }
+      #vlm-lightbox-label {
+        position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+        background: rgba(0,0,0,0.5); color: rgba(255,255,255,0.85);
+        font-size: 12px; padding: 5px 14px; border-radius: 20px;
       }
 
-      /* heading arrow overlay — bottom-center of street view */
-      #heading-arrow {
-        position: absolute;
-        bottom: 20px;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 10;
-        display: none;
-        flex-direction: column;
-        align-items: center;
-        gap: 4px;
-        pointer-events: none;
+      #sv-pane.flash::after {
+        content: ""; position: absolute; inset: 0;
+        background: rgba(0,113,227,.1);
+        animation: flash-out .35s ease-out forwards;
+        pointer-events: none; z-index: 5;
       }
-      #heading-arrow .arrow-ring {
-        width: 52px;
-        height: 52px;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.88);
-        backdrop-filter: blur(8px);
-        border: 1px solid var(--border);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
-      #heading-arrow svg {
-        display: block;
-      }
-      #heading-arrow .heading-label {
-        font-size: 10px;
-        font-weight: 600;
-        color: rgba(255, 255, 255, 0.9);
-        background: rgba(0, 0, 0, 0.35);
-        backdrop-filter: blur(4px);
-        padding: 2px 7px;
-        border-radius: 10px;
-        letter-spacing: 0.3px;
-      }
+      @keyframes flash-out { from { opacity:1 } to { opacity:0 } }
 
-      /* flash */
-      #sv-wrap.flash::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        background: rgba(0, 113, 227, 0.1);
-        animation: flash-out 0.35s ease-out forwards;
-        pointer-events: none;
-        z-index: 5;
+      /* drag handle */
+      #drag-h {
+        width: 5px; flex-shrink: 0;
+        background: var(--border); cursor: col-resize;
+        transition: background .15s; z-index: 50; position: relative;
       }
-      @keyframes flash-out {
-        from {
-          opacity: 1;
-        }
-        to {
-          opacity: 0;
-        }
-      }
+      #drag-h:hover, #drag-h.dragging { background: var(--accent); }
+      #drag-h::after { content:""; position:absolute; inset:0 -4px; }
 
-      /* ── RIGHT: map (top) + info (bottom) ── */
-      #right-col {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-        overflow: hidden;
+      /* map column */
+      #map-col {
+        flex: 1; min-width: 0;
+        display: flex; flex-direction: column; overflow: hidden;
       }
+      #map { flex: 1; min-height: 0; z-index: 1; }
 
-      #map {
-        height: 40%;
-        min-height: 80px;
-        z-index: 1;
-        flex-shrink: 0;
-      }
-
-      /* ── horizontal drag handle (map ↕ info) ── */
+      /* ── vertical resize handle ── */
       #drag-v {
-        height: 5px;
+        height: 5px; flex-shrink: 0;
+        background: var(--border); cursor: row-resize;
+        transition: background .15s; z-index: 50; position: relative;
+      }
+      #drag-v:hover, #drag-v.dragging { background: var(--accent); }
+      #drag-v::after { content:""; position:absolute; inset:-4px 0; }
+
+      /* ── bottom panel ── */
+      #bottom-panel {
+        height: 380px;
         flex-shrink: 0;
-        background: var(--border);
-        cursor: row-resize;
-        transition: background 0.15s;
-        z-index: 50;
-        position: relative;
-      }
-      #drag-v:hover,
-      #drag-v.dragging {
-        background: var(--accent);
-      }
-      #drag-v::after {
-        content: "";
-        position: absolute;
-        inset: -4px 0; /* taller hit area */
+        display: flex;
+        overflow: hidden;
+        background: var(--bg);
       }
 
-      #info {
-        flex: 1;
+      /* bottom-left: context/controls */
+      #bp-left {
+        width: 240px; flex-shrink: 0;
+        border-right: 1px solid var(--border);
+        padding: 12px 14px;
         overflow-y: auto;
-        padding: 14px 16px;
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
+        display: flex; flex-direction: column; gap: 10px;
+      }
+      /* bottom-center: scores */
+      #bp-center {
+        width: 220px; flex-shrink: 0;
+        border-right: 1px solid var(--border);
+        padding: 12px 14px;
+        overflow-y: auto;
+      }
+      /* bottom-right: reasoning */
+      #bp-right {
+        flex: 1; min-width: 0;
+        padding: 12px 14px;
+        overflow-y: auto;
       }
 
       .sec-label {
-        font-size: 10px;
-        font-weight: 600;
-        color: var(--text-3);
-        text-transform: uppercase;
-        letter-spacing: 0.6px;
-        margin-bottom: 7px;
+        font-size: 10px; font-weight: 600; color: var(--text-3);
+        text-transform: uppercase; letter-spacing: .6px; margin-bottom: 6px;
       }
 
+      /* route buttons */
+      .route-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+      .route-btns button {
+        padding: 4px 11px; border: 1px solid var(--border); border-radius: 16px;
+        font-size: 11px; font-weight: 500; cursor: pointer;
+        background: var(--surface); color: var(--text-2);
+        transition: background .15s, border-color .15s;
+      }
+      .route-btns button:hover { background: #e5e5ea; color: var(--text-1); }
+      .route-btns button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+      /* persona select */
       #persona-select {
-        width: 100%;
-        padding: 7px 28px 7px 10px;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        font-size: 13px;
-        background: var(--surface);
-        color: var(--text-1);
-        cursor: pointer;
-        appearance: none;
-        -webkit-appearance: none;
+        width: 100%; padding: 6px 28px 6px 9px;
+        border: 1px solid var(--border); border-radius: 8px;
+        font-size: 12px; background: var(--surface); color: var(--text-1);
+        cursor: pointer; appearance: none; -webkit-appearance: none;
         background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23aeaeb2'/%3E%3C/svg%3E");
-        background-repeat: no-repeat;
-        background-position: right 10px center;
+        background-repeat: no-repeat; background-position: right 9px center;
       }
 
-      .score-row {
-        margin-bottom: 8px;
+      /* route waypoint info */
+      #wp-info { font-size: 11px; color: var(--text-2); line-height: 1.6; }
+      #wp-info .key { color: var(--text-3); }
+
+      /* run/step controls */
+      .ctrl-row { display: flex; gap: 6px; align-items: center; }
+      #run-btn {
+        flex: 1; padding: 5px 0;
+        border: none; border-radius: 16px; cursor: pointer;
+        font-size: 12px; font-weight: 600;
+        background: var(--green); color: #fff; transition: opacity .15s;
       }
-      .score-hdr {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 4px;
+      #run-btn:hover { opacity: .85; }
+      #run-btn.running { background: var(--red); }
+      #step-btn {
+        padding: 5px 10px;
+        border: 1px solid var(--border); border-radius: 16px; cursor: pointer;
+        font-size: 12px; font-weight: 500;
+        background: transparent; color: var(--text-2); transition: background .15s;
       }
-      .dim-name {
-        font-size: 12px;
-        color: var(--text-2);
-        text-transform: capitalize;
+      #step-btn:hover:not(:disabled) { background: var(--surface); color: var(--text-1); }
+      #step-btn:disabled { opacity: .35; cursor: not-allowed; }
+      #wp-counter { font-size: 11px; font-weight: 600; color: var(--accent); }
+
+      /* explore: coord inputs + start */
+      .coord-row { display: flex; gap: 6px; align-items: center; }
+      .coord-row label { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+      .coord-row input {
+        flex: 1; padding: 5px 8px;
+        border: 1px solid var(--border); border-radius: 7px;
+        font-size: 12px; outline: none;
       }
-      .dim-val {
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--text-1);
+      .coord-row input:focus { border-color: var(--accent); }
+      #explore-start-btn {
+        width: 100%; padding: 6px 0;
+        border: none; border-radius: 16px; cursor: pointer;
+        font-size: 12px; font-weight: 600;
+        background: var(--accent); color: #fff; transition: opacity .15s;
       }
-      .bar-track {
-        height: 4px;
-        background: var(--surface);
-        border-radius: 2px;
-        overflow: hidden;
-      }
-      .bar-fill {
-        height: 100%;
-        border-radius: 2px;
-        width: 0%;
-        transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+      #explore-start-btn:hover { opacity: .85; }
+      #explore-start-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+      /* pano info */
+      #pano-info { font-size: 11px; color: var(--text-2); line-height: 1.8; }
+      #pano-info .key { color: var(--text-3); }
+      #pano-info .intersection { color: var(--orange); font-weight: 600; }
+
+
+      /* error box */
+      #explore-error {
+        font-size: 11px; color: var(--red);
+        background: #fff0f0; border: 1px solid var(--red);
+        border-radius: 6px; padding: 5px 9px; display: none;
       }
 
-      .r-item {
-        border-bottom: 1px solid var(--surface);
-      }
-      .r-item:last-child {
-        border-bottom: none;
-      }
+      /* scores */
+      .score-row { margin-bottom: 8px; }
+      .score-hdr { display: flex; justify-content: space-between; margin-bottom: 3px; }
+      .dim-name { font-size: 11px; color: var(--text-2); text-transform: capitalize; }
+      .dim-val { font-size: 11px; font-weight: 600; color: var(--text-1); }
+      .bar-track { height: 4px; background: var(--surface); border-radius: 2px; overflow: hidden; }
+      .bar-fill { height: 100%; border-radius: 2px; width: 0%; transition: width .7s cubic-bezier(.4,0,.2,1); }
+      .ph { font-size: 12px; color: var(--text-3); }
+      #meta-line { font-size: 10px; color: var(--text-3); margin-top: 8px; }
+
+      /* reasoning accordion */
+      .r-item { border-bottom: 1px solid var(--surface); }
+      .r-item:last-child { border-bottom: none; }
       .r-btn {
-        width: 100%;
-        background: none;
-        border: none;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 7px 0;
-        cursor: pointer;
-        font-size: 12px;
-        font-weight: 500;
-        color: var(--text-2);
-        text-align: left;
-        text-transform: capitalize;
+        width: 100%; background: none; border: none;
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 6px 0; cursor: pointer;
+        font-size: 11px; font-weight: 500; color: var(--text-2);
+        text-align: left; text-transform: capitalize;
       }
-      .r-btn .chev {
-        font-size: 9px;
-        color: var(--text-3);
-        transition: transform 0.2s;
-      }
-      .r-btn.open .chev {
-        transform: rotate(180deg);
-      }
-      .r-body {
-        display: none;
-        font-size: 13px;
-        color: var(--text-2);
-        line-height: 1.7;
-        padding-bottom: 7px;
-      }
-      .r-body.open {
-        display: block;
-      }
+      .r-btn .chev { font-size: 9px; color: var(--text-3); transition: transform .2s; }
+      .r-btn.open .chev { transform: rotate(180deg); }
+      .r-body { display: none; font-size: 12px; color: var(--text-2); line-height: 1.65; padding-bottom: 6px; }
+      .r-body.open { display: block; }
 
-      #meta-line {
-        font-size: 10px;
-        color: var(--text-3);
-      }
-      .ph {
-        font-size: 12px;
-        color: var(--text-3);
-      }
-
-      /* ── Log drawer ── */
+      /* log drawer */
       #log-drawer {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: 200px;
-        background: rgba(255, 255, 255, 0.96);
-        backdrop-filter: blur(12px);
+        position: fixed; bottom: 0; left: 0; right: 0; height: 180px;
+        background: rgba(255,255,255,.96); backdrop-filter: blur(12px);
         border-top: 1px solid var(--border);
-        display: none;
-        flex-direction: column;
-        z-index: 300;
+        display: none; flex-direction: column; z-index: 400;
       }
-      #log-drawer.open {
-        display: flex;
-      }
+      #log-drawer.open { display: flex; }
       #log-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 6px 14px;
-        border-bottom: 1px solid var(--border);
-        flex-shrink: 0;
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 5px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0;
       }
-      #log-header span {
-        font-size: 11px;
-        font-weight: 600;
-        color: var(--text-2);
-      }
-      #log-clear {
-        font-size: 11px;
-        color: var(--text-3);
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 2px 6px;
-        border-radius: 4px;
-      }
-      #log-clear:hover {
-        background: var(--surface);
-        color: var(--text-2);
-      }
-      #log-body {
-        flex: 1;
-        overflow-y: auto;
-        padding: 6px 14px;
-        font-family: "SF Mono", "Menlo", monospace;
-        font-size: 11px;
-        line-height: 1.6;
-      }
-      .log-line {
-        display: flex;
-        gap: 10px;
-      }
-      .log-time {
-        color: var(--text-3);
-        flex-shrink: 0;
-      }
-      .log-info {
-        color: var(--text-2);
-      }
-      .log-ok {
-        color: var(--green);
-      }
-      .log-warn {
-        color: var(--orange);
-      }
-      .log-err {
-        color: var(--red);
+      #log-header span { font-size: 11px; font-weight: 600; color: var(--text-2); }
+      #log-clear { font-size: 11px; color: var(--text-3); background: none; border: none; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+      #log-clear:hover { background: var(--surface); color: var(--text-2); }
+      #log-body { flex: 1; overflow-y: auto; padding: 5px 14px; font-family: "SF Mono","Menlo",monospace; font-size: 11px; line-height: 1.55; }
+      .log-line { display: flex; gap: 10px; }
+      .log-time { color: var(--text-3); flex-shrink: 0; }
+      .log-info { color: var(--text-2); }
+      .log-ok   { color: var(--green); }
+      .log-warn { color: var(--orange); }
+      .log-err  { color: var(--red); }
+
+      .topbar-persona {
+        width: 130px; padding: 4px 24px 4px 8px;
+        border: 1px solid var(--border); border-radius: 16px;
+        font-size: 11px; background: var(--surface); color: var(--text-2);
+        cursor: pointer; appearance: none; -webkit-appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23aeaeb2'/%3E%3C/svg%3E");
+        background-repeat: no-repeat; background-position: right 8px center;
       }
 
-      /* agent bobbing */
-      @keyframes bob {
-        0%,
-        100% {
-          transform: translateY(0);
-        }
-        50% {
-          transform: translateY(-3px);
-        }
+      #log-toggle {
+        padding: 3px 9px; border: 1px solid var(--border); border-radius: 16px;
+        cursor: pointer; font-size: 11px; background: transparent; color: var(--text-3);
       }
-      .agent-bob {
-        animation: bob 0.55s ease-in-out infinite;
-      }
+      #log-toggle:hover { background: var(--surface); color: var(--text-2); }
+      #log-toggle.active { background: var(--surface); color: var(--accent); border-color: var(--accent); }
+
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes bob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
+      .agent-bob { animation: bob .55s ease-in-out infinite; }
     </style>
   </head>
   <body>
-    <!-- topbar -->
+
+    <!-- ── topbar ── -->
     <div id="topbar">
       <h1>CityWalk</h1>
-      <div class="div"></div>
-      <button class="pill active" onclick="loadRoute('singapore')">
-        Singapore
-      </button>
-      <button class="pill" onclick="loadRoute('hongkong')">Hong Kong</button>
-      <div class="div"></div>
-      <button id="run-btn" onclick="toggleRun()">▶ Run</button>
-      <button id="step-btn" onclick="stepOnce()" disabled>Step</button>
-      <span id="wp-counter"></span>
-      <span id="status-msg">Loading…</span>
+      <div class="divider"></div>
+      <button class="pill active" id="mode-route"   onclick="setMode('route')">📁 Route</button>
+      <button class="pill"        id="mode-explore" onclick="setMode('explore')">🗺️ Explore</button>
+      <div class="divider"></div>
+      <select id="persona-select" class="topbar-persona" onchange="onPersonaChange()">
+        <option value="objective">Objective</option>
+      </select>
+      <span id="status-msg">—</span>
+      <div id="nav-dot" title="Maps API status"></div>
       <button id="log-toggle" onclick="toggleLog()">Log</button>
     </div>
 
-    <!-- main -->
+    <!-- ── main (sv-pane | drag | map) ── -->
     <div id="main">
-      <!-- LEFT: Street View -->
-      <div id="sv-col">
-        <div id="sv-wrap">
-          <img id="sv-image" />
-          <div id="sv-hint">
-            <span class="icon">🗺</span>
-            <p>Select a waypoint or Run Agent</p>
+      <div id="sv-pane">
+        <div id="sv-wrap" style="position:absolute;inset:0;z-index:1;"></div>
+        <img id="sv-image" alt="Street View" />
+        <div id="sv-hint"><span class="icon">🗺</span><p>Select a waypoint or start Explore</p></div>
+        <div id="sv-badge"></div>
+        <div id="vlm-heading-overlay">
+          <div id="vlm-heading-ring">
+            <svg id="vlm-heading-svg" width="28" height="28" viewBox="0 0 28 28">
+              <polygon points="14,3 21,22 14,18 7,22" fill="#0071e3"/>
+            </svg>
           </div>
-          <div id="sv-badge"></div>
-          <div id="heading-arrow">
-            <div class="arrow-ring">
-              <!-- arrow SVG — rotated via JS -->
-              <svg id="heading-svg" width="28" height="28" viewBox="0 0 28 28">
-                <polygon points="14,3 21,22 14,18 7,22" fill="#0071e3" />
-              </svg>
-            </div>
-            <span class="heading-label" id="heading-label">0°</span>
+          <span id="vlm-heading-label">0°</span>
+        </div>
+        <div id="vlm-thumb-wrap" onclick="openVlmLightbox()">
+          <img id="vlm-thumb" src="" alt="VLM view" />
+          <div id="vlm-expand-btn">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M1 4V1h3M8 1h3v3M11 8v3H8M4 11H1V8" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
           </div>
-          <div id="analysis-badge">
-            <div class="mini-spin"></div>
-            <span id="analysis-badge-text">Analyzing…</span>
-          </div>
+        </div>
+        <button id="vlm-thumb-toggle" onclick="toggleVlmThumb()">📷 Agent view</button>
+        <div id="analysis-badge">
+          <div class="mini-spin"></div>
+          <span id="analysis-badge-text">Analyzing…</span>
         </div>
       </div>
 
-      <!-- vertical splitter -->
       <div id="drag-h"></div>
 
-      <!-- RIGHT: map + info -->
-      <div id="right-col">
+      <div id="map-col">
         <div id="map"></div>
-        <!-- horizontal splitter -->
-        <div id="drag-v"></div>
-        <div id="info">
-          <div>
-            <div class="sec-label">Persona</div>
-            <select id="persona-select" onchange="onPersonaChange()">
-              <option value="objective">Objective</option>
-            </select>
-          </div>
-
-          <div>
-            <div class="sec-label">Scores</div>
-            <div id="scores-area"><div class="ph">—</div></div>
-          </div>
-
-          <div>
-            <div class="sec-label">Reasoning</div>
-            <div id="reasoning-area"><div class="ph">—</div></div>
-            <div id="meta-line" style="margin-top: 6px"></div>
-          </div>
-        </div>
       </div>
     </div>
 
-    <!-- Log drawer -->
+    <!-- ── vertical resize handle ── -->
+    <div id="drag-v"></div>
+
+    <!-- ── bottom panel ── -->
+    <div id="bottom-panel">
+
+      <!-- left column: mode-specific controls -->
+      <div id="bp-left">
+
+        <!-- ROUTE mode controls -->
+        <div id="ctrl-route">
+          <div class="sec-label">Route</div>
+          <div class="route-btns">
+            <button id="rb-singapore" onclick="loadRoute('singapore')">Singapore</button>
+            <button id="rb-hongkong"  onclick="loadRoute('hongkong')">Hong Kong</button>
+          </div>
+          <div class="ctrl-row" style="margin-top:8px;">
+            <button id="run-btn"  onclick="toggleRun()">▶ Run</button>
+            <button id="step-btn" onclick="stepOnce()" disabled>Step</button>
+            <span id="wp-counter"></span>
+          </div>
+          <div id="wp-info"></div>
+        </div>
+
+        <!-- EXPLORE mode controls -->
+        <div id="ctrl-explore" style="display:none;">
+          <div class="sec-label">Start Location</div>
+          <div class="coord-row">
+            <label>Lat</label>
+            <input type="number" id="exp-lat" value="1.2835" step="0.0001">
+          </div>
+          <div class="coord-row" style="margin-top:4px;">
+            <label>Lng</label>
+            <input type="number" id="exp-lng" value="103.858" step="0.0001">
+          </div>
+          <button id="explore-start-btn" onclick="exploreStart()" style="margin-top:8px;">▶ Start</button>
+          <div id="explore-error"></div>
+
+          <div id="pano-section" style="display:none;margin-top:10px;">
+            <div class="sec-label">Panorama</div>
+            <div id="pano-info"></div>
+            <button id="analyze-pano-btn" onclick="analyzePano()" style="margin-top:10px;width:100%;padding:5px 0;border:none;border-radius:16px;cursor:pointer;font-size:12px;font-weight:600;background:var(--green);color:#fff;transition:opacity .15s;" disabled>Analyze This View</button>
+          </div>
+        </div>
+
+      </div><!-- /bp-left -->
+
+      <!-- center: scores -->
+      <div id="bp-center">
+        <div class="sec-label">Scores</div>
+        <div id="scores-area"><div class="ph">—</div></div>
+        <div id="meta-line"></div>
+      </div>
+
+      <!-- right: reasoning -->
+      <div id="bp-right">
+        <div class="sec-label">Reasoning</div>
+        <div id="reasoning-area"><div class="ph">—</div></div>
+      </div>
+
+    </div><!-- /bottom-panel -->
+
+    <!-- log drawer -->
     <div id="log-drawer">
       <div id="log-header">
         <span>Console Log</span>
@@ -682,60 +550,57 @@
     </div>
 
     <script>
-      // ═══════════════════════════════════════════════════════
-      // LOGGING
-      // ═══════════════════════════════════════════════════════
-      let logOpen = false;
+    // ═══════════════════════════════════════════════════════
+    // LOGGING
+    // ═══════════════════════════════════════════════════════
+    let logOpen = false;
+    function toggleLog() {
+      logOpen = !logOpen;
+      document.getElementById('log-drawer').classList.toggle('open', logOpen);
+      document.getElementById('log-toggle').classList.toggle('active', logOpen);
+    }
+    function clearLog() { document.getElementById('log-body').innerHTML = ''; }
+    function log(msg, level = 'info') {
+      const t = new Date().toTimeString().slice(0,8);
+      const el = document.createElement('div');
+      el.className = 'log-line';
+      el.innerHTML = `<span class="log-time">${t}</span><span class="log-${level}">${escHtml(msg)}</span>`;
+      const body = document.getElementById('log-body');
+      body.appendChild(el); body.scrollTop = body.scrollHeight;
+      if (level === 'err') console.error(msg);
+      else if (level === 'warn') console.warn(msg);
+      else console.log(msg);
+    }
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
 
-      function toggleLog() {
-        logOpen = !logOpen;
-        document.getElementById("log-drawer").classList.toggle("open", logOpen);
-        document
-          .getElementById("log-toggle")
-          .classList.toggle("active", logOpen);
-      }
-      function clearLog() {
-        document.getElementById("log-body").innerHTML = "";
-      }
+    // ═══════════════════════════════════════════════════════
+    // STATE
+    // ═══════════════════════════════════════════════════════
+    const API = '';
+    let currentMode = 'route';   // 'route' | 'explore'
 
-      function log(msg, level = "info") {
-        const now = new Date();
-        const t = now.toTimeString().slice(0, 8);
-        const el = document.createElement("div");
-        el.className = "log-line";
-        el.innerHTML = `<span class="log-time">${t}</span><span class="log-${level}">${escHtml(msg)}</span>`;
-        const body = document.getElementById("log-body");
-        body.appendChild(el);
-        body.scrollTop = body.scrollHeight;
-        // also console
-        if (level === "err") console.error(msg);
-        else if (level === "warn") console.warn(msg);
-        else console.log(msg);
-      }
+    // Route state
+    let map, waypoints = [], markers = [], polyline = null, trailLine = null, agentMarker = null;
+    let agentIndex = -1;
+    let currentPersona = 'objective';
+    let cache = {};  // `${persona}:${wpId}` → result
+    let isRunning = false;
+    let analysisAbort = null;
 
-      // ═══════════════════════════════════════════════════════
-      // STATE
-      // ═══════════════════════════════════════════════════════
-      const API = "";
-      let map,
-        waypoints = [],
-        markers = [],
-        polyline = null,
-        trailLine = null,
-        agentMarker = null;
-      let agentIndex = -1;
-      let currentPersona = "objective";
-      let cache = {}; // `${persona}:${wpId}` → result
-      let isRunning = false;
-      let analysisAbort = null; // AbortController for in-flight /analyze
+    // Explore state
+    let currentPano = null;
+    let navMarker = null, navPolyline = null, navPoints = [];
+    let navHistory = [];
 
-      // ── Agent icon ────────────────────────────────────────
-      // Set to a PNG/SVG file path to use an image, or null to use the built-in SVG pin.
-      const AGENT_ICON_URL = "/static/runner.png";
-      const AGENT_ICON_SIZE = [80, 80]; // [width, height] in px
-      const AGENT_ICON_ANCHOR = [40, 40]; // anchor point (usually center for images)
+    // Street View Panorama
+    let panorama = null;
 
-      const AGENT_SVG_FALLBACK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 38" width="28" height="38">
+    const AGENT_ICON_URL  = '/static/runner.png';
+    const AGENT_ICON_SIZE = [80, 80];
+    const AGENT_ICON_ANCHOR = [40, 40];
+    const AGENT_SVG_FALLBACK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 38" width="28" height="38">
   <path d="M14 1C8.5 1 4 5.5 4 11c0 7.5 10 25 10 25S24 18.5 24 11C24 5.5 19.5 1 14 1Z"
     fill="#0071e3" stroke="white" stroke-width="1.5"/>
   <circle cx="14" cy="10" r="3" fill="white"/>
@@ -745,625 +610,709 @@
   <line x1="14" y1="19" x2="17.5" y2="24" stroke="white" stroke-width="1.8" stroke-linecap="round"/>
 </svg>`;
 
-      // ═══════════════════════════════════════════════════════
-      // INIT
-      // ═══════════════════════════════════════════════════════
-      document.addEventListener("DOMContentLoaded", async () => {
-        log("App init");
-
-        // ── resizable panels ──────────────────────────────────
-        // Left ↔ Right (vertical splitter)
-        const dragH = document.getElementById("drag-h");
-        const svCol = document.getElementById("sv-col");
-        const main = document.getElementById("main");
-        dragH.addEventListener("mousedown", (e) => {
-          e.preventDefault();
-          dragH.classList.add("dragging");
-          document.body.style.cursor = "col-resize";
-          document.body.style.userSelect = "none";
-          const onMove = (e) => {
-            const mainRect = main.getBoundingClientRect();
-            const pct = ((e.clientX - mainRect.left) / mainRect.width) * 100;
-            svCol.style.width = Math.min(85, Math.max(15, pct)) + "%";
-            map.invalidateSize();
-          };
-          const onUp = () => {
-            dragH.classList.remove("dragging");
-            document.body.style.cursor = "";
-            document.body.style.userSelect = "";
-            document.removeEventListener("mousemove", onMove);
-            document.removeEventListener("mouseup", onUp);
-          };
-          document.addEventListener("mousemove", onMove);
-          document.addEventListener("mouseup", onUp);
+    // ═══════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════
+    // STREET VIEW PANORAMA
+    // ═══════════════════════════════════════════════════════
+    async function initStreetViewAPI() {
+      try {
+        const { key } = await fetch('/api/maps-key').then(r => r.json());
+        if (!key) return;
+        await new Promise((resolve) => {
+          const s = document.createElement('script');
+          s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&callback=_mapsReady`;
+          window._mapsReady = resolve;
+          document.head.appendChild(s);
         });
-
-        // Map ↕ Info (horizontal splitter)
-        const dragV = document.getElementById("drag-v");
-        const mapEl = document.getElementById("map");
-        const rightCol = document.getElementById("right-col");
-        dragV.addEventListener("mousedown", (e) => {
-          e.preventDefault();
-          dragV.classList.add("dragging");
-          document.body.style.cursor = "row-resize";
-          document.body.style.userSelect = "none";
-          const onMove = (e) => {
-            const rcRect = rightCol.getBoundingClientRect();
-            const pct = ((e.clientY - rcRect.top) / rcRect.height) * 100;
-            mapEl.style.height = Math.min(85, Math.max(10, pct)) + "%";
-            map.invalidateSize();
-          };
-          const onUp = () => {
-            dragV.classList.remove("dragging");
-            document.body.style.cursor = "";
-            document.body.style.userSelect = "";
-            document.removeEventListener("mousemove", onMove);
-            document.removeEventListener("mouseup", onUp);
-          };
-          document.addEventListener("mousemove", onMove);
-          document.addEventListener("mouseup", onUp);
+        panorama = new google.maps.StreetViewPanorama(
+          document.getElementById('sv-wrap'),
+          {
+            visible: false,
+            addressControl: false,
+            fullscreenControl: false,
+            enableCloseButton: false,
+            motionTracking: false,
+            motionTrackingControl: false,
+            showRoadLabels: false,
+          }
+        );
+        // Sync Leaflet map when user navigates via panorama's built-in arrows
+        panorama.addListener('position_changed', () => {
+          const pos = panorama.getPosition();
+          if (!pos || currentMode !== 'explore') return;
+          const latlng = [pos.lat(), pos.lng()];
+          navPoints.push(latlng);
+          if (navMarker) map.removeLayer(navMarker);
+          navMarker = L.marker(latlng, { icon: L.divIcon({
+            html: '<div style="width:14px;height:14px;background:#0071e3;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);"></div>',
+            className:'', iconSize:[14,14], iconAnchor:[7,7]
+          })}).addTo(map);
+          if (navPolyline) map.removeLayer(navPolyline);
+          if (navPoints.length > 1) navPolyline = L.polyline(navPoints, { color:'#0071e3', dashArray:'6,4', weight:2 }).addTo(map);
+          map.panTo(latlng);
+          if (currentPano) { currentPano.lat = pos.lat(); currentPano.lng = pos.lng(); }
+          // Clear heading overlay and re-analyze at new position
+          setAnalysisOverlay(null, null);
+          analyzePano();
         });
+        // Keep VLM arrow pointing at the correct absolute heading as user rotates view
+        panorama.addListener('pov_changed', _updateVlmArrow);
+        log('StreetViewPanorama ready', 'ok');
+      } catch(e) {
+        log(`Maps API init failed: ${e.message}`, 'warn');
+      }
+    }
 
-        map = L.map("map").setView([1.2835, 103.858], 15);
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: "© OpenStreetMap",
-          maxZoom: 19,
-        }).addTo(map);
-        await loadPersonas();
-        await loadRoute("singapore");
+    function setPanorama(panoId, heading) {
+      if (!panorama || !panoId) return;
+      document.getElementById('sv-image').style.display = 'none';
+      document.getElementById('sv-hint').style.display = 'none';
+      panorama.setVisible(true);
+      panorama.setPano(panoId);
+      panorama.setPov({ heading: heading ?? 0, pitch: 0, zoom: 1 });
+    }
+
+    function headingToDir(deg) {
+      const dirs = ['N','NE','E','SE','S','SW','W','NW'];
+      return dirs[Math.round(((deg % 360) + 360) % 360 / 45) % 8];
+    }
+
+    let _vlmAbsHeading = null;  // absolute heading VLM used (world-north-relative)
+
+    function setAnalysisOverlay(imageUrl, headingDeg) {
+      const overlay  = document.getElementById('vlm-heading-overlay');
+      const thumbWrap = document.getElementById('vlm-thumb-wrap');
+      const toggle   = document.getElementById('vlm-thumb-toggle');
+      if (headingDeg == null) {
+        overlay.style.display = 'none';
+        thumbWrap.style.display = 'none';
+        toggle.style.display = 'none';
+        _vlmAbsHeading = null;
+        return;
+      }
+      _vlmAbsHeading = headingDeg;
+      _updateVlmArrow();
+      overlay.style.display = 'flex';
+      // Thumbnail
+      if (imageUrl) {
+        document.getElementById('vlm-thumb').src = imageUrl;
+        toggle.style.display = 'block';
+        toggle.style.bottom = '125px';
+        thumbWrap.style.display = 'flex';
+        toggle.textContent = '📷 Hide';
+      }
+    }
+
+    function _updateVlmArrow() {
+      if (_vlmAbsHeading == null) return;
+      // Relative heading = VLM absolute heading − current panorama POV heading
+      const povHeading = panorama ? (panorama.getPov()?.heading ?? 0) : 0;
+      const rel = ((_vlmAbsHeading - povHeading) % 360 + 360) % 360;
+      document.getElementById('vlm-heading-svg').style.transform = `rotate(${rel}deg)`;
+      document.getElementById('vlm-heading-label').textContent =
+        `${headingToDir(_vlmAbsHeading)} ${Math.round(_vlmAbsHeading)}°`;
+    }
+
+    function toggleVlmThumb() {
+      const wrap = document.getElementById('vlm-thumb-wrap');
+      const toggle = document.getElementById('vlm-thumb-toggle');
+      const visible = wrap.style.display !== 'none';
+      wrap.style.display = visible ? 'none' : 'flex';
+      toggle.style.bottom = visible ? '16px' : '125px';
+      toggle.textContent = visible ? '📷 Agent view' : '📷 Hide';
+    }
+
+    // INIT
+    // ═══════════════════════════════════════════════════════
+    document.addEventListener('DOMContentLoaded', async () => {
+      log('App init');
+
+      // Resizable bottom-panel (vertical)
+      const dragV = document.getElementById('drag-v');
+      const bottomPanel = document.getElementById('bottom-panel');
+      dragV.addEventListener('mousedown', e => {
+        e.preventDefault();
+        dragV.classList.add('dragging');
+        document.body.style.cursor = 'row-resize';
+        document.body.style.userSelect = 'none';
+        const startY = e.clientY;
+        const startH = bottomPanel.getBoundingClientRect().height;
+        const onMove = e => {
+          const delta = startY - e.clientY;
+          const newH = Math.min(window.innerHeight * 0.8, Math.max(120, startH + delta));
+          bottomPanel.style.height = newH + 'px';
+          map.invalidateSize();
+        };
+        const onUp = () => {
+          dragV.classList.remove('dragging');
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
       });
 
-      // ═══════════════════════════════════════════════════════
-      // ROUTE
-      // ═══════════════════════════════════════════════════════
-      async function loadRoute(id) {
+      // Resizable sv-pane ↔ map-col
+      const dragH = document.getElementById('drag-h');
+      const svPane = document.getElementById('sv-pane');
+      const mainEl = document.getElementById('main');
+      dragH.addEventListener('mousedown', e => {
+        e.preventDefault();
+        dragH.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        const onMove = e => {
+          const r = mainEl.getBoundingClientRect();
+          const pct = ((e.clientX - r.left) / r.width) * 100;
+          svPane.style.width = Math.min(85, Math.max(15, pct)) + '%';
+          map.invalidateSize();
+        };
+        const onUp = () => {
+          dragH.classList.remove('dragging');
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+
+      map = L.map('map').setView([1.2835, 103.858], 14);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap', maxZoom: 19
+      }).addTo(map);
+
+      // Map click in explore mode → set coords
+      map.on('click', e => {
+        if (currentMode === 'explore') {
+          document.getElementById('exp-lat').value = e.latlng.lat.toFixed(6);
+          document.getElementById('exp-lng').value = e.latlng.lng.toFixed(6);
+        }
+      });
+
+      await loadPersonas();
+      await checkNavStatus();
+      await initStreetViewAPI();
+      await loadRoute('singapore');
+    });
+
+    // ═══════════════════════════════════════════════════════
+    // MODE SWITCHING
+    // ═══════════════════════════════════════════════════════
+    function setMode(mode) {
+      if (mode === currentMode) return;
+      currentMode = mode;
+      document.getElementById('mode-route').classList.toggle('active', mode === 'route');
+      document.getElementById('mode-explore').classList.toggle('active', mode === 'explore');
+      document.getElementById('ctrl-route').style.display   = mode === 'route'   ? '' : 'none';
+      document.getElementById('ctrl-explore').style.display = mode === 'explore' ? '' : 'none';
+
+      // Reset shared display
+      resetDisplay();
+
+      if (mode === 'route') {
+        // Clear nav overlays
+        if (navMarker)   { map.removeLayer(navMarker);   navMarker   = null; }
+        if (navPolyline) { map.removeLayer(navPolyline); navPolyline = null; }
+        navPoints = []; navHistory = []; currentPano = null;
+        // Re-draw route if loaded
+        if (waypoints.length) drawRoute();
+        setStatus(`${waypoints.length} waypoints · click Run or a marker`);
+      } else {
+        // Clear route overlays
         stopRun();
-        cache = {};
+        markers.forEach(m => map.removeLayer(m)); markers = [];
+        [polyline, trailLine, agentMarker].forEach(l => l && map.removeLayer(l));
+        polyline = trailLine = agentMarker = null;
         agentIndex = -1;
-        resetPanel();
-        document
-          .querySelectorAll(".pill")
-          .forEach((b) =>
-            b.classList.toggle(
-              "active",
-              b.textContent.toLowerCase().includes(id),
-            ),
-          );
-        setStatus("Loading…");
-        log(`Loading route: ${id}`);
-        try {
-          const r = await fetch(`${API}/route/${id}`);
-          if (!r.ok) throw new Error(await r.text());
-          const d = await r.json();
-          waypoints = d.waypoints;
-          log(`Loaded ${waypoints.length} waypoints`, "ok");
+        setStatus('Enter coordinates and click Start');
+      }
+      log(`Mode → ${mode}`);
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // NAV STATUS
+    // ═══════════════════════════════════════════════════════
+    async function checkNavStatus() {
+      const dot = document.getElementById('nav-dot');
+      try {
+        const r = await fetch(`${API}/api/nav/status`);
+        const d = await r.json();
+        if (d.session_ok) { dot.className = 'ok'; dot.title = 'Maps API: connected'; }
+        else              { dot.className = 'err'; dot.title = `Maps API: ${d.error || 'error'}`; }
+      } catch(e) {
+        dot.className = 'err'; dot.title = 'Maps API: server unreachable';
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // ROUTE MODE
+    // ═══════════════════════════════════════════════════════
+    async function loadRoute(id) {
+      stopRun(); cache = {}; agentIndex = -1; resetDisplay();
+      document.getElementById('rb-singapore').classList.toggle('active', id === 'singapore');
+      document.getElementById('rb-hongkong').classList.toggle('active',  id === 'hongkong');
+      setStatus('Loading…');
+      log(`Loading route: ${id}`);
+      try {
+        const r = await fetch(`${API}/route/${id}`);
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        waypoints = d.waypoints;
+        log(`Loaded ${waypoints.length} waypoints`, 'ok');
+        if (currentMode === 'route') {
           drawRoute();
           setStatus(`${waypoints.length} waypoints · click Run or a marker`);
-          document.getElementById("step-btn").disabled = false;
-          updateCounter();
-        } catch (e) {
-          log(`loadRoute error: ${e.message}`, "err");
-          setStatus(`Error: ${e.message}`);
         }
-      }
-
-      function drawRoute() {
-        markers.forEach((m) => map.removeLayer(m));
-        markers = [];
-        [polyline, trailLine, agentMarker].forEach(
-          (l) => l && map.removeLayer(l),
-        );
-        polyline = trailLine = agentMarker = null;
-
-        if (!waypoints.length) return;
-        polyline = L.polyline(
-          waypoints.map((w) => [w.lat, w.lon]),
-          { color: "#e5e5ea", weight: 2.5 },
-        ).addTo(map);
-        waypoints.forEach((w) => {
-          const m = mkMarker(w);
-          m.addTo(map);
-          markers.push(m);
-        });
-        map.fitBounds(polyline.getBounds(), { padding: [36, 36] });
-      }
-
-      function mkMarker(w) {
-        const m = L.circleMarker([w.lat, w.lon], mStyle("default", false));
-        m.on("click", () => {
-          if (!isRunning) goTo(waypoints.indexOf(w), false);
-        });
-        return m;
-      }
-
-      function mStyle(state, sel) {
-        const base = {
-          radius: sel ? 8 : 5.5,
-          weight: 1.5,
-          opacity: 1,
-          fillOpacity: 0.9,
-        };
-        if (state === "default")
-          return { ...base, color: "#c7c7cc", fillColor: "#e5e5ea" };
-        if (state === "analyzing")
-          return { ...base, color: "#0071e3", fillColor: "#b8d8f8" };
-        return {
-          ...base,
-          color: "white",
-          fillColor: sel ? "#0071e3" : scoreColor(state),
-        };
-      }
-      function scoreColor(v) {
-        return v >= 7 ? "#30d158" : v >= 5 ? "#ff9f0a" : "#ff453a";
-      }
-      function avg(scores) {
-        const v = Object.values(scores);
-        return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 5;
-      }
-
-      // ═══════════════════════════════════════════════════════
-      // AGENT MARKER
-      // ═══════════════════════════════════════════════════════
-      function agentIcon(bob) {
-        const cls = bob ? "agent-bob" : "";
-        const inner = AGENT_ICON_URL
-          ? `<img src="${AGENT_ICON_URL}" width="${AGENT_ICON_SIZE[0]}" height="${AGENT_ICON_SIZE[1]}" style="display:block">`
-          : AGENT_SVG_FALLBACK;
-        const w = AGENT_ICON_URL ? AGENT_ICON_SIZE[0] : 28;
-        const h = AGENT_ICON_URL ? AGENT_ICON_SIZE[1] : 38;
-        const ax = AGENT_ICON_URL ? AGENT_ICON_ANCHOR[0] : 14;
-        const ay = AGENT_ICON_URL ? AGENT_ICON_ANCHOR[1] : 36;
-        return L.divIcon({
-          html: `<div class="${cls}">${inner}</div>`,
-          iconSize: [w, h],
-          iconAnchor: [ax, ay],
-          className: "",
-        });
-      }
-      function moveAgent(idx, bob) {
-        const w = waypoints[idx];
-        if (!agentMarker) {
-          agentMarker = L.marker([w.lat, w.lon], {
-            icon: agentIcon(bob),
-            zIndexOffset: 1000,
-          }).addTo(map);
-        } else {
-          agentMarker.setLatLng([w.lat, w.lon]);
-          agentMarker.setIcon(agentIcon(bob));
-        }
-      }
-      function drawTrail(idx) {
-        if (trailLine) {
-          map.removeLayer(trailLine);
-          trailLine = null;
-        }
-        if (idx < 1) return;
-        trailLine = L.polyline(
-          waypoints.slice(0, idx + 1).map((w) => [w.lat, w.lon]),
-          { color: "#0071e3", weight: 2.5, opacity: 0.55 },
-        ).addTo(map);
-      }
-
-      // ── bearing between two GPS coords (degrees, 0=N clockwise) ──
-      function bearing(lat1, lon1, lat2, lon2) {
-        const toRad = (d) => (d * Math.PI) / 180;
-        const dLon = toRad(lon2 - lon1);
-        const φ1 = toRad(lat1),
-          φ2 = toRad(lat2);
-        const x = Math.sin(dLon) * Math.cos(φ2);
-        const y =
-          Math.cos(φ1) * Math.sin(φ2) -
-          Math.sin(φ1) * Math.cos(φ2) * Math.cos(dLon);
-        return ((Math.atan2(x, y) * 180) / Math.PI + 360) % 360;
-      }
-
-      // ═══════════════════════════════════════════════════════
-      // GO TO WAYPOINT
-      // Two-phase: 1) show image immediately, 2) run VLM analysis
-      // ═══════════════════════════════════════════════════════
-      async function goTo(idx, bob) {
-        if (idx < 0 || idx >= waypoints.length) return;
-        const w = waypoints[idx];
-        agentIndex = idx;
-        log(`→ WP ${w.id} (${w.lat.toFixed(5)}, ${w.lon.toFixed(5)})`);
-
-        // Move agent on map
-        moveAgent(idx, bob);
-        drawTrail(idx);
-        map.panTo([w.lat, w.lon], { animate: true, duration: 0.4 });
+        document.getElementById('step-btn').disabled = false;
         updateCounter();
-        setBadge(`WP ${w.id}`);
-        // heading arrow = direction to next waypoint, relative to camera heading
-        const next = waypoints[idx + 1];
-        const absBearing = next
-          ? bearing(w.lat, w.lon, next.lat, next.lon)
-          : null;
-        const relAngle =
-          absBearing !== null
-            ? (absBearing - (w.heading || 0) + 360) % 360
-            : null;
-        setHeadingArrow(relAngle);
+      } catch(e) {
+        log(`loadRoute error: ${e.message}`, 'err');
+        setStatus(`Error: ${e.message}`);
+      }
+    }
 
-        // Update all marker styles
-        markers.forEach((m, i) => {
-          const ck = `${currentPersona}:${waypoints[i].id}`;
-          const c = cache[ck];
-          m.setStyle(mStyle(c ? avg(c.scores) : "default", i === idx));
+    function drawRoute() {
+      markers.forEach(m => map.removeLayer(m)); markers = [];
+      [polyline, trailLine, agentMarker].forEach(l => l && map.removeLayer(l));
+      polyline = trailLine = agentMarker = null;
+      if (!waypoints.length) return;
+      polyline = L.polyline(waypoints.map(w => [w.lat, w.lon]), { color: '#e5e5ea', weight: 2.5 }).addTo(map);
+      waypoints.forEach(w => {
+        const m = L.circleMarker([w.lat, w.lon], mStyle('default', false));
+        m.on('click', () => { if (!isRunning) goTo(waypoints.indexOf(w), false); });
+        m.addTo(map); markers.push(m);
+      });
+      map.fitBounds(polyline.getBounds(), { padding: [36, 36] });
+    }
+
+    function mStyle(state, sel) {
+      const base = { radius: sel ? 8 : 5.5, weight: 1.5, opacity: 1, fillOpacity: .9 };
+      if (state === 'default')   return { ...base, color: '#c7c7cc', fillColor: '#e5e5ea' };
+      if (state === 'analyzing') return { ...base, color: '#0071e3', fillColor: '#b8d8f8' };
+      return { ...base, color: 'white', fillColor: sel ? '#0071e3' : scoreColor(state) };
+    }
+    function scoreColor(v) { return v >= 7 ? '#30d158' : v >= 5 ? '#ff9f0a' : '#ff453a'; }
+    function avg(scores) { const v = Object.values(scores); return v.length ? v.reduce((a,b)=>a+b,0)/v.length : 5; }
+
+    function agentIcon(bob) {
+      const cls = bob ? 'agent-bob' : '';
+      const inner = AGENT_ICON_URL
+        ? `<img src="${AGENT_ICON_URL}" width="${AGENT_ICON_SIZE[0]}" height="${AGENT_ICON_SIZE[1]}" style="display:block">`
+        : AGENT_SVG_FALLBACK;
+      const w = AGENT_ICON_URL ? AGENT_ICON_SIZE[0] : 28;
+      const h = AGENT_ICON_URL ? AGENT_ICON_SIZE[1] : 38;
+      const ax = AGENT_ICON_URL ? AGENT_ICON_ANCHOR[0] : 14;
+      const ay = AGENT_ICON_URL ? AGENT_ICON_ANCHOR[1] : 36;
+      return L.divIcon({ html: `<div class="${cls}">${inner}</div>`, iconSize:[w,h], iconAnchor:[ax,ay], className:'' });
+    }
+    function moveAgent(idx, bob) {
+      const w = waypoints[idx];
+      if (!agentMarker) {
+        agentMarker = L.marker([w.lat, w.lon], { icon: agentIcon(bob), zIndexOffset: 1000 }).addTo(map);
+      } else {
+        agentMarker.setLatLng([w.lat, w.lon]); agentMarker.setIcon(agentIcon(bob));
+      }
+    }
+    function drawTrail(idx) {
+      if (trailLine) { map.removeLayer(trailLine); trailLine = null; }
+      if (idx < 1) return;
+      trailLine = L.polyline(waypoints.slice(0, idx+1).map(w=>[w.lat,w.lon]), { color:'#0071e3', weight:2.5, opacity:.55 }).addTo(map);
+    }
+
+    function bearing(lat1,lon1,lat2,lon2) {
+      const r=d=>(d*Math.PI)/180, dLon=r(lon2-lon1), φ1=r(lat1), φ2=r(lat2);
+      const x=Math.sin(dLon)*Math.cos(φ2);
+      const y=Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(dLon);
+      return ((Math.atan2(x,y)*180/Math.PI)+360)%360;
+    }
+
+    async function goTo(idx, bob) {
+      if (idx < 0 || idx >= waypoints.length) return;
+      const w = waypoints[idx];
+      agentIndex = idx;
+      log(`→ WP ${w.id} (${w.lat.toFixed(5)}, ${w.lon.toFixed(5)})`);
+
+      moveAgent(idx, bob); drawTrail(idx);
+      map.panTo([w.lat, w.lon], { animate:true, duration:.4 });
+      updateCounter(); setBadge(`WP ${w.id}`);
+
+      const next = waypoints[idx+1];
+      const ab = next ? bearing(w.lat, w.lon, next.lat, next.lon) : null;
+
+      // Update wp-info
+      document.getElementById('wp-info').innerHTML =
+        `<span class="key">id</span> ${w.id} &nbsp; <span class="key">lat</span> ${w.lat.toFixed(5)} &nbsp; <span class="key">lon</span> ${w.lon.toFixed(5)}<br>` +
+        `<span class="key">heading</span> ${(w.heading||0).toFixed(1)}°`;
+
+      // marker styles
+      markers.forEach((m,i) => {
+        const c = cache[`${currentPersona}:${waypoints[i].id}`];
+        m.setStyle(mStyle(c ? avg(c.scores) : 'default', i === idx));
+      });
+
+      const ck = `${currentPersona}:${w.id}`;
+      if (cache[ck]) { log(`WP ${w.id} — cache hit`, 'ok'); renderResult(cache[ck]); return; }
+
+      if (panorama) panorama.setVisible(false);
+      if (w.image_path) {
+        const imageUrl = `${API}/image?image_path=${encodeURIComponent(w.image_path)}`;
+        showImageUrl(imageUrl);
+        setAnalysisOverlay(imageUrl, w.heading || 0);
+      } else {
+        showSpinner(true);
+        setAnalysisOverlay(null, null);
+      }
+
+      markers[idx]?.setStyle(mStyle('analyzing', true));
+      showAnalysisBadge(true, `Analyzing WP ${w.id}…`);
+      setStatus(`Analyzing WP ${w.id}…`);
+
+      if (analysisAbort) analysisAbort.abort();
+      analysisAbort = new AbortController();
+      const signal = analysisAbort.signal;
+
+      try {
+        const t0 = Date.now();
+        const res = await fetch(`${API}/analyze`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lat:w.lat, lon:w.lon, heading:w.heading||0, persona:currentPersona, image_path:w.image_path||null, waypoint_id:w.id }),
+          signal,
         });
-
-        // ── Phase 1: show image immediately ──────────────────
-        const ck = `${currentPersona}:${w.id}`;
-        if (cache[ck]) {
-          // already have full result — just show it
-          log(`WP ${w.id} — cache hit`, "ok");
-          renderResult(cache[ck]);
-          return;
-        }
-
-        // Show the local image right away (before VLM)
-        if (w.image_path) {
-          showImageUrl(
-            `${API}/image?image_path=${encodeURIComponent(w.image_path)}`,
-          );
-          log(`WP ${w.id} — image loaded, starting analysis…`);
-        } else {
-          showSpinnerOverlay(true);
-          log(
-            `WP ${w.id} — no local image, fetching from Street View…`,
-            "warn",
-          );
-        }
-
-        // Set marker to analyzing
-        markers[idx]?.setStyle(mStyle("analyzing", true));
-        showAnalysisBadge(true, `Analyzing WP ${w.id}…`);
-        setStatus(`Analyzing WP ${w.id}…`);
-
-        // ── Phase 2: VLM analysis ────────────────────────────
-        // Cancel any previous in-flight request
-        if (analysisAbort) analysisAbort.abort();
-        analysisAbort = new AbortController();
-        const signal = analysisAbort.signal;
-
-        try {
-          const t0 = Date.now();
-          const res = await fetch(`${API}/analyze`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              lat: w.lat,
-              lon: w.lon,
-              heading: w.heading || 0,
-              persona: currentPersona,
-              image_path: w.image_path || null,
-              waypoint_id: w.id,
-            }),
-            signal,
-          });
-          if (!res.ok) {
-            const err = await res
-              .json()
-              .catch(() => ({ detail: res.statusText }));
-            throw new Error(err.detail || res.statusText);
-          }
-
-          const result = await res.json();
-          const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-          cache[ck] = result;
-
-          // Update marker with score color
-          markers[idx]?.setStyle(mStyle(avg(result.scores), true));
-          showAnalysisBadge(false);
-
-          // If image came from /analyze response (Street View case), update it
-          if (!w.image_path && result.image_base64) {
-            showImageB64(result.image_base64);
-          }
-
-          renderScores(result.scores);
-          renderReasoning(result.reasoning);
-          document.getElementById("meta-line").textContent =
-            `${elapsed}s · ${result.persona}`;
-
-          const scoreStr = Object.entries(result.scores)
-            .map(([k, v]) => `${k}:${v.toFixed(1)}`)
-            .join(" ");
-          log(`WP ${w.id} done — ${elapsed}s — ${scoreStr}`, "ok");
-          setStatus(`WP ${w.id} · ${elapsed}s`);
-        } catch (e) {
-          if (e.name === "AbortError") {
-            log(`WP ${w.id} — request aborted (moved on)`, "warn");
-            return; // not a real error — we moved to next waypoint
-          }
-          log(`WP ${w.id} ERROR: ${e.message}`, "err");
-          showAnalysisBadge(false);
-          setStatus(`Error WP ${w.id}: ${e.message}`);
-          document.getElementById("scores-area").innerHTML =
-            `<div style="color:var(--red);font-size:12px">⚠ ${escHtml(e.message)}</div>`;
-          markers[idx]?.setStyle(mStyle("default", idx === agentIndex));
-          // Don't stopRun on error — let the agent continue
-        }
-      }
-
-      // ═══════════════════════════════════════════════════════
-      // RUN / STEP
-      // ═══════════════════════════════════════════════════════
-      function toggleRun() {
-        isRunning ? stopRun() : startRun();
-      }
-
-      function startRun() {
-        if (!waypoints.length) return;
-        isRunning = true;
-        const btn = document.getElementById("run-btn");
-        btn.innerHTML = "⏹ Stop";
-        btn.classList.add("running");
-        document.getElementById("step-btn").disabled = true;
-        const next = agentIndex >= waypoints.length - 1 ? 0 : agentIndex + 1;
-        log(`Run started from WP index ${next}`, "info");
-        advance(next);
-      }
-
-      async function advance(startIdx) {
-        for (let idx = startIdx; idx < waypoints.length; idx++) {
-          if (!isRunning) break;
-          log(`advance → idx=${idx}`);
-          try {
-            await goTo(idx, true);
-          } catch (e) {
-            log(`advance error at idx=${idx}: ${e.message}`, "err");
-          }
-        }
-        if (isRunning) {
-          log(`Route complete — ${waypoints.length} waypoints`, "ok");
-          setStatus(`Complete — all ${waypoints.length} waypoints`);
-          if (agentMarker && agentIndex >= 0) moveAgent(agentIndex, false);
-          stopRun();
-        }
-      }
-
-      function stopRun() {
-        isRunning = false;
-        const btn = document.getElementById("run-btn");
-        btn.innerHTML = "▶ Run";
-        btn.classList.remove("running");
-        document.getElementById("step-btn").disabled = waypoints.length === 0;
-        if (agentMarker && agentIndex >= 0) moveAgent(agentIndex, false);
-        log("Run stopped");
-      }
-
-      async function stepOnce() {
-        if (isRunning || !waypoints.length) return;
-        const next = agentIndex >= waypoints.length - 1 ? 0 : agentIndex + 1;
-        log(`Step → WP index ${next}`);
-        await goTo(next, false);
-      }
-
-      function updateCounter() {
-        document.getElementById("wp-counter").textContent =
-          agentIndex < 0 ? "" : `${agentIndex + 1} / ${waypoints.length}`;
-      }
-
-      // ═══════════════════════════════════════════════════════
-      // PERSONA
-      // ═══════════════════════════════════════════════════════
-      function onPersonaChange() {
-        const p = document.getElementById("persona-select").value;
-        if (p === currentPersona) return;
-        log(`Persona changed: ${currentPersona} → ${p}`);
-        currentPersona = p;
-        cache = {};
-        agentIndex = -1;
-        resetPanel();
-        if (agentMarker) {
-          map.removeLayer(agentMarker);
-          agentMarker = null;
-        }
-        if (trailLine) {
-          map.removeLayer(trailLine);
-          trailLine = null;
-        }
-        markers.forEach((m) => m.setStyle(mStyle("default", false)));
-        updateCounter();
-        setStatus("Persona changed");
-      }
-
-      // ═══════════════════════════════════════════════════════
-      // RENDER
-      // ═══════════════════════════════════════════════════════
-      function renderResult(result) {
+        if (!res.ok) { const err = await res.json().catch(()=>({detail:res.statusText})); throw new Error(err.detail||res.statusText); }
+        const result = await res.json();
+        const elapsed = ((Date.now()-t0)/1000).toFixed(1);
+        cache[ck] = result;
+        markers[idx]?.setStyle(mStyle(avg(result.scores), true));
         showAnalysisBadge(false);
-        if (result.image_base64) showImageB64(result.image_base64);
+        if (!w.image_path && result.image_base64) {
+          showImageB64(result.image_base64);
+          setAnalysisOverlay(`data:image/jpeg;base64,${result.image_base64}`, w.heading || 0);
+        }
         renderScores(result.scores);
         renderReasoning(result.reasoning);
-        document.getElementById("meta-line").textContent =
-          `${result.processing_time_sec}s · ${result.persona}`;
-      }
-
-      function renderScores(scores) {
-        const area = document.getElementById("scores-area");
-        const dims = Object.keys(scores);
-        if (!dims.length) {
-          area.innerHTML = '<div class="ph">—</div>';
-          return;
-        }
-        area.innerHTML = dims
-          .map((d) => {
-            const v = scores[d] ?? 0;
-            return `<div class="score-row">
-      <div class="score-hdr">
-        <span class="dim-name">${d}</span>
-        <span class="dim-val">${v.toFixed(1)}</span>
-      </div>
-      <div class="bar-track">
-        <div class="bar-fill" id="bar-${d}" style="background:${scoreColor(v)}"></div>
-      </div>
-    </div>`;
-          })
-          .join("");
-        requestAnimationFrame(() =>
-          dims.forEach((d) => {
-            const el = document.getElementById(`bar-${d}`);
-            if (el) el.style.width = `${((scores[d] ?? 0) / 10) * 100}%`;
-          }),
-        );
-      }
-
-      function renderReasoning(reasoning) {
-        const area = document.getElementById("reasoning-area");
-        const dims = Object.keys(reasoning);
-        if (!dims.length) {
-          area.innerHTML = '<div class="ph">—</div>';
-          return;
-        }
-        area.innerHTML = dims
-          .map(
-            (d) => `
-    <div class="r-item">
-      <button class="r-btn open" onclick="toggleR('rd-${d}',this)">
-        <span>${d}</span><span class="chev">▼</span>
-      </button>
-      <div class="r-body open" id="rd-${d}">${escHtml(reasoning[d] || "—")}</div>
-    </div>`,
-          )
-          .join("");
-      }
-
-      function toggleR(id, btn) {
-        document.getElementById(id).classList.toggle("open");
-        btn.classList.toggle("open");
-      }
-
-      // ── image display ──────────────────────────────────────
-      function showImageUrl(url) {
-        // Reset src first to force a fresh load and avoid stale onload callbacks
-        const img = document.getElementById("sv-image");
-        img.onload = null;
-        img.onerror = null;
-        img.src = "";
-
-        img.onload = () => {
-          log(`Image displayed`, "ok");
-          img.style.display = "block";
-          document.getElementById("sv-hint").style.display = "none";
-          showSpinnerOverlay(false);
-          flashSV();
-        };
-        img.onerror = () => {
-          log(`Image load failed: ${url}`, "err");
-          showSpinnerOverlay(true);
-        };
-        log(`Fetching image: ${url}`);
-        img.src = url;
-      }
-
-      function showImageB64(b64) {
-        const img = document.getElementById("sv-image");
-        img.src = `data:image/jpeg;base64,${b64}`;
-        img.style.display = "block";
-        document.getElementById("sv-hint").style.display = "none";
-        showSpinnerOverlay(false);
-        flashSV();
-      }
-
-      function flashSV() {
-        const wrap = document.getElementById("sv-wrap");
-        wrap.classList.remove("flash");
-        void wrap.offsetWidth;
-        wrap.classList.add("flash");
-      }
-
-      function showSpinnerOverlay(v) {
-        // We no longer use a full-screen spinner — image shows first
-        // This only activates when there's no local image (Street View fallback)
-        const hint = document.getElementById("sv-hint");
-        if (v) {
-          hint.innerHTML = `<div class="mini-spin" style="width:20px;height:20px;border:2px solid #e5e5ea;border-top-color:#0071e3;border-radius:50%;animation:spin .7s linear infinite"></div><p>Fetching Street View…</p>`;
-          hint.style.display = "flex";
-          document.getElementById("sv-image").style.display = "none";
-        }
-      }
-
-      function showAnalysisBadge(v, text = "") {
-        const b = document.getElementById("analysis-badge");
-        b.style.display = v ? "flex" : "none";
-        if (text)
-          document.getElementById("analysis-badge-text").textContent = text;
-      }
-
-      function setBadge(text) {
-        const b = document.getElementById("sv-badge");
-        b.textContent = text;
-        b.style.display = text ? "block" : "none";
-      }
-
-      function setHeadingArrow(heading) {
-        const el = document.getElementById("heading-arrow");
-        if (heading === null || heading === undefined) {
-          el.style.display = "none";
-          return;
-        }
-        el.style.display = "flex";
-        document.getElementById("heading-svg").style.transform =
-          `rotate(${heading}deg)`;
-        // compass label: N/NE/E/SE/S/SW/W/NW
-        const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
-        const label = dirs[Math.round(heading / 45) % 8];
-        document.getElementById("heading-label").textContent =
-          `${Math.round(heading)}° ${label}`;
-      }
-
-      function resetPanel() {
+        document.getElementById('meta-line').textContent = `${elapsed}s · ${result.persona}`;
+        log(`WP ${w.id} done — ${elapsed}s — ${Object.entries(result.scores).map(([k,v])=>`${k}:${v.toFixed(1)}`).join(' ')}`, 'ok');
+        setStatus(`WP ${w.id} · ${elapsed}s`);
+      } catch(e) {
+        if (e.name === 'AbortError') { log(`WP ${w.id} — aborted`, 'warn'); return; }
+        log(`WP ${w.id} ERROR: ${e.message}`, 'err');
         showAnalysisBadge(false);
-        const img = document.getElementById("sv-image");
-        img.src = "";
-        img.style.display = "none";
-        document.getElementById("sv-hint").innerHTML =
-          `<span class="icon">🗺</span><p>Select a waypoint or Run Agent</p>`;
-        document.getElementById("sv-hint").style.display = "flex";
-        setBadge("");
-        setHeadingArrow(null);
-        document.getElementById("scores-area").innerHTML =
-          '<div class="ph">—</div>';
-        document.getElementById("reasoning-area").innerHTML =
-          '<div class="ph">—</div>';
-        document.getElementById("meta-line").textContent = "";
+        setStatus(`Error WP ${w.id}: ${e.message}`);
+        document.getElementById('scores-area').innerHTML = `<div style="color:var(--red);font-size:11px">⚠ ${escHtml(e.message)}</div>`;
+        markers[idx]?.setStyle(mStyle('default', idx===agentIndex));
+      }
+    }
+
+    function toggleRun() { isRunning ? stopRun() : startRun(); }
+    function startRun() {
+      if (!waypoints.length) return;
+      isRunning = true;
+      const btn = document.getElementById('run-btn');
+      btn.innerHTML = '⏹ Stop'; btn.classList.add('running');
+      document.getElementById('step-btn').disabled = true;
+      const next = agentIndex >= waypoints.length-1 ? 0 : agentIndex+1;
+      log(`Run started from WP index ${next}`, 'info');
+      advance(next);
+    }
+    async function advance(startIdx) {
+      for (let idx = startIdx; idx < waypoints.length; idx++) {
+        if (!isRunning) break;
+        try { await goTo(idx, true); } catch(e) { log(`advance error at idx=${idx}: ${e.message}`, 'err'); }
+      }
+      if (isRunning) {
+        log(`Route complete — ${waypoints.length} waypoints`, 'ok');
+        setStatus(`Complete — all ${waypoints.length} waypoints`);
+        if (agentMarker && agentIndex >= 0) moveAgent(agentIndex, false);
+        stopRun();
+      }
+    }
+    function stopRun() {
+      isRunning = false;
+      const btn = document.getElementById('run-btn');
+      btn.innerHTML = '▶ Run'; btn.classList.remove('running');
+      document.getElementById('step-btn').disabled = waypoints.length === 0;
+      if (agentMarker && agentIndex >= 0) moveAgent(agentIndex, false);
+      log('Run stopped');
+    }
+    async function stepOnce() {
+      if (isRunning || !waypoints.length) return;
+      const next = agentIndex >= waypoints.length-1 ? 0 : agentIndex+1;
+      await goTo(next, false);
+    }
+    function updateCounter() {
+      document.getElementById('wp-counter').textContent = agentIndex < 0 ? '' : `${agentIndex+1} / ${waypoints.length}`;
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // EXPLORE MODE
+    // ═══════════════════════════════════════════════════════
+    async function exploreStart() {
+      const lat = parseFloat(document.getElementById('exp-lat').value);
+      const lng = parseFloat(document.getElementById('exp-lng').value);
+      if (isNaN(lat)||isNaN(lng)) { showExploreError('Enter valid coordinates.'); return; }
+      clearExploreError();
+      setExploreLoading(true);
+      log(`Explore start: ${lat}, ${lng}`);
+      try {
+        const res = await fetch(`${API}/api/nav/start`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ lat, lng }),
+        });
+        if (!res.ok) { const e = await res.json(); throw new Error(e.detail||res.statusText); }
+        const data = await res.json();
+        updateExploreUI(data, true);
+      } catch(e) {
+        showExploreError(e.message); log(`exploreStart error: ${e.message}`, 'err');
+      } finally { setExploreLoading(false); }
+    }
+
+function updateExploreUI(data, isStart) {
+      currentPano = data;
+      if (isStart) {
+        navPoints = []; navHistory = [data.pano_id];
+        if (navMarker)   { map.removeLayer(navMarker);   navMarker = null; }
+        if (navPolyline) { map.removeLayer(navPolyline); navPolyline = null; }
+      } else {
+        if (navHistory[navHistory.length-1] !== data.pano_id) navHistory.push(data.pano_id);
+        if (navHistory.length > 20) navHistory.shift();
       }
 
-      function setStatus(msg) {
-        document.getElementById("status-msg").textContent = msg;
-      }
-      function escHtml(s) {
-        return String(s)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;");
-      }
+      // Map marker
+      const latlng = [data.lat, data.lng];
+      navPoints.push(latlng);
+      if (navMarker) map.removeLayer(navMarker);
+      navMarker = L.marker(latlng, { icon: L.divIcon({
+        html: '<div style="width:14px;height:14px;background:#0071e3;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);"></div>',
+        className:'', iconSize:[14,14], iconAnchor:[7,7]
+      })}).addTo(map);
+      if (navPolyline) map.removeLayer(navPolyline);
+      if (navPoints.length > 1) navPolyline = L.polyline(navPoints, { color:'#0071e3', dashArray:'6,4', weight:2 }).addTo(map);
+      map.panTo(latlng);
 
-      // ═══════════════════════════════════════════════════════
-      // PERSONAS
-      // ═══════════════════════════════════════════════════════
-      async function loadPersonas() {
-        try {
-          const r = await fetch(`${API}/personas`);
-          const ps = await r.json();
-          document.getElementById("persona-select").innerHTML = ps
-            .map((p) => {
-              const label =
-                p === "objective"
-                  ? "Objective"
-                  : p
-                      .split("_")
-                      .map((w) => w[0].toUpperCase() + w.slice(1))
-                      .join(" ");
-              return `<option value="${p}">${label}</option>`;
-            })
-            .join("");
-          log(`Loaded ${ps.length} personas: ${ps.join(", ")}`, "ok");
-        } catch (e) {
-          log(`loadPersonas error: ${e.message}`, "err");
-        }
+      // sv-pane: interactive panorama (VLM heading overlay set after analyzePano)
+      setPanorama(data.pano_id, 0);
+      setAnalysisOverlay(null, null);
+      setBadge(data.pano_id.slice(0,12)+'…');
+
+      // pano info card
+      document.getElementById('pano-info').innerHTML =
+        `<span class="key">Pano ID</span> ${escHtml(data.pano_id.slice(0,20))}…<br>` +
+        `<span class="key">Lat/Lng</span> ${data.lat.toFixed(5)}, ${data.lng.toFixed(5)}<br>` +
+        `<span class="key">Date</span> ${data.date || 'unknown'}`;
+
+      document.getElementById('pano-section').style.display = '';
+      document.getElementById('analyze-pano-btn').disabled = false;
+      setStatus(`Pano ${data.pano_id.slice(0,10)}…`);
+      log(`Explore: pano=${data.pano_id.slice(0,16)} lat=${data.lat.toFixed(4)} lng=${data.lng.toFixed(4)}`, 'ok');
+
+      analyzePano();
+    }
+
+    async function analyzePano() {
+      if (!currentPano) return;
+      // If panorama navigated to a new position, update currentPano with live panoId
+      if (panorama && panorama.getLocation()) {
+        const loc = panorama.getLocation();
+        if (loc && loc.pano) currentPano.pano_id = loc.pano;
       }
+      showAnalysisBadge(true, 'Analyzing…');
+      setStatus('Analyzing pano…');
+      log(`Analyzing pano ${currentPano.pano_id.slice(0,16)}…`);
+      try {
+        const t0 = Date.now();
+        // Use current panorama POV heading as VLM analysis heading
+        const vlmHeading = panorama ? Math.round(panorama.getPov()?.heading ?? 0) : 0;
+        const res = await fetch(`${API}/analyze`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            lat: currentPano.lat, lon: currentPano.lng,
+            heading: vlmHeading, persona: currentPersona,
+            pano_id: currentPano.pano_id,
+          }),
+        });
+        if (!res.ok) { const e = await res.json().catch(()=>({detail:res.statusText})); throw new Error(e.detail||res.statusText); }
+        const result = await res.json();
+        const elapsed = ((Date.now()-t0)/1000).toFixed(1);
+        showAnalysisBadge(false);
+        const vlmImageUrl = result.image_base64
+          ? `data:image/jpeg;base64,${result.image_base64}`
+          : currentPano.street_view_image_url;
+        setAnalysisOverlay(vlmImageUrl, vlmHeading);
+        renderScores(result.scores);
+        renderReasoning(result.reasoning);
+        document.getElementById('meta-line').textContent = `${elapsed}s · ${result.persona}`;
+        log(`Pano analysis done — ${elapsed}s`, 'ok');
+        setStatus(`Analysis done · ${elapsed}s`);
+      } catch(e) {
+        showAnalysisBadge(false);
+        log(`analyzePano error: ${e.message}`, 'err');
+        setStatus(`Analysis error: ${e.message}`);
+      }
+    }
+
+    function showExploreError(msg) {
+      const el = document.getElementById('explore-error');
+      el.textContent = `⚠ ${msg}`; el.style.display = '';
+    }
+    function clearExploreError() { document.getElementById('explore-error').style.display = 'none'; }
+    function setExploreLoading(on) {
+      document.getElementById('explore-start-btn').disabled = on;
+      document.getElementById('explore-start-btn').textContent = on ? '⏳ Loading…' : '▶ Start';
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // PERSONA
+    // ═══════════════════════════════════════════════════════
+    function onPersonaChange() {
+      const p = document.getElementById('persona-select').value;
+      if (p === currentPersona) return;
+      log(`Persona: ${currentPersona} → ${p}`);
+      currentPersona = p; cache = {}; agentIndex = -1;
+      resetDisplay();
+      if (agentMarker) { map.removeLayer(agentMarker); agentMarker = null; }
+      if (trailLine)   { map.removeLayer(trailLine);   trailLine   = null; }
+      if (currentMode === 'route') markers.forEach(m => m.setStyle(mStyle('default', false)));
+      updateCounter();
+      setStatus('Persona changed');
+    }
+
+    async function loadPersonas() {
+      try {
+        const r = await fetch(`${API}/personas`);
+        const ps = await r.json();
+        document.getElementById('persona-select').innerHTML = ps.map(p => {
+          const label = p === 'objective' ? 'Objective' : p.split('_').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ');
+          return `<option value="${p}">${label}</option>`;
+        }).join('');
+        log(`Loaded ${ps.length} personas`, 'ok');
+      } catch(e) { log(`loadPersonas error: ${e.message}`, 'err'); }
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // RENDER
+    // ═══════════════════════════════════════════════════════
+    function renderResult(result) {
+      showAnalysisBadge(false);
+      if (result.image_base64) showImageB64(result.image_base64);
+      renderScores(result.scores);
+      renderReasoning(result.reasoning);
+      document.getElementById('meta-line').textContent = `${result.processing_time_sec}s · ${result.persona}`;
+    }
+
+    function renderScores(scores) {
+      const area = document.getElementById('scores-area');
+      const dims = Object.keys(scores);
+      if (!dims.length) { area.innerHTML = '<div class="ph">—</div>'; return; }
+      area.innerHTML = dims.map(d => {
+        const v = scores[d] ?? 0;
+        return `<div class="score-row">
+  <div class="score-hdr"><span class="dim-name">${escHtml(d)}</span><span class="dim-val">${v.toFixed(1)}</span></div>
+  <div class="bar-track"><div class="bar-fill" id="bar-${d}" style="background:${scoreColor(v)}"></div></div>
+</div>`;
+      }).join('');
+      requestAnimationFrame(() => dims.forEach(d => {
+        const el = document.getElementById(`bar-${d}`);
+        if (el) el.style.width = `${((scores[d]??0)/10)*100}%`;
+      }));
+    }
+
+    function renderReasoning(reasoning) {
+      const area = document.getElementById('reasoning-area');
+      const dims = Object.keys(reasoning);
+      if (!dims.length) { area.innerHTML = '<div class="ph">—</div>'; return; }
+      area.innerHTML = dims.map(d => `
+<div class="r-item">
+  <button class="r-btn open" onclick="toggleR('rd-${d}',this)">
+    <span>${escHtml(d)}</span><span class="chev">▼</span>
+  </button>
+  <div class="r-body open" id="rd-${d}">${escHtml(reasoning[d]||'—')}</div>
+</div>`).join('');
+    }
+
+    function toggleR(id, btn) {
+      document.getElementById(id).classList.toggle('open');
+      btn.classList.toggle('open');
+    }
+
+    // ── image helpers ──
+    function showImageUrl(url) {
+      if (panorama) panorama.setVisible(false);
+      const img = document.getElementById('sv-image');
+      img.onload = img.onerror = null; img.src = '';
+      img.onload = () => { img.style.display='block'; document.getElementById('sv-hint').style.display='none'; showSpinner(false); flashSV(); log('Image displayed','ok'); };
+      img.onerror = () => { showSpinner(false); log(`Image load failed: ${url}`,'err'); };
+      log(`Fetching image: ${url.slice(0,60)}…`);
+      img.src = url;
+    }
+    function showImageB64(b64) {
+      if (panorama) panorama.setVisible(false);
+      const img = document.getElementById('sv-image');
+      img.src = `data:image/jpeg;base64,${b64}`;
+      img.style.display = 'block';
+      document.getElementById('sv-hint').style.display = 'none';
+      showSpinner(false); flashSV();
+    }
+    function flashSV() {
+      const p = document.getElementById('sv-pane');
+      p.classList.remove('flash'); void p.offsetWidth; p.classList.add('flash');
+    }
+    function showSpinner(v) {
+      const hint = document.getElementById('sv-hint');
+      if (v) {
+        hint.innerHTML = `<div class="mini-spin" style="width:20px;height:20px;border:2px solid #e5e5ea;border-top-color:#0071e3;border-radius:50%;animation:spin .7s linear infinite"></div><p>Loading…</p>`;
+        hint.style.display = 'flex';
+        document.getElementById('sv-image').style.display = 'none';
+      }
+    }
+    function showAnalysisBadge(v, text='') {
+      const b = document.getElementById('analysis-badge');
+      b.style.display = v ? 'flex' : 'none';
+      if (text) document.getElementById('analysis-badge-text').textContent = text;
+    }
+    function setBadge(text) {
+      const b = document.getElementById('sv-badge');
+      b.textContent = text; b.style.display = text ? 'block' : 'none';
+    }
+    function resetDisplay() {
+      showAnalysisBadge(false);
+      if (panorama) panorama.setVisible(false);
+      const img = document.getElementById('sv-image');
+      img.src = ''; img.style.display = 'none';
+      document.getElementById('sv-hint').innerHTML = `<span class="icon">🗺</span><p>Select a waypoint or start Explore</p>`;
+      document.getElementById('sv-hint').style.display = 'flex';
+      setBadge(''); setAnalysisOverlay(null, null);
+      document.getElementById('scores-area').innerHTML = '<div class="ph">—</div>';
+      document.getElementById('reasoning-area').innerHTML = '<div class="ph">—</div>';
+      document.getElementById('meta-line').textContent = '';
+      document.getElementById('wp-info').innerHTML = '';
+    }
+    function setStatus(msg) { document.getElementById('status-msg').textContent = msg; }
+
+    function openVlmLightbox() {
+      const src = document.getElementById('vlm-thumb').src;
+      if (!src) return;
+      document.getElementById('vlm-lightbox-img').src = src;
+      document.getElementById('vlm-lightbox-label').textContent =
+        `Agent view · ${document.getElementById('vlm-heading-label').textContent}`;
+      document.getElementById('vlm-lightbox').classList.add('open');
+    }
+    function closeVlmLightbox() {
+      document.getElementById('vlm-lightbox').classList.remove('open');
+    }
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeVlmLightbox();
+    });
     </script>
+
+  <!-- VLM image lightbox -->
+  <div id="vlm-lightbox" onclick="closeVlmLightbox()">
+    <button id="vlm-lightbox-close" onclick="closeVlmLightbox()">✕</button>
+    <img id="vlm-lightbox-img" src="" alt="Agent view" onclick="event.stopPropagation()" />
+    <div id="vlm-lightbox-label"></div>
+  </div>
   </body>
 </html>

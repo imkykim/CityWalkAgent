@@ -2,6 +2,7 @@
 demo/server.py — FastAPI backend for CityWalk interactive demo
 
 Serves waypoint data, runs VLM analysis on demand, and serves the frontend.
+Also provides Street View navigation via Google Map Tiles API (merged from nav_server.py).
 """
 
 import asyncio
@@ -12,7 +13,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import httpx
 import uvicorn
@@ -73,6 +74,94 @@ if _static_dir.is_dir():
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
 
+# ── Map Tiles session (merged from nav_server.py) ─────────────────────────────
+
+class MapTilesSession:
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self._token: Optional[str] = None
+        self._expiry: float = 0
+
+    async def get_token(self) -> str:
+        if self._token and time.time() < self._expiry - 3600:
+            return self._token
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://tile.googleapis.com/v1/createSession",
+                params={"key": self.api_key},
+                json={"mapType": "streetview", "language": "en", "region": "US"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        self._token = data["session"]
+        self._expiry = float(data["expiry"])
+        return self._token
+
+    async def coord_to_pano_id(self, lat: float, lng: float) -> Optional[str]:
+        token = await self.get_token()
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://tile.googleapis.com/v1/streetview/panoIds",
+                params={"session": token, "key": self.api_key},
+                json={"locations": [{"lat": lat, "lng": lng}], "radius": 50},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        pano_ids = data.get("panoIds", [])
+        if not pano_ids or pano_ids[0] == "":
+            return None
+        return pano_ids[0]
+
+    async def get_metadata(self, pano_id: str) -> dict:
+        token = await self.get_token()
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://tile.googleapis.com/v1/streetview/metadata",
+                params={"session": token, "key": self.api_key, "panoId": pano_id},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+
+_nav_session: Optional[MapTilesSession] = None
+
+
+def _get_nav_session() -> MapTilesSession:
+    global _nav_session
+    if _nav_session is None:
+        if not GOOGLE_API_KEY:
+            raise HTTPException(
+                status_code=500,
+                detail="GOOGLE_MAPS_API_KEY not set. Add it to .env.",
+            )
+        _nav_session = MapTilesSession(GOOGLE_API_KEY)
+    return _nav_session
+
+
+def _make_sv_url(pano_id: str, heading: float = 0) -> str:
+    return (
+        f"https://maps.googleapis.com/maps/api/streetview"
+        f"?pano={pano_id}&size=640x640&heading={heading}&fov=90&pitch=0&key={GOOGLE_API_KEY}"
+    )
+
+
+def _build_pano_response(pano_id: str, metadata: dict, heading: float = 0) -> dict:
+    return {
+        "pano_id": pano_id,
+        "lat": metadata.get("lat", 0),
+        "lng": metadata.get("lng", 0),
+        "links": metadata.get("links", []),
+        "is_intersection": len(metadata.get("links", [])) >= 3,
+        "link_count": len(metadata.get("links", [])),
+        "street_view_image_url": _make_sv_url(pano_id, heading),
+        "date": metadata.get("date"),
+        "copyright": metadata.get("copyright"),
+    }
+
+
 # ── request/response models ───────────────────────────────────────────────────
 class AnalyzeRequest(BaseModel):
     lat: float
@@ -80,7 +169,18 @@ class AnalyzeRequest(BaseModel):
     heading: float = 0.0
     persona: str = "objective"
     image_path: Optional[str] = None
+    pano_id: Optional[str] = None      # for navigation mode
     waypoint_id: Optional[int] = None
+
+
+class NavStartBody(BaseModel):
+    lat: float
+    lng: float
+
+
+class NavNavigateBody(BaseModel):
+    pano_id: str
+    heading: Optional[float] = None
 
 
 class AnalyzeResponse(BaseModel):
@@ -220,6 +320,12 @@ async def get_personas():
     return ["objective"] + list(ENHANCED_PERSONALITIES.keys())
 
 
+@app.get("/api/maps-key")
+async def maps_key():
+    """Return Google Maps JS API key for frontend StreetViewPanorama."""
+    return {"key": GOOGLE_API_KEY or ""}
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _resolve_image_path(entry: dict, folder: Path) -> Optional[Path]:
@@ -282,7 +388,7 @@ def _extract_heading(entry: dict, path: Optional[Path]) -> float:
 
 
 async def _get_image_bytes(req: AnalyzeRequest) -> bytes:
-    """Fetch image bytes from local file or Google Street View API."""
+    """Fetch image bytes from local file, pano ID, or lat/lon Street View."""
     # Local file path provided
     if req.image_path:
         p = Path(req.image_path)
@@ -290,14 +396,22 @@ async def _get_image_bytes(req: AnalyzeRequest) -> bytes:
             return p.read_bytes()
         raise HTTPException(status_code=400, detail=f"Image file not found: {req.image_path}")
 
-    # Fall back to Google Street View
     if not GOOGLE_API_KEY:
         raise HTTPException(
             status_code=400,
-            detail="No image_path provided and GOOGLE_MAPS_API_KEY not set. "
-                   "Provide image_path or set the API key in .env.",
+            detail="No image_path provided and GOOGLE_MAPS_API_KEY not set.",
         )
 
+    # Navigation mode: fetch by pano_id
+    if req.pano_id:
+        url = _make_sv_url(req.pano_id, req.heading)
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail="Street View API error (pano)")
+            return resp.content
+
+    # Fall back to lat/lon Street View
     url = "https://maps.googleapis.com/maps/api/streetview"
     params = {
         "size": "640x640",
@@ -310,6 +424,52 @@ async def _get_image_bytes(req: AnalyzeRequest) -> bytes:
         if resp.status_code != 200:
             raise HTTPException(status_code=502, detail="Street View API error")
         return resp.content
+
+
+# ── navigation endpoints (merged from nav_server.py) ──────────────────────────
+
+@app.get("/api/nav/status")
+async def nav_status():
+    """Check Google Maps API session validity."""
+    if not GOOGLE_API_KEY:
+        return {"api_key_set": False, "session_ok": False, "token_preview": "", "error": "API key not set"}
+    try:
+        session = _get_nav_session()
+        token = await session.get_token()
+        return {"api_key_set": True, "session_ok": True, "token_preview": token[:20] + "...", "error": None}
+    except httpx.HTTPError as e:
+        return {"api_key_set": True, "session_ok": False, "token_preview": "", "error": str(e)}
+    except Exception as e:
+        return {"api_key_set": True, "session_ok": False, "token_preview": "", "error": str(e)}
+
+
+@app.post("/api/nav/start")
+async def nav_start(body: NavStartBody):
+    """{ lat, lng } → PanoResponse"""
+    session = _get_nav_session()
+    try:
+        pano_id = await session.coord_to_pano_id(body.lat, body.lng)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503, detail=f"Map Tiles API error: {e}")
+    if pano_id is None:
+        raise HTTPException(status_code=404, detail="No Street View panorama found near these coordinates.")
+    try:
+        metadata = await session.get_metadata(pano_id)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503, detail=f"Metadata fetch error: {e}")
+    return _build_pano_response(pano_id, metadata, heading=0)
+
+
+@app.post("/api/nav/navigate")
+async def nav_navigate(body: NavNavigateBody):
+    """{ pano_id, heading? } → PanoResponse"""
+    session = _get_nav_session()
+    try:
+        metadata = await session.get_metadata(body.pano_id)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=503, detail=f"Map Tiles API error: {e}")
+    heading = body.heading if body.heading is not None else 0
+    return _build_pano_response(body.pano_id, metadata, heading=heading)
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
