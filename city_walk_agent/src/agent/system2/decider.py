@@ -86,6 +86,10 @@ class Decider:
         )
 
         ltm_text = _format_ltm_patterns(ltm_patterns if ltm_patterns else None)
+        self.logger.debug(
+            f"[Decider] waypoint={waypoint_id} ltm_text preview: "
+            f"{ltm_text[:120].replace(chr(10), ' | ')}"
+        )
 
         key_concern_text = interpretation.get("key_concern") or "(none identified)"
 

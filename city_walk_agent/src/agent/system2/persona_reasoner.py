@@ -282,7 +282,11 @@ class PersonaReasoner:
             processing_time_seconds=time.time() - start,
             memory_influence={
                 "stm_waypoints": len(stm_context.get("recent_scores", [])),
-                "ltm_patterns": len(ltm_patterns) if ltm_patterns else 0,
+                "ltm_patterns": (
+                    len(ltm_patterns.get("reasoning_episodes", []))
+                    if isinstance(ltm_patterns, dict)
+                    else len(ltm_patterns) if ltm_patterns else 0
+                ),
             },
         )
 

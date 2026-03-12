@@ -504,6 +504,17 @@ class MemoryManager:
             waypoint_analysis, "objective_reasoning", getattr(waypoint_analysis, "neutral_reasoning", {})
         )
 
+        route_stats = self._compute_route_stats()
+        self.logger.debug(
+            "Route stats computed for S2 context",
+            waypoints_so_far=route_stats.get("waypoints_so_far", 0),
+            overall_trend=route_stats.get("overall_trend", "unknown"),
+            worst_dimension=route_stats.get("worst_dimension", "N/A"),
+            current_trajectory=route_stats.get("current_trajectory", 0.0),
+            barrier_segments=route_stats.get("barrier_segments", []),
+            reasoning_episodes=len(self._route_reasoning_log),
+        )
+
         context = {
             "trigger_reason": trigger_reason or TriggerReason.VISUAL_CHANGE,
             "waypoint_analysis": {
@@ -521,7 +532,7 @@ class MemoryManager:
             "stm_context": stm_context,
             "recent_context": recent_context,
             "ltm_patterns": {
-                "route_stats": self._compute_route_stats(),
+                "route_stats": route_stats,
                 "reasoning_episodes": list(self._route_reasoning_log),
             },
             "personality": personality_info,
@@ -611,6 +622,11 @@ class MemoryManager:
             "waypoint_id": waypoint_analysis.waypoint_id,
             "scores": dict(persona_scores),
         })
+        self.logger.debug(
+            "Route score history updated",
+            waypoint_id=waypoint_analysis.waypoint_id,
+            history_size=len(self._route_score_history),
+        )
 
         self.logger.debug(
             "Waypoint added to STM",
