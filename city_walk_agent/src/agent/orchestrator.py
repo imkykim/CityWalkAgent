@@ -95,12 +95,12 @@ class CityWalkAgent(BaseAgent):
 
         # System 2
         self._interpreter = None
-        self._decider     = None
-        self._planner     = None
-        self._reporter    = None
+        self._decider = None
+        self._planner = None
+        self._reporter = None
 
         # Configurable thresholds (can be overridden via set_thresholds())
-        self._phash_threshold: int = 30  # Default for System 2 trigger
+        self._phash_threshold: int = 40  # Default for System 2 trigger
 
         # Initialize state (preferences no longer used in dual evaluation system)
         self.state.preferences = {}
@@ -111,9 +111,7 @@ class CityWalkAgent(BaseAgent):
         self._persona_reasoner = None
         self._memory_manager = None
 
-        self.logger.info(
-            f"Agent: {personality.name} | framework={self.framework_id}"
-        )
+        self.logger.info(f"Agent: {personality.name} | framework={self.framework_id}")
 
     @classmethod
     def from_preset(
@@ -239,7 +237,9 @@ class CityWalkAgent(BaseAgent):
             # Strategy 2: If still not found, look for waypoint pattern in folder
             if image_candidate is None or not image_candidate.exists():
                 # Try pattern: waypoint_NNN_*.jpg
-                pattern_candidates = list(folder_path.glob(f"waypoint_{sequence_id:03d}_*.jpg"))
+                pattern_candidates = list(
+                    folder_path.glob(f"waypoint_{sequence_id:03d}_*.jpg")
+                )
                 if pattern_candidates:
                     image_candidate = pattern_candidates[0]
 
@@ -335,7 +335,9 @@ class CityWalkAgent(BaseAgent):
             enhanced_persona = self._get_enhanced_persona()
 
             if not enhanced_persona:
-                self.logger.warning("No persona configured — using objective evaluation only")
+                self.logger.warning(
+                    "No persona configured — using objective evaluation only"
+                )
 
             self._continuous_analyzer = ContinuousAnalyzer(
                 framework_id=self.framework_id,
@@ -368,8 +370,8 @@ class CityWalkAgent(BaseAgent):
         if self._persona_reasoner is None:
             self._persona_reasoner = PersonaReasoner(
                 framework_id=self.framework_id,
-                distance_trigger_meters=600.0,
-                score_delta_threshold=1.5,
+                distance_trigger_meters=800.0,
+                score_delta_threshold=2.0,
             )
             self.logger.debug(
                 "PersonaReasoner initialized", framework_id=self.framework_id
@@ -421,9 +423,8 @@ class CityWalkAgent(BaseAgent):
         """Lazy-load System 2 Interpreter."""
         if self._interpreter is None:
             from src.agent.system2 import Interpreter
-            self._interpreter = Interpreter(
-                framework_id=self.framework_id
-            )
+
+            self._interpreter = Interpreter(framework_id=self.framework_id)
             self.logger.debug("System2 Interpreter initialized")
         return self._interpreter
 
@@ -432,9 +433,8 @@ class CityWalkAgent(BaseAgent):
         """Lazy-load System 2 Decider."""
         if self._decider is None:
             from src.agent.system2 import Decider
-            self._decider = Decider(
-                framework_id=self.framework_id
-            )
+
+            self._decider = Decider(framework_id=self.framework_id)
             self.logger.debug("System2 Decider initialized")
         return self._decider
 
@@ -443,9 +443,8 @@ class CityWalkAgent(BaseAgent):
         """Lazy-load System 2 Planner."""
         if self._planner is None:
             from src.agent.system2 import Planner
-            self._planner = Planner(
-                framework_id=self.framework_id
-            )
+
+            self._planner = Planner(framework_id=self.framework_id)
             self.logger.debug("System2 Planner initialized")
         return self._planner
 
@@ -454,9 +453,8 @@ class CityWalkAgent(BaseAgent):
         """Lazy-load System 2 Reporter."""
         if self._reporter is None:
             from src.agent.system2 import Reporter
-            self._reporter = Reporter(
-                framework_id=self.framework_id
-            )
+
+            self._reporter = Reporter(framework_id=self.framework_id)
             self.logger.debug("System2 Reporter initialized")
         return self._reporter
 
@@ -741,7 +739,7 @@ class CityWalkAgent(BaseAgent):
         self,
         image_paths: List[Path],
         waypoints: List[Any],
-        metadata: List[Dict[str, Any]]
+        metadata: List[Dict[str, Any]],
     ) -> Tuple[List[Path], List[Any], List[Dict[str, Any]]]:
         """Validate waypoint images and reconstruct sequence for missing files.
 
@@ -775,11 +773,12 @@ class CityWalkAgent(BaseAgent):
         valid_metadata: List[Dict[str, Any]] = []
         missing_count = 0
 
-        for idx, (img_path, waypoint, meta) in enumerate(zip(image_paths, waypoints, metadata)):
+        for idx, (img_path, waypoint, meta) in enumerate(
+            zip(image_paths, waypoints, metadata)
+        ):
             if not img_path.exists():
                 self.logger.warning(
-                    f"Missing image file, skipping waypoint {idx}",
-                    path=str(img_path)
+                    f"Missing image file, skipping waypoint {idx}", path=str(img_path)
                 )
                 missing_count += 1
             else:
@@ -803,7 +802,7 @@ class CityWalkAgent(BaseAgent):
                 original_count=total_count,
                 valid_count=valid_count,
                 missing_count=missing_count,
-                retention_rate=f"{retention_rate:.1f}%"
+                retention_rate=f"{retention_rate:.1f}%",
             )
         else:
             self.logger.debug("All waypoint images validated", total_count=total_count)
@@ -929,17 +928,14 @@ class CityWalkAgent(BaseAgent):
             for i in range(len(waypoints) - 1):
                 wp1 = waypoints[i]
                 wp2 = waypoints[i + 1]
-                new_distance += geodesic(
-                    (wp1.lat, wp1.lon),
-                    (wp2.lat, wp2.lon)
-                ).meters
+                new_distance += geodesic((wp1.lat, wp1.lon), (wp2.lat, wp2.lon)).meters
 
             route_length_km = new_distance / 1000.0
 
             self.logger.info(
                 "Route metrics updated after validation",
                 valid_waypoints=len(waypoints),
-                length_km=route_length_km
+                length_km=route_length_km,
             )
 
         # ====================================================================
@@ -948,14 +944,20 @@ class CityWalkAgent(BaseAgent):
         # waypoint's VLM call receives prior context.
         # ====================================================================
         if skip_reasoning:
-            self.logger.debug("Phase 2+3: Continuous analysis (reasoning SKIPPED — system1-only mode)")
+            self.logger.debug(
+                "Phase 2+3: Continuous analysis (reasoning SKIPPED — system1-only mode)"
+            )
         else:
-            self.logger.debug("Phase 2+3: Interleaved continuous analysis + memory + reasoning")
+            self.logger.debug(
+                "Phase 2+3: Interleaved continuous analysis + memory + reasoning"
+            )
 
         # Reset state for new route analysis
         self.cognitive.reset()
         self.continuous_analyzer.reset()
-        self.logger.debug("CognitiveController and ContinuousAnalyzer state reset for new route")
+        self.logger.debug(
+            "CognitiveController and ContinuousAnalyzer state reset for new route"
+        )
 
         analysis_results = []
         reasoning_results = []
@@ -966,15 +968,14 @@ class CityWalkAgent(BaseAgent):
             # Step A: CognitiveController detects visual change
             is_first_waypoint = i == 0
             visual_change_result = self.cognitive.detect_visual_change(
-                image_path=img_path,
-                force=is_first_waypoint
+                image_path=img_path, force=is_first_waypoint
             )
 
             self.logger.debug(
                 f"Visual change detection for waypoint {i}",
                 changed=visual_change_result.changed,
                 distance=visual_change_result.phash_distance,
-                reason=visual_change_result.reason
+                reason=visual_change_result.reason,
             )
 
             # Step B: ContinuousAnalyzer analyzes waypoint (STM already populated by prior iterations)
@@ -983,7 +984,7 @@ class CityWalkAgent(BaseAgent):
                 image_path=img_path,
                 metadata=meta,
                 visual_change_detected=visual_change_result.changed,
-                phash_distance=visual_change_result.phash_distance
+                phash_distance=visual_change_result.phash_distance,
             )
 
             self.continuous_analyzer.analysis_history.append(analysis)
@@ -994,7 +995,11 @@ class CityWalkAgent(BaseAgent):
 
             # score_delta 계산
             current_scores = analysis.persona_scores or analysis.scores
-            current_avg = sum(current_scores.values()) / len(current_scores) if current_scores else 5.0
+            current_avg = (
+                sum(current_scores.values()) / len(current_scores)
+                if current_scores
+                else 5.0
+            )
             prev_avg = self._get_prev_avg_score(stm_context_for_trigger)
             score_delta = abs(current_avg - prev_avg)
 
@@ -1414,7 +1419,9 @@ class CityWalkAgent(BaseAgent):
             # Strategy 2: If still not found, look for waypoint pattern in folder
             if image_candidate is None or not image_candidate.exists():
                 # Try pattern: waypoint_NNN_*.jpg
-                pattern_candidates = list(folder_path.glob(f"waypoint_{sequence_id:03d}_*.jpg"))
+                pattern_candidates = list(
+                    folder_path.glob(f"waypoint_{sequence_id:03d}_*.jpg")
+                )
                 if pattern_candidates:
                     image_candidate = pattern_candidates[0]
 
@@ -1467,7 +1474,9 @@ class CityWalkAgent(BaseAgent):
             interval_meters=int(interval),
         )
 
-        self.logger.debug("Route loaded", route_id=route_id, waypoints=len(resolved_waypoints))
+        self.logger.debug(
+            "Route loaded", route_id=route_id, waypoints=len(resolved_waypoints)
+        )
 
         # Prepare metadata for continuous analyzer
         waypoint_metadata = [
@@ -1493,14 +1502,15 @@ class CityWalkAgent(BaseAgent):
         for i in range(len(resolved_waypoints) - 1):
             wp1 = resolved_waypoints[i]
             wp2 = resolved_waypoints[i + 1]
-            route_length_km += geodesic(
-                (wp1.lat, wp1.lon),
-                (wp2.lat, wp2.lon)
-            ).meters
+            route_length_km += geodesic((wp1.lat, wp1.lon), (wp2.lat, wp2.lon)).meters
         route_length_km /= 1000.0
 
         enhanced_persona = self._get_enhanced_persona()
-        persona_name = getattr(enhanced_persona, 'name', 'objective') if enhanced_persona is not None else 'objective'
+        persona_name = (
+            getattr(enhanced_persona, "name", "objective")
+            if enhanced_persona is not None
+            else "objective"
+        )
         self.logger.info(
             f"Route: {len(resolved_waypoints)} waypoints, {route_length_km:.2f} km"
             f" | persona={persona_name}"
@@ -1512,33 +1522,40 @@ class CityWalkAgent(BaseAgent):
         # waypoint's VLM call receives prior context.
         # ====================================================================
         if skip_reasoning:
-            self.logger.debug("Phase 2+3: Continuous analysis (reasoning SKIPPED — system1-only mode)")
+            self.logger.debug(
+                "Phase 2+3: Continuous analysis (reasoning SKIPPED — system1-only mode)"
+            )
         else:
-            self.logger.debug("Phase 2+3: Interleaved continuous analysis + memory + reasoning")
+            self.logger.debug(
+                "Phase 2+3: Interleaved continuous analysis + memory + reasoning"
+            )
 
         # Reset state for new route analysis
         self.cognitive.reset()
         self.continuous_analyzer.reset()
-        self.logger.debug("CognitiveController and ContinuousAnalyzer state reset for new route")
+        self.logger.debug(
+            "CognitiveController and ContinuousAnalyzer state reset for new route"
+        )
 
         analysis_results = []
         reasoning_results = []
         memory_manager = self.memory_manager
         waypoint_results: List[Dict[str, Any]] = []
 
-        for i, (img_path, meta) in enumerate(zip(resolved_image_paths, waypoint_metadata)):
+        for i, (img_path, meta) in enumerate(
+            zip(resolved_image_paths, waypoint_metadata)
+        ):
             # Step A: CognitiveController detects visual change
             is_first_waypoint = i == 0
             visual_change_result = self.cognitive.detect_visual_change(
-                image_path=img_path,
-                force=is_first_waypoint
+                image_path=img_path, force=is_first_waypoint
             )
 
             self.logger.debug(
                 f"Visual change detection for waypoint {i}",
                 changed=visual_change_result.changed,
                 distance=visual_change_result.phash_distance,
-                reason=visual_change_result.reason
+                reason=visual_change_result.reason,
             )
 
             # Step B: ContinuousAnalyzer analyzes waypoint (STM already populated by prior iterations)
@@ -1547,7 +1564,7 @@ class CityWalkAgent(BaseAgent):
                 image_path=img_path,
                 metadata=meta,
                 visual_change_detected=visual_change_result.changed,
-                phash_distance=visual_change_result.phash_distance
+                phash_distance=visual_change_result.phash_distance,
             )
 
             self.continuous_analyzer.analysis_history.append(analysis)
@@ -1558,7 +1575,11 @@ class CityWalkAgent(BaseAgent):
 
             # score_delta 계산
             current_scores = analysis.persona_scores or analysis.scores
-            current_avg = sum(current_scores.values()) / len(current_scores) if current_scores else 5.0
+            current_avg = (
+                sum(current_scores.values()) / len(current_scores)
+                if current_scores
+                else 5.0
+            )
             prev_avg = self._get_prev_avg_score(stm_context_for_trigger)
             score_delta = abs(current_avg - prev_avg)
 
@@ -1915,21 +1936,27 @@ class CityWalkAgent(BaseAgent):
         evidence = System1Evidence(
             waypoint_results=analysis_results,
             route_metadata=route_metadata,
-            reasoning_results=reasoning_results if reasoning_results is not None else [],
+            reasoning_results=(
+                reasoning_results if reasoning_results is not None else []
+            ),
         )
 
         interpret_result = self.interpreter.interpret(evidence, enhanced_persona)
-        decide_result    = self.decider.decide(evidence, interpret_result, enhanced_persona)
-        plan_result      = self.planner.plan(evidence, decide_result, candidate_routes, enhanced_persona)
-        report_result    = self.reporter.report(
+        decide_result = self.decider.decide(
+            evidence, interpret_result, enhanced_persona
+        )
+        plan_result = self.planner.plan(
+            evidence, decide_result, candidate_routes, enhanced_persona
+        )
+        report_result = self.reporter.report(
             evidence, interpret_result, decide_result, plan_result, enhanced_persona
         )
 
         return {
             "interpret": interpret_result,
-            "decide":    decide_result,
-            "plan":      plan_result,
-            "report":    report_result,
+            "decide": decide_result,
+            "plan": plan_result,
+            "report": report_result,
         }
 
     def _compute_dual_system_statistics(

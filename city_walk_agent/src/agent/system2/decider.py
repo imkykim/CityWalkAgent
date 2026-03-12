@@ -87,6 +87,8 @@ class Decider:
 
         ltm_text = _format_ltm_patterns(ltm_patterns[:3] if ltm_patterns else None)
 
+        key_concern_text = interpretation.get("key_concern") or "(none identified)"
+
         prompt = f"""You are making a routing decision for a specific persona at a street waypoint.
 
 Persona: {persona_name}
@@ -94,6 +96,8 @@ Description: {persona_desc}
 
 Waypoint interpretation:
 {interpretation.get("text", "(none)")}
+
+Key concern for this persona: {key_concern_text}
 
 Current System 1 scores:
 {scores_text}

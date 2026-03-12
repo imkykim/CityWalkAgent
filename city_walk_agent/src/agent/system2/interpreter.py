@@ -136,6 +136,7 @@ Respond ONLY with valid JSON matching this exact schema:
                 "text": result.get("text", ""),
                 "score_change_reason": result.get("score_change_reason"),
                 "persona_divergence": None,
+                "key_concern": result.get("key_concern"),
             }
 
         self.logger.warning(f"[Interpreter] LLM failed → fallback heuristic")
@@ -166,7 +167,7 @@ Respond ONLY with valid JSON matching this exact schema:
                 text += "Consistent with recent conditions."
         else:
             text += "No prior context — first triggered evaluation."
-        return {"text": text, "score_change_reason": None, "persona_divergence": None}
+        return {"text": text, "score_change_reason": None, "persona_divergence": None, "key_concern": None}
 
 
 def _explain_trigger(trigger_reason: Any) -> str:

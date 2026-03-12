@@ -43,7 +43,8 @@ class ReasoningResult:
     # Step 1: Interpret
     interpretation: str
     score_change_reason: Optional[str]
-    persona_divergence: Optional[str]
+    persona_divergence: Optional[str]   # reserved for future multi-persona comparison
+    key_concern: Optional[str]          # most important concern for this persona at this waypoint
     # Step 2: Decide
     significance: str                    # "high" | "medium" | "low"
     avoid_recommendation: bool
@@ -266,6 +267,7 @@ class PersonaReasoner:
             interpretation=interpretation.get("text", ""),
             score_change_reason=interpretation.get("score_change_reason"),
             persona_divergence=interpretation.get("persona_divergence"),
+            key_concern=interpretation.get("key_concern"),
             significance=decision.get("significance", "medium"),
             avoid_recommendation=decision.get("avoid", False),
             decision_reason=decision.get("reason"),
@@ -492,6 +494,7 @@ class PersonaReasoner:
             interpretation=f"System 2 reasoning failed: {error}.",
             score_change_reason=None,
             persona_divergence=None,
+            key_concern=None,
             significance="low",
             avoid_recommendation=False,
             decision_reason=None,

@@ -90,6 +90,8 @@ class Reporter:
         reason = decision.get("reason", "")
         concerns = decision.get("concerns", [])
 
+        key_concern_text = interpretation.get("key_concern") or "(none identified)"
+
         prompt = f"""You are generating a concise, actionable walking recommendation for a specific persona.
 
 Persona: {persona_name}
@@ -97,6 +99,8 @@ Waypoint ID: {waypoint_id}
 
 Situation summary:
 {interpretation.get("text", "(none)")}
+
+Key concern: {key_concern_text}
 
 Decision: {"AVOID this segment" if avoid else "This segment is acceptable"}
 Reason: {reason or "(none)"}
