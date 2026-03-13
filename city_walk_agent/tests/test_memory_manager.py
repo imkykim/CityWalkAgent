@@ -439,7 +439,7 @@ def test_prepare_context_includes_personality(configured_memory_manager):
 # ============================================================================
 
 def test_process_waypoint_filters_normal(configured_memory_manager):
-    """Test process_waypoint filters out normal waypoints."""
+    """Test process_waypoint returns None for non-triggered waypoints (STM still written)."""
     waypoint = create_waypoint_analysis(
         waypoint_id=1,
         scores={"safety": 7.0, "comfort": 7.0},
@@ -449,7 +449,8 @@ def test_process_waypoint_filters_normal(configured_memory_manager):
     result = configured_memory_manager.process_waypoint(waypoint)
 
     assert result is None
-    assert configured_memory_manager.stm.get_memory_size() == 0
+    # STM receives ALL waypoints now regardless of attention gate
+    assert configured_memory_manager.stm.get_memory_size() == 1
 
 
 def test_process_waypoint_adds_to_stm(configured_memory_manager):
@@ -676,7 +677,7 @@ def test_statistics_reset_after_route_completion(configured_memory_manager):
 
 
 # ============================================================================
-# Test 10: Within-route LTM accumulation
+# Test 10: Within-route reasoning log (unchanged)
 # ============================================================================
 
 def test_route_reasoning_log_accumulates(memory_manager):
@@ -700,25 +701,6 @@ def test_route_reasoning_log_accumulates(memory_manager):
     assert entry["key_concern"] == "Narrow sidewalk"
 
 
-def test_prepare_context_ltm_patterns_is_dict(configured_memory_manager):
-    """Test prepare_context_for_reasoning returns ltm_patterns as a dict."""
-    from src.agent.system2.persona_reasoner import TriggerReason
-
-    waypoint = create_waypoint_analysis(
-        waypoint_id=1,
-        scores={"safety": 7.0, "comfort": 7.0},
-        visual_change=True,
-    )
-    context = configured_memory_manager.prepare_context_for_reasoning(
-        waypoint, trigger_reason=TriggerReason.VISUAL_CHANGE
-    )
-
-    ltm = context["ltm_patterns"]
-    assert isinstance(ltm, dict)
-    assert "route_stats" in ltm
-    assert "reasoning_episodes" in ltm
-
-
 def test_route_reasoning_log_cleared_after_complete_route(configured_memory_manager):
     """Test _route_reasoning_log is reset after complete_route."""
     class FakeResult:
@@ -738,11 +720,64 @@ def test_route_reasoning_log_cleared_after_complete_route(configured_memory_mana
 
 
 # ============================================================================
-# Test 11: Route score history and statistics
+# Test 11: STM receives ALL waypoints (no gate blocking)
 # ============================================================================
 
-def test_route_score_history_accumulates(configured_memory_manager):
-    """Test _route_score_history accumulates for every waypoint passing attention gate."""
+def test_stm_receives_all_waypoints_regardless_of_score(configured_memory_manager):
+    """STM should receive every waypoint, even those that would have failed the gate."""
+    # Normal-scoring waypoints that have no visual change, no low scores, no anomaly
+    # The first one won't have STM context so can't compute anomaly — add 3 similar first
+    for i in range(3):
+        wp = create_waypoint_analysis(
+            waypoint_id=i,
+            scores={"safety": 7.0, "comfort": 7.0},
+            visual_change=True,
+        )
+        configured_memory_manager.process_waypoint(wp, triggered=False)
+
+    # This waypoint would have been filtered by the old gate (similar scores, no visual change)
+    normal_wp = create_waypoint_analysis(
+        waypoint_id=4,
+        scores={"safety": 7.1, "comfort": 7.2},
+        visual_change=False,
+    )
+    configured_memory_manager.process_waypoint(normal_wp, triggered=False)
+
+    # STM window is 5; all 4 should be in STM
+    assert configured_memory_manager.stm.get_memory_size() == 4
+
+
+def test_synthesize_summary_uses_persona_reasoning(memory_manager):
+    """Test _synthesize_summary extracts text from persona_reasoning."""
+    wp = create_waypoint_analysis(
+        waypoint_id=1,
+        scores={"safety": 7.0},
+    )
+    # Attach persona_reasoning
+    wp.persona_reasoning = {
+        "safety": "Wide sidewalk with good lighting. No obstacles.",
+        "lively": "Busy commercial street. Many pedestrians.",
+    }
+    summary = memory_manager._synthesize_summary(wp)
+    assert "Wide sidewalk" in summary
+    assert len(summary) <= 120
+
+
+def test_synthesize_summary_fallback(memory_manager):
+    """Test _synthesize_summary falls back to waypoint ID when no reasoning."""
+    wp = create_waypoint_analysis(waypoint_id=5, scores={"safety": 7.0})
+    summary = memory_manager._synthesize_summary(wp)
+    assert "5" in summary
+
+
+# ============================================================================
+# Test 12: Snapshot-based route LTM
+# ============================================================================
+
+def test_route_snapshots_generated_at_s2_trigger(configured_memory_manager):
+    """Test _route_snapshots has one entry after an S2 trigger."""
+    from src.agent.system2.persona_reasoner import TriggerReason
+
     for i in range(3):
         wp = create_waypoint_analysis(
             waypoint_id=i,
@@ -751,65 +786,126 @@ def test_route_score_history_accumulates(configured_memory_manager):
         )
         configured_memory_manager.process_waypoint(wp, triggered=False)
 
-    assert len(configured_memory_manager._route_score_history) == 3
+    trigger_wp = create_waypoint_analysis(
+        waypoint_id=3,
+        scores={"safety": 4.0, "comfort": 4.0},
+        visual_change=True,
+    )
+    context = configured_memory_manager.process_waypoint(
+        trigger_wp, triggered=True, trigger_reason=TriggerReason.VISUAL_CHANGE
+    )
+    assert context is not None
+    assert len(configured_memory_manager._route_snapshots) == 1
+    snap = configured_memory_manager._route_snapshots[0]
+    assert snap["span_end"] == 3
+    assert "trend" in snap
+    assert "avg" in snap
 
 
-def test_route_score_history_cleared_after_complete_route(configured_memory_manager):
-    """Test _route_score_history is reset after complete_route."""
+def test_route_snapshots_cleared_after_complete_route(configured_memory_manager):
+    """Test _route_snapshots is reset after complete_route."""
+    from src.agent.system2.persona_reasoner import TriggerReason
+
+    wp = create_waypoint_analysis(
+        waypoint_id=0, scores={"safety": 5.0}, visual_change=True
+    )
+    configured_memory_manager.process_waypoint(
+        wp, triggered=True, trigger_reason=TriggerReason.VISUAL_CHANGE
+    )
+    assert len(configured_memory_manager._route_snapshots) == 1
+
+    configured_memory_manager.complete_route({"route_id": "r1", "length_km": 1.0}, [])
+    assert len(configured_memory_manager._route_snapshots) == 0
+
+
+def test_ltm_patterns_has_snapshots_format(configured_memory_manager):
+    """Test prepare_context_for_reasoning returns ltm_patterns with snapshots key."""
+    from src.agent.system2.persona_reasoner import TriggerReason
+
+    wp = create_waypoint_analysis(
+        waypoint_id=1, scores={"safety": 7.0, "comfort": 7.0}, visual_change=True
+    )
+    context = configured_memory_manager.prepare_context_for_reasoning(
+        wp, trigger_reason=TriggerReason.VISUAL_CHANGE
+    )
+    ltm = context["ltm_patterns"]
+    assert isinstance(ltm, dict)
+    assert "snapshots" in ltm
+    assert "reasoning_episodes" in ltm
+
+
+# ============================================================================
+# Test 13: waypoints_since_trigger tracking
+# ============================================================================
+
+def test_waypoints_since_trigger_increments(configured_memory_manager):
+    """Test _waypoints_since_trigger increments with each process_waypoint call."""
+    for i in range(4):
+        wp = create_waypoint_analysis(
+            waypoint_id=i, scores={"safety": 7.0}, visual_change=True
+        )
+        configured_memory_manager.process_waypoint(wp, triggered=False)
+    assert configured_memory_manager._waypoints_since_trigger == 4
+
+
+def test_waypoints_since_trigger_resets_on_s2(configured_memory_manager):
+    """Test _waypoints_since_trigger resets to 0 when S2 is triggered."""
+    from src.agent.system2.persona_reasoner import TriggerReason
+
     for i in range(3):
         wp = create_waypoint_analysis(
-            waypoint_id=i,
-            scores={"safety": 7.0},
-            visual_change=True,
+            waypoint_id=i, scores={"safety": 7.0}, visual_change=True
         )
         configured_memory_manager.process_waypoint(wp, triggered=False)
 
-    configured_memory_manager.complete_route({"route_id": "r1", "length_km": 1.0}, [])
-    assert len(configured_memory_manager._route_score_history) == 0
+    assert configured_memory_manager._waypoints_since_trigger == 3
+
+    trigger_wp = create_waypoint_analysis(
+        waypoint_id=3, scores={"safety": 4.0}, visual_change=True
+    )
+    configured_memory_manager.process_waypoint(
+        trigger_wp, triggered=True, trigger_reason=TriggerReason.VISUAL_CHANGE
+    )
+    assert configured_memory_manager._waypoints_since_trigger == 0
 
 
-def test_compute_route_stats_empty(memory_manager):
-    """Test _compute_route_stats returns empty dict when no history."""
-    assert memory_manager._compute_route_stats() == {}
+def test_waypoints_since_trigger_in_context(configured_memory_manager):
+    """Test waypoints_since_trigger is included in the prepared context."""
+    from src.agent.system2.persona_reasoner import TriggerReason
+
+    for i in range(3):
+        wp = create_waypoint_analysis(
+            waypoint_id=i, scores={"safety": 7.0}, visual_change=True
+        )
+        configured_memory_manager.process_waypoint(wp, triggered=False)
+
+    trigger_wp = create_waypoint_analysis(
+        waypoint_id=3, scores={"safety": 4.0}, visual_change=True
+    )
+    context = configured_memory_manager.process_waypoint(
+        trigger_wp, triggered=True, trigger_reason=TriggerReason.VISUAL_CHANGE
+    )
+    assert "waypoints_since_trigger" in context
+    # 3 non-triggered + 1 triggered = 4 increments before reset
+    assert context["waypoints_since_trigger"] == 4
 
 
-def test_compute_route_stats_trend(memory_manager):
-    """Test _compute_route_stats computes trend correctly."""
-    # Declining scores
-    for i in range(10):
-        memory_manager._route_score_history.append({
-            "waypoint_id": i,
-            "scores": {"safety": 8.0 - i * 0.5},
-        })
-    stats = memory_manager._compute_route_stats()
-    assert stats["overall_trend"] in ("declining", "volatile", "stable")
-    assert stats["waypoints_so_far"] == 10
-    assert "per_dimension_avg" in stats
-    assert "worst_dimension" in stats
-    assert "barrier_segments" in stats
-    assert "current_trajectory" in stats
+def test_snapshot_span_covers_since_last_trigger(configured_memory_manager):
+    """Test _last_snapshot_waypoint advances after each S2 trigger."""
+    from src.agent.system2.persona_reasoner import TriggerReason
 
+    wp1 = create_waypoint_analysis(waypoint_id=0, scores={"safety": 7.0}, visual_change=True)
+    configured_memory_manager.process_waypoint(
+        wp1, triggered=True, trigger_reason=TriggerReason.VISUAL_CHANGE
+    )
+    assert configured_memory_manager._last_snapshot_waypoint == 0
 
-def test_compute_route_stats_barrier_segments(memory_manager):
-    """Test barrier segment detection: WP 3-6 below 4.5 avg."""
-    scores_by_wp = {
-        0: 7.0, 1: 7.0, 2: 7.0,
-        3: 3.0, 4: 3.5, 5: 4.0, 6: 3.8,
-        7: 7.0, 8: 7.0, 9: 7.0,
-        10: 7.0, 11: 7.0, 12: 7.0,
-        13: 7.0, 14: 7.0,
-    }
-    for wp_id, score in scores_by_wp.items():
-        memory_manager._route_score_history.append({
-            "waypoint_id": wp_id,
-            "scores": {"safety": score},
-        })
-    stats = memory_manager._compute_route_stats()
-    barriers = stats["barrier_segments"]
-    assert len(barriers) >= 1
-    seg_start, seg_end = barriers[0]
-    assert seg_start == 3
-    assert seg_end == 6
+    wp2 = create_waypoint_analysis(waypoint_id=5, scores={"safety": 4.0}, visual_change=True)
+    configured_memory_manager.process_waypoint(
+        wp2, triggered=True, trigger_reason=TriggerReason.VISUAL_CHANGE
+    )
+    assert configured_memory_manager._last_snapshot_waypoint == 5
+    assert len(configured_memory_manager._route_snapshots) == 2
 
 
 # ============================================================================

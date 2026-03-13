@@ -157,52 +157,43 @@ Respond ONLY with valid JSON matching this exact schema:
 def _format_ltm_patterns(ltm_patterns) -> str:
     """Format route context for Decider prompt."""
     if not ltm_patterns:
-        return "No route context available (first System 2 trigger)."
+        return "No route history available."
 
-    # Handle new dict format {route_stats, reasoning_episodes}
     if isinstance(ltm_patterns, dict):
         lines = []
 
-        stats = ltm_patterns.get("route_stats", {})
-        if stats:
-            n = stats.get("waypoints_so_far", 0)
-            trend = stats.get("overall_trend", "unknown")
-            worst = stats.get("worst_dimension", "N/A")
-            traj = stats.get("current_trajectory", 0.0)
-            barriers = stats.get("barrier_segments", [])
-            per_dim = stats.get("per_dimension_avg", {})
-
-            traj_str = f"+{traj:.1f}" if traj > 0 else f"{traj:.1f}"
-            lines.append(
-                f"Route so far ({n} waypoints): trend={trend.upper()}, "
-                f"trajectory={traj_str}, worst={worst}"
-            )
-            if per_dim:
-                dim_str = ", ".join(
-                    f"{k}={v:.1f}" for k, v in per_dim.items()
+        snapshots = ltm_patterns.get("snapshots", [])
+        if snapshots:
+            lines.append("Route history (snapshots):")
+            for s in snapshots:
+                barrier_str = (
+                    f"  ⚠barrier WP{s['barrier_segments']}"
+                    if s.get("barrier_segments")
+                    else ""
                 )
-                lines.append(f"  Dimension averages: {dim_str}")
-            if barriers:
-                seg_str = ", ".join(f"WP{s}-{e}" for s, e in barriers)
-                lines.append(f"  ⚠ Barrier segments: {seg_str}")
+                traj = s.get("trajectory", 0.0)
+                traj_str = f"+{traj:.1f}" if traj >= 0 else f"{traj:.1f}"
+                dim_str = " ".join(
+                    f"{k}={v:.1f}" for k, v in s.get("avg", {}).items()
+                )
+                lines.append(
+                    f"  WP{s['span_start']}–{s['span_end']}: {s['trend'].upper()} "
+                    f"{traj_str}  [{dim_str}]{barrier_str}"
+                )
 
         episodes = ltm_patterns.get("reasoning_episodes", [])
         if episodes:
-            lines.append(f"Prior System 2 episodes ({len(episodes)}):")
-            for ep in episodes[-5:]:  # most recent 5
-                wp = ep.get("waypoint_id", "?")
-                sig = ep.get("significance", "?")
-                avoid = ep.get("avoid", False)
-                text = (ep.get("interpretation") or "")[:80]
-                concern = ep.get("key_concern") or ""
-                avoid_str = " ⚠AVOID" if avoid else ""
-                lines.append(f"  WP{wp} [{sig.upper()}{avoid_str}]: {text}")
-                if concern:
-                    lines.append(f"    concern: {concern}")
-        else:
-            lines.append("No prior System 2 episodes in this route.")
+            lines.append(f"Prior S2 episodes ({len(episodes)}):")
+            for ep in episodes[-3:]:
+                avoid_str = " ⚠AVOID" if ep.get("avoid") else ""
+                lines.append(
+                    f"  WP{ep['waypoint_id']} [{ep['significance'].upper()}{avoid_str}]: "
+                    f"{ep['interpretation'][:80]}"
+                )
+                if ep.get("key_concern"):
+                    lines.append(f"    concern: {ep['key_concern']}")
 
-        return "\n".join(lines)
+        return "\n".join(lines) if lines else "No route history available."
 
     # Legacy list format fallback
     if isinstance(ltm_patterns, list):

@@ -116,8 +116,12 @@ class MemoryManager:
         # Within-route System 2 accumulation (reset each route)
         self._route_reasoning_log: List[Dict[str, Any]] = []
 
-        # Full score history for all waypoints this route (for trend computation)
-        self._route_score_history: List[Dict[str, Any]] = []
+        # Snapshot-based route LTM (generated at each S2 trigger)
+        self._route_snapshots: List[Dict[str, Any]] = []
+        self._last_snapshot_waypoint: int = 0
+
+        # Waypoints seen since last S2 trigger
+        self._waypoints_since_trigger: int = 0
 
         self.logger = get_logger(f"{__name__}.{agent_id}")
         self.logger.debug("MemoryManager initialized", agent_id=agent_id)
@@ -344,92 +348,116 @@ class MemoryManager:
             return 5.0  # Standard
 
     # ========================================================================
-    # Route Statistics
+    # STM Summary + Snapshot Helpers
     # ========================================================================
 
-    def _compute_route_stats(self) -> Dict[str, Any]:
-        """Compute aggregate statistics from full route score history."""
-        history = self._route_score_history
-        if not history:
-            return {}
+    def _synthesize_summary(self, waypoint_analysis: Any) -> str:
+        """Synthesize 1-line environment summary from persona_reasoning."""
+        reasoning = getattr(waypoint_analysis, "persona_reasoning", {})
+        if not reasoning:
+            return f"Waypoint {waypoint_analysis.waypoint_id}"
+        parts = []
+        for dim_id in ["safety", "lively", "beautiful"]:
+            text = reasoning.get(dim_id, "")
+            if text:
+                sentence = text.split(".")[0].strip()
+                if sentence:
+                    parts.append(sentence)
+        summary = ". ".join(parts[:2])
+        return summary[:120] if summary else f"Waypoint {waypoint_analysis.waypoint_id}"
 
-        n = len(history)
-        all_scores = [h["scores"] for h in history]
-        dimensions = list(all_scores[0].keys()) if all_scores else []
+    def _generate_snapshot(self, current_waypoint_id: int) -> Dict[str, Any]:
+        """Generate a route snapshot from STM data since last snapshot."""
+        stm_context = self.stm.get_context()
+        if not stm_context or not stm_context.get("recent_scores"):
+            return {
+                "span_start": self._last_snapshot_waypoint,
+                "span_end": current_waypoint_id,
+                "trend": "stable",
+                "avg": {},
+                "trajectory": 0.0,
+                "worst_dimension": None,
+                "barrier_segments": [],
+            }
 
-        # Per-waypoint average scores
+        waypoint_ids = stm_context.get("waypoint_ids", [])
+        recent_scores = stm_context["recent_scores"]
+
+        # Filter to items since last snapshot
+        span_items = [
+            (wid, scores)
+            for wid, scores in zip(waypoint_ids, recent_scores)
+            if wid >= self._last_snapshot_waypoint
+        ]
+
+        if not span_items:
+            span_items = list(zip(waypoint_ids, recent_scores))
+
+        span_ids = [wid for wid, _ in span_items]
+        all_scores = [scores for _, scores in span_items]
+        n = len(all_scores)
+
         wp_avgs = [
             sum(s.values()) / len(s) for s in all_scores if s
         ]
 
-        # Overall trend: compare first half vs second half
-        mid = max(1, n // 2)
-        first_half_avg = sum(wp_avgs[:mid]) / mid
-        second_half_avg = sum(wp_avgs[mid:]) / max(1, n - mid)
-        diff = second_half_avg - first_half_avg
-        if abs(diff) < 0.3:
-            overall_trend = "stable"
-        elif diff > 0:
-            overall_trend = "improving"
-        else:
-            overall_trend = "declining"
-
-        # Check volatility (override trend if highly volatile)
-        if n >= 3:
-            import statistics as stats_lib
+        # Trend
+        if len(wp_avgs) >= 2:
+            mid = max(1, n // 2)
+            first_half_avg = sum(wp_avgs[:mid]) / mid
+            second_half_avg = sum(wp_avgs[mid:]) / max(1, n - mid)
+            diff = second_half_avg - first_half_avg
+            if abs(diff) < 0.3:
+                trend = "stable"
+            elif diff > 0:
+                trend = "improving"
+            else:
+                trend = "declining"
             try:
-                vol = stats_lib.stdev(wp_avgs)
+                vol = statistics.stdev(wp_avgs)
                 if vol > 1.5:
-                    overall_trend = "volatile"
+                    trend = "volatile"
             except Exception:
-                vol = 0.0
+                pass
+            trajectory = round(wp_avgs[-1] - wp_avgs[0], 2)
         else:
-            vol = 0.0
+            trend = "stable"
+            trajectory = 0.0
 
         # Per-dimension averages
-        per_dim_avg = {}
+        dimensions = list(all_scores[0].keys()) if all_scores else []
+        per_dim_avg: Dict[str, float] = {}
         for dim in dimensions:
             dim_scores = [s.get(dim, 0.0) for s in all_scores]
             per_dim_avg[dim] = round(sum(dim_scores) / len(dim_scores), 2)
 
         worst_dim = min(per_dim_avg, key=per_dim_avg.get) if per_dim_avg else None
 
-        # Current trajectory: recent 5 avg minus prior 5 avg
-        if n >= 10:
-            recent_avg = sum(wp_avgs[-5:]) / 5
-            prior_avg = sum(wp_avgs[-10:-5]) / 5
-            current_trajectory = round(recent_avg - prior_avg, 2)
-        elif n >= 2:
-            current_trajectory = round(wp_avgs[-1] - wp_avgs[0], 2)
-        else:
-            current_trajectory = 0.0
-
-        # Barrier segments: 3+ consecutive waypoints with avg < 4.5
-        barrier_segments = []
+        # Barrier segments: consecutive waypoints with avg < 4.5
+        barrier_segments: List[Tuple[int, int]] = []
         seg_start = None
         for i, avg in enumerate(wp_avgs):
-            wp_id = history[i]["waypoint_id"]
+            wp_id = span_ids[i]
             if avg < 4.5:
                 if seg_start is None:
                     seg_start = wp_id
             else:
                 if seg_start is not None and i >= 1:
-                    end_id = history[i - 1]["waypoint_id"]
-                    if end_id != seg_start:  # at least 2 waypoints
+                    end_id = span_ids[i - 1]
+                    if end_id != seg_start:
                         barrier_segments.append((seg_start, end_id))
                 seg_start = None
-        # Close open segment
         if seg_start is not None:
-            barrier_segments.append((seg_start, history[-1]["waypoint_id"]))
+            barrier_segments.append((seg_start, span_ids[-1]))
 
         return {
-            "waypoints_so_far": n,
-            "overall_trend": overall_trend,
-            "per_dimension_avg": per_dim_avg,
+            "span_start": span_ids[0] if span_ids else self._last_snapshot_waypoint,
+            "span_end": current_waypoint_id,
+            "trend": trend,
+            "avg": per_dim_avg,
+            "trajectory": trajectory,
             "worst_dimension": worst_dim,
             "barrier_segments": barrier_segments,
-            "current_trajectory": current_trajectory,
-            "score_volatility": round(vol, 2),
         }
 
     # ========================================================================
@@ -440,6 +468,7 @@ class MemoryManager:
         self,
         waypoint_analysis: Any,  # WaypointAnalysis type hint
         trigger_reason: Optional[TriggerReason] = None,
+        waypoints_since_trigger: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Package complete context for PersonaReasoner reasoning.
 
@@ -504,14 +533,17 @@ class MemoryManager:
             waypoint_analysis, "objective_reasoning", getattr(waypoint_analysis, "neutral_reasoning", {})
         )
 
-        route_stats = self._compute_route_stats()
+        snapshot = self._generate_snapshot(waypoint_analysis.waypoint_id)
+        self._route_snapshots.append(snapshot)
+        self._last_snapshot_waypoint = waypoint_analysis.waypoint_id
         self.logger.debug(
-            "Route stats computed for S2 context",
-            waypoints_so_far=route_stats.get("waypoints_so_far", 0),
-            overall_trend=route_stats.get("overall_trend", "unknown"),
-            worst_dimension=route_stats.get("worst_dimension", "N/A"),
-            current_trajectory=route_stats.get("current_trajectory", 0.0),
-            barrier_segments=route_stats.get("barrier_segments", []),
+            "Snapshot generated for S2 context",
+            span_start=snapshot.get("span_start"),
+            span_end=snapshot.get("span_end"),
+            trend=snapshot.get("trend"),
+            worst_dimension=snapshot.get("worst_dimension"),
+            trajectory=snapshot.get("trajectory"),
+            barrier_segments=snapshot.get("barrier_segments", []),
             reasoning_episodes=len(self._route_reasoning_log),
         )
 
@@ -532,9 +564,14 @@ class MemoryManager:
             "stm_context": stm_context,
             "recent_context": recent_context,
             "ltm_patterns": {
-                "route_stats": route_stats,
+                "snapshots": list(self._route_snapshots),
                 "reasoning_episodes": list(self._route_reasoning_log),
             },
+            "waypoints_since_trigger": (
+                waypoints_since_trigger
+                if waypoints_since_trigger is not None
+                else self._waypoints_since_trigger
+            ),
             "personality": personality_info,
             "agent_profile": self.profile,
             "current_status": self.status,
@@ -588,27 +625,28 @@ class MemoryManager:
                 reasoning_result = persona_reasoner.reason(context)
         """
         self._waypoints_processed += 1
+        self._waypoints_since_trigger += 1
 
         persona_scores = (
             getattr(waypoint_analysis, "persona_scores", None)
             or getattr(waypoint_analysis, "scores", {})
         )
 
-        # Step 1: Apply attention gate
-        if not self._passes_attention_gate(waypoint_analysis):
+        # Attention gate: diagnostic only — no longer blocks STM writes
+        gate_pass = self._passes_attention_gate(waypoint_analysis)
+        if gate_pass:
+            self._attention_gate_passes += 1
+        else:
             self.logger.debug(
-                "Waypoint filtered by attention gate",
+                "Attention gate: FILTER (diagnostic, STM write proceeds)",
                 waypoint_id=waypoint_analysis.waypoint_id,
             )
-            return None
 
-        # Step 2: Add to STM
-        self._attention_gate_passes += 1
-
+        # Step 1: Add ALL waypoints to STM unconditionally
         self.stm.add(
             waypoint_id=waypoint_analysis.waypoint_id,
             scores=persona_scores,
-            summary=f"Waypoint {waypoint_analysis.waypoint_id}",
+            summary=self._synthesize_summary(waypoint_analysis),
             image_path=(
                 waypoint_analysis.image_path
                 if waypoint_analysis.visual_change_detected
@@ -618,31 +656,24 @@ class MemoryManager:
             timestamp=waypoint_analysis.timestamp,
         )
 
-        self._route_score_history.append({
-            "waypoint_id": waypoint_analysis.waypoint_id,
-            "scores": dict(persona_scores),
-        })
-        self.logger.debug(
-            "Route score history updated",
-            waypoint_id=waypoint_analysis.waypoint_id,
-            history_size=len(self._route_score_history),
-        )
-
         self.logger.debug(
             "Waypoint added to STM",
             waypoint_id=waypoint_analysis.waypoint_id,
             stm_size=self.stm.get_memory_size(),
         )
 
-        # Step 3: Return context only if triggered by controller
+        # Step 2: Return context only if triggered by controller
         if not triggered:
             return None
 
         self._system2_triggers += 1
+        waypoints_since_last = self._waypoints_since_trigger
+        self._waypoints_since_trigger = 0
 
         context = self.prepare_context_for_reasoning(
             waypoint_analysis,
             trigger_reason=trigger_reason or TriggerReason.VISUAL_CHANGE,
+            waypoints_since_trigger=waypoints_since_last,
         )
 
         self.logger.debug(
@@ -785,8 +816,10 @@ class MemoryManager:
         # Step 5: Clear STM and route logs for next route
         self.stm.clear()
         self._route_reasoning_log = []
-        self._route_score_history = []
-        self.logger.debug("Route reasoning log and score history cleared for next route")
+        self._route_snapshots = []
+        self._last_snapshot_waypoint = 0
+        self._waypoints_since_trigger = 0
+        self.logger.debug("Route logs cleared for next route")
 
         # Log statistics
         self.logger.info(

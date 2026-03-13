@@ -1061,6 +1061,7 @@ class CityWalkAgent(BaseAgent):
                         ltm_patterns=context.get("ltm_patterns"),
                         personality=self.personality,
                         route_metadata=route_meta,
+                        waypoints_since_trigger=context.get("waypoints_since_trigger", 0),
                     )
 
                     reasoning_results.append(reasoning_result)
@@ -1641,6 +1642,7 @@ class CityWalkAgent(BaseAgent):
                         ltm_patterns=context.get("ltm_patterns"),
                         personality=self.personality,
                         route_metadata=route_meta,
+                        waypoints_since_trigger=context.get("waypoints_since_trigger", 0),
                     )
 
                     reasoning_results.append(reasoning_result)

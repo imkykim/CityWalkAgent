@@ -64,6 +64,7 @@ class Interpreter:
         personality: Any,
         dimension_ids: List[str],
         dimensions: Dict[str, str],
+        waypoints_since_trigger: int = 0,
     ) -> Dict[str, Any]:
         """Waypoint-level interpretation via LLM.
 
@@ -111,6 +112,7 @@ Description: {persona_desc}
 
 Current waypoint ID: {waypoint_id}
 Trigger reason: {trigger_text}
+Waypoints since last S2 trigger: {waypoints_since_trigger}
 
 System 1 scores and reasoning (per dimension):
 {scores_text}

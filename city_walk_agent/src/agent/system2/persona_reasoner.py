@@ -203,9 +203,10 @@ class PersonaReasoner:
         system1_scores: Dict[str, float],
         system1_reasoning: Dict[str, str],
         stm_context: Dict[str, Any],
-        ltm_patterns: Optional[List[Dict[str, Any]]],
+        ltm_patterns: Optional[Any],
         personality: Any,
         route_metadata: Dict[str, Any],
+        waypoints_since_trigger: int = 0,
     ) -> ReasoningResult:
         """System 2: Interpret → Decide → Plan → Report
 
@@ -236,6 +237,7 @@ class PersonaReasoner:
             personality=personality,
             dimension_ids=self.dimension_ids,
             dimensions=self.dimensions,
+            waypoints_since_trigger=waypoints_since_trigger,
         )
         decision = self.decider.decide_waypoint(
             waypoint_id=waypoint_id,
