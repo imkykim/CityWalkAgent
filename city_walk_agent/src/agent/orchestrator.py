@@ -1870,6 +1870,31 @@ class CityWalkAgent(BaseAgent):
                 if img_path.exists():
                     shutil.copy2(img_path, key_images_dir / img_path.name)
 
+            # Save memory debug snapshot (before complete_route resets state)
+            memory_debug = {
+                "stm_final": {
+                    "window_size": memory_manager.stm.window_size,
+                    "items": [
+                        {
+                            "waypoint_id": item.waypoint_id,
+                            "scores": item.scores,
+                            "summary": item.summary,
+                        }
+                        for item in memory_manager.stm.get_all_items()
+                    ],
+                },
+                "ltm_snapshots": memory_manager._route_snapshots,
+                "ltm_reasoning_episodes": memory_manager._route_reasoning_log,
+                "stats": {
+                    "waypoints_since_trigger": memory_manager._waypoints_since_trigger,
+                    "total_snapshots": len(memory_manager._route_snapshots),
+                    "total_episodes": len(memory_manager._route_reasoning_log),
+                },
+            }
+            memory_debug_file = output_dir / "memory_debug.json"
+            with open(memory_debug_file, "w", encoding="utf-8") as f:
+                json.dump(memory_debug, f, indent=2, ensure_ascii=False)
+
             self.logger.info(
                 "Outputs saved",
                 output_dir=str(output_dir),

@@ -420,6 +420,10 @@ class ShortTermMemory:
         else:  # stable
             return f"stable (consistent scores around {first_mean:.1f}/10)"
 
+    def get_all_items(self) -> List[MemoryItem]:
+        """Return all items currently in STM window."""
+        return list(self._memory)
+
     def get_memory_size(self) -> int:
         """Get current number of waypoints in memory.
 
