@@ -71,37 +71,44 @@ def generate_persona_visualizations(
     print("=" * 60)
 
     viz_paths = {}
-
-    # 1. Persona comparison (line plots with arrows)
-    print("\n1. Creating objective vs persona comparison plots...")
-    comparison_path = output_dir / "persona_comparison.png"
-    viz.plot_comparison(
-        waypoint_results=analysis_results,
-        title=f"Objective vs Persona-Aware Evaluation ({personality_name})",
-        save_path=comparison_path,
-        mode="persona",
+    has_objective_scores = any(
+        isinstance(r.get("objective_scores"), dict) and bool(r.get("objective_scores"))
+        for r in analysis_results
     )
-    viz_paths["persona_comparison"] = comparison_path
 
-    # 2. Summary radar chart
-    print("2. Creating persona impact radar chart...")
-    radar_path = output_dir / "persona_summary_radar.png"
-    viz.plot_summary_radar(
-        waypoint_results=analysis_results,
-        save_path=radar_path,
-        mode="persona",
-    )
-    viz_paths["persona_radar"] = radar_path
+    if has_objective_scores:
+        # 1. Persona comparison (line plots with arrows)
+        print("\n1. Creating objective vs persona comparison plots...")
+        comparison_path = output_dir / "persona_comparison.png"
+        viz.plot_comparison(
+            waypoint_results=analysis_results,
+            title=f"Objective vs Persona-Aware Evaluation ({personality_name})",
+            save_path=comparison_path,
+            mode="persona",
+        )
+        viz_paths["persona_comparison"] = comparison_path
 
-    # 3. Persona delta overview (average trends + delta heatmap)
-    print("3. Creating persona adjustment overview...")
-    delta_path = output_dir / "persona_delta_distribution.png"
-    viz.plot_overview(
-        waypoint_results=analysis_results,
-        save_path=delta_path,
-        mode="persona",
-    )
-    viz_paths["persona_delta"] = delta_path
+        # 2. Summary radar chart
+        print("2. Creating persona impact radar chart...")
+        radar_path = output_dir / "persona_summary_radar.png"
+        viz.plot_summary_radar(
+            waypoint_results=analysis_results,
+            save_path=radar_path,
+            mode="persona",
+        )
+        viz_paths["persona_radar"] = radar_path
+
+        # 3. Persona delta overview (average trends + delta heatmap)
+        print("3. Creating persona adjustment overview...")
+        delta_path = output_dir / "persona_delta_distribution.png"
+        viz.plot_overview(
+            waypoint_results=analysis_results,
+            save_path=delta_path,
+            mode="persona",
+        )
+        viz_paths["persona_delta"] = delta_path
+    else:
+        print("\n1-3. Skipping comparison/radar/overview (objective_scores not found).")
 
     # 4. Individual score plots (objective and persona separately)
     print("4. Creating individual score timeline plots...")
@@ -112,40 +119,53 @@ def generate_persona_visualizations(
         str(r["waypoint_id"]) for r in analysis_results if r.get("system2_triggered")
     ]
 
-    # Get dimensions from first result
-    first_result = analysis_results[0]
-    objective_scores_dict = first_result.get(
-        "objective_scores",
-        first_result.get("neutral_scores", first_result.get("system1_scores", {})),
-    )
-    dimensions = list(objective_scores_dict.keys())
-
-    # Build objective scores dict
-    objective_scores = {dim: [] for dim in dimensions}
+    # Build persona dimensions first (always used for final score plot).
+    persona_dimensions = []
+    seen_persona_dims = set()
     for r in analysis_results:
-        obj_scores = r.get(
-            "objective_scores", r.get("neutral_scores", r.get("system1_scores", {}))
+        for key in ("persona_scores", "scores"):
+            score_map = r.get(key, {})
+            if not isinstance(score_map, dict):
+                continue
+            for dim in score_map.keys():
+                if dim not in seen_persona_dims:
+                    seen_persona_dims.add(dim)
+                    persona_dimensions.append(dim)
+
+    if not persona_dimensions:
+        print("⚠️  No persona score dimensions found; skipping individual score timeline plots.")
+        print("\n✅ All visualizations generated!")
+        return viz_paths
+
+    # Plot objective scores only when objective_scores exist.
+    if has_objective_scores:
+        objective_scores = {dim: [] for dim in persona_dimensions}
+        for r in analysis_results:
+            obj_scores = r.get(
+                "objective_scores", r.get("neutral_scores", r.get("system1_scores", {}))
+            )
+            for dim in persona_dimensions:
+                objective_scores[dim].append(obj_scores.get(dim, 0))
+
+        objective_path = output_dir / "scores_objective.png"
+        viz.plot_scores(
+            scores=objective_scores,
+            waypoint_ids=waypoint_ids,
+            title="Objective Evaluation (Research/Framework-Only)",
+            save_path=objective_path,
+            dimensions=persona_dimensions,
+            markers=system2_triggers,
         )
-        for dim in dimensions:
-            objective_scores[dim].append(obj_scores.get(dim, 0))
+        viz_paths["objective_scores"] = objective_path
+    else:
+        print("   - Skipping objective timeline (objective_scores not found).")
 
     # Build persona scores dict
-    persona_scores = {dim: [] for dim in dimensions}
+    persona_scores = {dim: [] for dim in persona_dimensions}
     for r in analysis_results:
         per_scores = r.get("persona_scores", r.get("scores", {}))
-        for dim in dimensions:
+        for dim in persona_dimensions:
             persona_scores[dim].append(per_scores.get(dim, 0))
-
-    # Plot objective scores
-    objective_path = output_dir / "scores_objective.png"
-    viz.plot_scores(
-        scores=objective_scores,
-        waypoint_ids=waypoint_ids,
-        title="Objective Evaluation (Research/Framework-Only)",
-        save_path=objective_path,
-        markers=system2_triggers,
-    )
-    viz_paths["objective_scores"] = objective_path
 
     # Plot persona-aware scores
     persona_path = output_dir / "scores_persona_aware.png"
@@ -154,6 +174,7 @@ def generate_persona_visualizations(
         waypoint_ids=waypoint_ids,
         title=f"Persona-Aware Evaluation ({personality_name}) - Final Scores",
         save_path=persona_path,
+        dimensions=persona_dimensions,
         markers=system2_triggers,
     )
     viz_paths["persona_scores"] = persona_path
