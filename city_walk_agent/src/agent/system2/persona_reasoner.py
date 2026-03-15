@@ -238,6 +238,7 @@ class PersonaReasoner:
             dimension_ids=self.dimension_ids,
             dimensions=self.dimensions,
             waypoints_since_trigger=waypoints_since_trigger,
+            ltm_patterns=ltm_patterns,
         )
         decision = self.decider.decide_waypoint(
             waypoint_id=waypoint_id,

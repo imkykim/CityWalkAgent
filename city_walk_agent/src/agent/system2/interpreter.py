@@ -65,6 +65,7 @@ class Interpreter:
         dimension_ids: List[str],
         dimensions: Dict[str, str],
         waypoints_since_trigger: int = 0,
+        ltm_patterns: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """Waypoint-level interpretation via LLM.
 
@@ -77,6 +78,8 @@ class Interpreter:
             personality: Agent personality object.
             dimension_ids: Ordered list of dimension IDs.
             dimensions: Mapping of dimension ID → display name.
+            waypoints_since_trigger: Waypoints seen since last S2 trigger.
+            ltm_patterns: Route LTM context dict with snapshots and reasoning_episodes.
 
         Returns:
             {"text": str, "score_change_reason": str|None, "persona_divergence": None}
@@ -105,6 +108,12 @@ class Interpreter:
 
         trigger_text = _explain_trigger(trigger_reason) if trigger_reason else "Unknown trigger"
 
+        ltm_context_text = _format_ltm_for_interpreter(ltm_patterns)
+        self.logger.debug(
+            f"[Interpreter] waypoint={waypoint_id} ltm_context: "
+            f"{ltm_context_text[:80].replace(chr(10), ' | ')}"
+        )
+
         prompt = f"""You are analyzing a street waypoint from the perspective of a specific persona.
 
 Persona: {persona_name}
@@ -120,6 +129,9 @@ System 1 scores and reasoning (per dimension):
 Recent waypoint scores (most recent last, up to 3):
 {recent_text}
 Trend: {trend}
+
+Route context (long-term memory):
+{ltm_context_text}
 
 Based on this information, interpret what is happening at this waypoint from the persona's perspective.
 
@@ -146,6 +158,7 @@ Respond ONLY with valid JSON matching this exact schema:
             waypoint_id=waypoint_id,
             system1_scores=system1_scores,
             stm_context=stm_context,
+            ltm_patterns=ltm_patterns,
         )
 
     def _interpret_fallback(
@@ -153,6 +166,7 @@ Respond ONLY with valid JSON matching this exact schema:
         waypoint_id: int,
         system1_scores: Dict[str, float],
         stm_context: Dict[str, Any],
+        ltm_patterns: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """Heuristic fallback when LLM call fails."""
         recent = stm_context.get("recent_scores", [])
@@ -182,3 +196,38 @@ def _explain_trigger(trigger_reason: Any) -> str:
         "exceptional_moment": "Manually flagged as exceptional",
     }
     return explanations.get(value, "Unknown trigger")
+
+
+def _format_ltm_for_interpreter(ltm_patterns) -> str:
+    """Format LTM route context for Interpreter prompt.
+
+    Interpreter needs the route baseline (snapshots) to evaluate the current
+    waypoint relative to overall route conditions.
+    Episodes are NOT included — those are for Decider's historical judgment.
+    """
+    if not ltm_patterns:
+        return "No route history yet (first segment)."
+
+    snapshots = ltm_patterns.get("snapshots", [])
+    if not snapshots:
+        return "No snapshots yet — route just started."
+
+    lines = ["Route snapshots so far:"]
+    for s in snapshots:
+        traj = s.get("trajectory", 0.0)
+        traj_str = f"+{traj:.1f}" if traj >= 0 else f"{traj:.1f}"
+        avg = s.get("avg", {})
+        dim_str = "  ".join(f"{k}={v:.1f}" for k, v in avg.items())
+        trend = s.get("trend", "unknown").upper()
+        barrier = "  ⚠barrier" if s.get("barrier_segments") else ""
+        lines.append(
+            f"  WP{s['span_start']}–{s['span_end']}: {trend} {traj_str}  [{dim_str}]{barrier}"
+        )
+
+    # Add worst dimension summary from last snapshot
+    last = snapshots[-1]
+    worst = last.get("worst_dimension")
+    if worst:
+        lines.append(f"Persistently weak dimension: {worst}")
+
+    return "\n".join(lines)
