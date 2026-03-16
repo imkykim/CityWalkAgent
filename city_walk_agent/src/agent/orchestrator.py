@@ -2021,3 +2021,157 @@ class CityWalkAgent(BaseAgent):
             "positive_adjustments": sum(1 for adj in all_adjustments if adj > 0),
             "no_change": sum(1 for adj in all_adjustments if abs(adj) < 0.1),
         }
+
+    def branch_decision(
+        self,
+        branch_pano_id: str,
+        candidate_headings: List[float],
+        memory_manager: Any,
+        output_dir: Optional[Path] = None,
+    ) -> Dict[str, Any]:
+        """Evaluate candidate directions at a branch point and choose the best.
+
+        Args:
+            branch_pano_id: pano_id of the branch point (current position)
+            candidate_headings: List of compass headings to evaluate (2–5 directions)
+            memory_manager: Current route MemoryManager (provides LTM context)
+            output_dir: Optional directory to save branch decision log
+
+        Returns:
+            {
+                "chosen_direction": str,
+                "chosen_heading": float,
+                "chosen_pano_id": str,
+                "reason": str,
+                "confidence": float,
+                "ranking": List[str],
+                "candidates": List[Dict],  # full per-direction analysis
+            }
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import string
+        import tempfile
+
+        import requests
+
+        if not (2 <= len(candidate_headings) <= 5):
+            raise ValueError(
+                f"candidate_headings must have 2–5 entries, got {len(candidate_headings)}"
+            )
+
+        direction_labels = list(string.ascii_uppercase[: len(candidate_headings)])
+
+        def fetch_and_analyze(label: str, heading: float) -> Dict[str, Any]:
+            image_url = (
+                f"https://maps.googleapis.com/maps/api/streetview"
+                f"?size=640x640&pano={branch_pano_id}&heading={heading}"
+                f"&pitch=0&fov=90&key={settings.google_maps_api_key}"
+            )
+            tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+            try:
+                resp = requests.get(image_url, timeout=15)
+                resp.raise_for_status()
+                tmp.write(resp.content)
+                tmp.flush()
+                image_path = Path(tmp.name)
+            finally:
+                tmp.close()
+
+            try:
+                analysis = self.continuous_analyzer.analyze_waypoint(
+                    waypoint_id=0,
+                    image_path=image_path,
+                    metadata={"heading": heading, "lat": 0, "lon": 0},
+                    visual_change_detected=True,
+                    phash_distance=None,
+                )
+            finally:
+                image_path.unlink(missing_ok=True)
+
+            return {
+                "direction": label,
+                "heading": heading,
+                "pano_id": branch_pano_id,
+                "scores": analysis.persona_scores,
+                "system1_reasoning": analysis.persona_reasoning,
+            }
+
+        self.logger.info(
+            f"Branch decision: {len(candidate_headings)} candidates at pano={branch_pano_id}"
+        )
+
+        with ThreadPoolExecutor(max_workers=len(candidate_headings)) as executor:
+            futures = {
+                executor.submit(fetch_and_analyze, label, heading): label
+                for label, heading in zip(direction_labels, candidate_headings)
+            }
+            direction_results = []
+            for future in as_completed(futures):
+                direction_results.append(future.result())
+
+        direction_results.sort(key=lambda x: direction_labels.index(x["direction"]))
+
+        ltm_patterns = {
+            "snapshots": list(memory_manager._route_snapshots),
+            "reasoning_episodes": list(memory_manager._route_reasoning_log),
+        }
+
+        def run_interpreter(dr: Dict) -> Dict:
+            interp = self.persona_reasoner.interpreter.interpret_waypoint(
+                waypoint_id=0,
+                system1_scores=dr["scores"],
+                system1_reasoning=dr["system1_reasoning"],
+                stm_context=memory_manager.stm.get_context(),
+                trigger_reason=None,
+                personality=self.personality,
+                dimension_ids=self.persona_reasoner.dimension_ids,
+                dimensions=self.persona_reasoner.dimensions,
+                waypoints_since_trigger=memory_manager._waypoints_since_trigger,
+                ltm_patterns=ltm_patterns,
+            )
+            return {**dr, "interpretation": interp.get("text", ""), "key_concern": interp.get("key_concern")}
+
+        with ThreadPoolExecutor(max_workers=len(direction_results)) as executor:
+            candidates = list(executor.map(run_interpreter, direction_results))
+
+        decision = self.persona_reasoner.decider.decide_branch(
+            candidates=candidates,
+            ltm_patterns=ltm_patterns,
+            personality=self.personality,
+            dimension_ids=self.persona_reasoner.dimension_ids,
+            dimensions=self.persona_reasoner.dimensions,
+        )
+
+        self.logger.info(
+            f"Branch decision: chosen={decision['chosen_direction']} "
+            f"heading={decision['chosen_heading']} confidence={decision['confidence']}"
+        )
+
+        result = {**decision, "candidates": candidates}
+
+        if output_dir:
+            branch_log = {
+                "branch_pano_id": branch_pano_id,
+                "candidate_headings": candidate_headings,
+                "candidates": [
+                    {
+                        "direction": c["direction"],
+                        "heading": c["heading"],
+                        "scores": c["scores"],
+                        "interpretation": c["interpretation"],
+                        "key_concern": c["key_concern"],
+                    }
+                    for c in candidates
+                ],
+                "decision": decision,
+            }
+            log_path = Path(output_dir) / "branch_decisions.json"
+            existing = []
+            if log_path.exists():
+                with open(log_path) as f:
+                    existing = json.load(f)
+            existing.append(branch_log)
+            with open(log_path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, indent=2, ensure_ascii=False)
+
+        return result

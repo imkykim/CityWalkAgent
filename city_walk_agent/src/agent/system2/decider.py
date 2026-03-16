@@ -140,6 +140,120 @@ Respond ONLY with valid JSON matching this exact schema:
         self.logger.warning(f"[Decider] LLM failed → fallback heuristic")
         return self._decide_fallback(system1_scores=system1_scores)
 
+    def decide_branch(
+        self,
+        candidates: List[Dict[str, Any]],
+        ltm_patterns: Optional[Dict],
+        personality: Any,
+        dimension_ids: List[str],
+        dimensions: Dict[str, str],
+    ) -> Dict[str, Any]:
+        """Choose the best direction at a branch point.
+
+        Args:
+            candidates: List of dicts, one per direction:
+                {
+                    "direction": str,          # "A", "B", "C" or heading label
+                    "heading": float,          # compass heading in degrees
+                    "pano_id": str,            # Street View pano ID
+                    "scores": Dict[str, float],
+                    "interpretation": str,     # from Interpreter.interpret_waypoint()["text"]
+                    "key_concern": str | None,
+                }
+            ltm_patterns: LTM context from MemoryManager (snapshots + episodes)
+            personality: Agent personality object
+            dimension_ids: Ordered dimension IDs
+            dimensions: dimension_id → display name
+
+        Returns:
+            {
+                "chosen_direction": str,   # matches candidate["direction"]
+                "chosen_heading": float,
+                "chosen_pano_id": str,
+                "reason": str,
+                "confidence": float,       # 0.0–1.0
+                "ranking": List[str],      # all directions ranked best→worst
+            }
+        """
+        persona_name = getattr(personality, "name", "Unknown Persona")
+        persona_desc = getattr(personality, "description", "")
+
+        ltm_text = _format_ltm_patterns(ltm_patterns)
+
+        candidate_lines = []
+        for c in candidates:
+            scores_str = "  ".join(
+                f"{dimensions.get(d, d)}={c['scores'].get(d, 0):.1f}"
+                for d in dimension_ids
+            )
+            concern_str = f"\n      Key concern: {c['key_concern']}" if c.get("key_concern") else ""
+            candidate_lines.append(
+                f"  [{c['direction']}] heading={c['heading']:.0f}°\n"
+                f"      Scores: {scores_str}\n"
+                f"      Interpretation: \"{c['interpretation'][:120]}\"{concern_str}"
+            )
+        candidates_text = "\n\n".join(candidate_lines)
+
+        direction_labels = [c["direction"] for c in candidates]
+        directions_str = " | ".join(direction_labels)
+
+        prompt = f"""You are choosing a walking direction at a branch point for a specific persona.
+
+Persona: {persona_name}
+Description: {persona_desc}
+
+Route context (long-term memory):
+{ltm_text}
+
+Candidate directions:
+{candidates_text}
+
+Choose the best direction for this persona considering:
+- Their specific priorities and sensitivities
+- How each direction compares to the overall route baseline above
+- Any key concerns flagged per direction
+
+Respond ONLY with valid JSON:
+{{
+  "chosen_direction": "{directions_str.split(' | ')[0]} (one of: {directions_str})",
+  "reason": "one concise sentence explaining the choice from the persona's perspective",
+  "confidence": 0.0 to 1.0,
+  "ranking": ["best", "second", ...] using the direction labels
+}}"""
+
+        self.logger.debug(f"[Decider.branch] {len(candidates)} candidates calling LLM")
+        result = call_llm(prompt, max_tokens=256)
+
+        if result and "chosen_direction" in result:
+            chosen_dir = result["chosen_direction"]
+            chosen = next((c for c in candidates if c["direction"] == chosen_dir), candidates[0])
+            self.logger.debug(
+                f"[Decider.branch] chosen={chosen_dir} confidence={result.get('confidence')}"
+            )
+            return {
+                "chosen_direction": chosen_dir,
+                "chosen_heading": chosen["heading"],
+                "chosen_pano_id": chosen.get("pano_id", ""),
+                "reason": result.get("reason", ""),
+                "confidence": result.get("confidence", 0.5),
+                "ranking": result.get("ranking", direction_labels),
+            }
+
+        # Fallback: pick highest average score
+        self.logger.warning("[Decider.branch] LLM failed → fallback: highest avg score")
+        best = max(
+            candidates,
+            key=lambda c: sum(c["scores"].values()) / len(c["scores"]) if c["scores"] else 0,
+        )
+        return {
+            "chosen_direction": best["direction"],
+            "chosen_heading": best["heading"],
+            "chosen_pano_id": best.get("pano_id", ""),
+            "reason": "Selected by highest average score (fallback).",
+            "confidence": 0.3,
+            "ranking": [best["direction"]],
+        }
+
     def _decide_fallback(self, system1_scores: Dict[str, float]) -> Dict[str, Any]:
         """Heuristic fallback when LLM call fails."""
         avg = sum(system1_scores.values()) / len(system1_scores) if system1_scores else 5.0
