@@ -11,6 +11,8 @@ Analysis mode: run_with_memory() / run_with_memory_from_folder()
 """
 
 import json
+import math
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -28,6 +30,45 @@ from src.agent.config import AgentPersonality, get_preset
 from src.core import DEFAULT_FRAMEWORK_ID, settings
 from src.utils.data_models import Route, Waypoint
 from src.utils.logging import get_logger
+
+
+def _calc_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Compass bearing from point 1 to point 2 (degrees, 0=N clockwise)."""
+    lat1, lat2 = math.radians(lat1), math.radians(lat2)
+    dlon = math.radians(lon2 - lon1)
+    x = math.sin(dlon) * math.cos(lat2)
+    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+    return (math.degrees(math.atan2(x, y)) + 360) % 360
+
+
+def _bearing_to_cardinal(b: float) -> str:
+    return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][round(b / 45) % 8]
+
+
+def _filter_headings_toward_dest(
+    links: List[Dict],
+    dest_bearing: float,
+    tolerance: float = 120.0,
+) -> List[float]:
+    """Return headings within tolerance° of dest_bearing.
+    Falls back to all headings if none qualify."""
+    result = [
+        float(l.get("heading") or l.get("yawDeg") or 0)
+        for l in links
+        if abs(((l.get("heading") or l.get("yawDeg") or 0) - dest_bearing + 180) % 360 - 180) <= tolerance
+    ]
+    return result if result else [
+        float(l.get("heading") or l.get("yawDeg") or 0) for l in links
+    ]
+
+
+def _closest_link(links: List[Dict], target_heading: float) -> Dict:
+    return min(
+        links,
+        key=lambda l: abs(
+            ((l.get("heading") or l.get("yawDeg") or 0) - target_heading + 180) % 360 - 180
+        ),
+    )
 
 
 class CityWalkAgent(BaseAgent):
@@ -2027,6 +2068,7 @@ class CityWalkAgent(BaseAgent):
         branch_pano_id: str,
         candidate_headings: List[float],
         memory_manager: Any,
+        destination_context: Optional[str] = None,
         output_dir: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Evaluate candidate directions at a branch point and choose the best.
@@ -2140,6 +2182,7 @@ class CityWalkAgent(BaseAgent):
             personality=self.personality,
             dimension_ids=self.persona_reasoner.dimension_ids,
             dimensions=self.persona_reasoner.dimensions,
+            destination_context=destination_context,
         )
 
         self.logger.info(
@@ -2174,4 +2217,218 @@ class CityWalkAgent(BaseAgent):
             with open(log_path, "w", encoding="utf-8") as f:
                 json.dump(existing, f, indent=2, ensure_ascii=False)
 
+        return result
+
+    async def autonomous_walk(
+        self,
+        start_lat: float,
+        start_lng: float,
+        dest_lat: float,
+        dest_lng: float,
+        max_steps: int = 60,
+        arrival_threshold_m: float = 50.0,
+        output_dir: Optional[Path] = None,
+        step_callback=None,
+    ) -> Dict[str, Any]:
+        """Walk autonomously from start to destination.
+
+        Each step:
+        1. Fetch pano metadata → links
+        2. Analyze current position (System 1)
+        3. Check arrival
+        4. Filter candidate headings toward destination
+        5. branch_decision() if 2+ candidates, else take single heading
+        6. Move to next pano
+        """
+        import tempfile
+
+        import requests as _req
+
+        from src.agent.memory.memory_manager import MemoryManager
+        from src.agent.system2.persona_reasoner import TriggerReason
+        from demo.server import MapTilesSession
+
+        nav = MapTilesSession(settings.google_maps_api_key)
+
+        memory_manager = MemoryManager(agent_id=f"walk_{int(time.time())}")
+        if self.personality:
+            memory_manager.set_agent_attributes(
+                personality=self.personality,
+                profile={"name": "Autonomous Walker"},
+                status={"mode": "autonomous"},
+            )
+        self.continuous_analyzer.memory_manager = memory_manager
+
+        visited: set = set()
+        route_taken: List[Dict] = []
+        arrived = False
+        current_lat, current_lng = start_lat, start_lng
+
+        pano_id = await nav.coord_to_pano_id(start_lat, start_lng)
+        if not pano_id:
+            raise ValueError(f"No Street View pano at ({start_lat}, {start_lng})")
+
+        self.logger.info(
+            f"autonomous_walk start | pano={pano_id[:12]} "
+            f"dest=({dest_lat:.4f},{dest_lng:.4f}) max_steps={max_steps}"
+        )
+
+        for step in range(max_steps):
+            # 1. Metadata
+            try:
+                metadata = await nav.get_metadata(pano_id)
+            except Exception as e:
+                self.logger.warning(f"Step {step}: metadata error — {e}")
+                break
+
+            current_lat = metadata.get("lat", current_lat)
+            current_lng = metadata.get("lng", current_lng)
+            links = metadata.get("links", [])
+
+            if not links:
+                self.logger.warning(f"Step {step}: no links — stopping")
+                break
+
+            # 2. Arrival check
+            dist_m = geodesic(
+                (current_lat, current_lng), (dest_lat, dest_lng)
+            ).meters
+
+            if dist_m <= arrival_threshold_m:
+                arrived = True
+                self.logger.info(f"Step {step}: ARRIVED — dist={dist_m:.0f}m")
+                break
+
+            # 3. Destination context
+            dest_bearing = _calc_bearing(current_lat, current_lng, dest_lat, dest_lng)
+            cardinal = _bearing_to_cardinal(dest_bearing)
+            dest_context = f"{cardinal} ({dest_bearing:.0f}°), {dist_m:.0f}m away"
+
+            # 4. Analyze current pano (System 1)
+            analysis = None
+            try:
+                sv_url = (
+                    f"https://maps.googleapis.com/maps/api/streetview"
+                    f"?pano={pano_id}&size=640x640"
+                    f"&heading={links[0].get('heading', 0):.0f}"
+                    f"&fov=90&pitch=0&key={settings.google_maps_api_key}"
+                )
+                img_bytes = _req.get(sv_url, timeout=15).content
+                tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                tmp.write(img_bytes)
+                tmp.flush()
+                tmp_path = Path(tmp.name)
+                tmp.close()
+
+                analysis = self.continuous_analyzer.analyze_waypoint(
+                    waypoint_id=step,
+                    image_path=tmp_path,
+                    metadata={"heading": links[0].get("heading", 0),
+                              "lat": current_lat, "lon": current_lng},
+                    visual_change_detected=True,
+                    phash_distance=None,
+                )
+                tmp_path.unlink(missing_ok=True)
+            except Exception as e:
+                self.logger.warning(f"Step {step}: analysis error — {e}")
+
+            # 5. Update memory
+            if analysis:
+                is_intersection = len(links) >= 3
+                memory_manager.process_waypoint(
+                    analysis,
+                    triggered=is_intersection,
+                    trigger_reason=TriggerReason.VISUAL_CHANGE if is_intersection else None,
+                )
+
+            # 6. Filter candidate headings toward destination
+            candidate_headings = _filter_headings_toward_dest(links, dest_bearing)
+
+            # 7. Choose direction
+            chosen_heading = candidate_headings[0]
+            recommendation = None
+
+            if len(candidate_headings) >= 2 and analysis:
+                try:
+                    branch_result = self.branch_decision(
+                        branch_pano_id=pano_id,
+                        candidate_headings=candidate_headings,
+                        memory_manager=memory_manager,
+                        destination_context=dest_context,
+                    )
+                    chosen_heading = branch_result["chosen_heading"]
+                    recommendation = branch_result.get("reason")
+                    self.logger.info(
+                        f"Step {step:>3} | branch → {branch_result['chosen_direction']} "
+                        f"({chosen_heading:.0f}°) conf={branch_result['confidence']:.2f}"
+                    )
+                except Exception as e:
+                    self.logger.warning(f"Step {step}: branch error — {e}")
+
+            # 8. Find next pano (prefer unvisited)
+            unvisited_links = [
+                l for l in links if (l.get("panoId") or l.get("id")) not in visited
+            ]
+            target_links = unvisited_links if unvisited_links else links
+            next_link = _closest_link(target_links, chosen_heading)
+            next_pano_id = next_link.get("panoId") or next_link.get("id")
+
+            if not next_pano_id:
+                self.logger.warning(f"Step {step}: no next pano — stopping")
+                break
+
+            # 9. Record step
+            step_result = {
+                "step": step,
+                "pano_id": pano_id,
+                "lat": current_lat,
+                "lng": current_lng,
+                "heading": round(chosen_heading, 1),
+                "dist_to_dest_m": round(dist_m, 1),
+                "dest_bearing": round(dest_bearing, 1),
+                "dest_cardinal": cardinal,
+                "scores": analysis.persona_scores if analysis else {},
+                "recommendation": recommendation,
+                "is_intersection": len(links) >= 3,
+                "candidate_count": len(candidate_headings),
+            }
+            route_taken.append(step_result)
+            visited.add(pano_id)
+
+            self.logger.info(
+                f"Step {step:>3} | dist={dist_m:.0f}m {cardinal}({dest_bearing:.0f}°) "
+                f"→ heading={chosen_heading:.0f}° | next={next_pano_id[:12]}"
+            )
+
+            if step_callback:
+                await step_callback(step_result)
+
+            pano_id = next_pano_id
+
+        final_dist = geodesic(
+            (current_lat, current_lng), (dest_lat, dest_lng)
+        ).meters
+
+        result = {
+            "arrived": arrived,
+            "steps": len(route_taken),
+            "final_distance_m": round(final_dist, 1),
+            "route_taken": route_taken,
+            "persona": getattr(self.personality, "name", "objective"),
+            "memory_debug": {
+                "snapshots": memory_manager._route_snapshots,
+                "episodes": memory_manager._route_reasoning_log,
+            },
+        }
+
+        if output_dir:
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            with open(Path(output_dir) / "walk_log.json", "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=2, ensure_ascii=False, default=str)
+            self.logger.info(f"Walk log saved → {output_dir}/walk_log.json")
+
+        self.logger.info(
+            f"Walk complete | arrived={arrived} steps={len(route_taken)} "
+            f"final_dist={final_dist:.0f}m"
+        )
         return result

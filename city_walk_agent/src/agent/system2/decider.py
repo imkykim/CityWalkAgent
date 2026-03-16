@@ -147,6 +147,7 @@ Respond ONLY with valid JSON matching this exact schema:
         personality: Any,
         dimension_ids: List[str],
         dimensions: Dict[str, str],
+        destination_context: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Choose the best direction at a branch point.
 
@@ -180,45 +181,43 @@ Respond ONLY with valid JSON matching this exact schema:
 
         ltm_text = _format_ltm_patterns(ltm_patterns)
 
+        dest_line = f"Destination: {destination_context}" if destination_context else ""
+
         candidate_lines = []
         for c in candidates:
             scores_str = "  ".join(
                 f"{dimensions.get(d, d)}={c['scores'].get(d, 0):.1f}"
                 for d in dimension_ids
             )
-            concern_str = f"\n      Key concern: {c['key_concern']}" if c.get("key_concern") else ""
+            concern_str = f"\n    Key concern: {c['key_concern']}" if c.get("key_concern") else ""
             candidate_lines.append(
-                f"  [{c['direction']}] heading={c['heading']:.0f}°\n"
-                f"      Scores: {scores_str}\n"
-                f"      Interpretation: \"{c['interpretation'][:120]}\"{concern_str}"
+                f"[{c['direction']}] heading={c['heading']:.0f}°  {scores_str}\n"
+                f"    \"{c['interpretation'][:120]}\"{concern_str}"
             )
         candidates_text = "\n\n".join(candidate_lines)
 
         direction_labels = [c["direction"] for c in candidates]
         directions_str = " | ".join(direction_labels)
 
-        prompt = f"""You are choosing a walking direction at a branch point for a specific persona.
+        prompt = f"""You are {persona_name} navigating a city.
+{persona_desc}
 
-Persona: {persona_name}
-Description: {persona_desc}
+{dest_line}
 
-Route context (long-term memory):
+Route context:
 {ltm_text}
 
-Candidate directions:
+Your options:
 {candidates_text}
 
-Choose the best direction for this persona considering:
-- Their specific priorities and sensitivities
-- How each direction compares to the overall route baseline above
-- Any key concerns flagged per direction
+Which direction do you choose?
 
 Respond ONLY with valid JSON:
 {{
-  "chosen_direction": "{directions_str.split(' | ')[0]} (one of: {directions_str})",
-  "reason": "one concise sentence explaining the choice from the persona's perspective",
+  "chosen_direction": "(one of: {directions_str})",
+  "reason": "one sentence from {persona_name}'s perspective",
   "confidence": 0.0 to 1.0,
-  "ranking": ["best", "second", ...] using the direction labels
+  "ranking": ["best", "second", ...] using direction labels
 }}"""
 
         self.logger.debug(f"[Decider.branch] {len(candidates)} candidates calling LLM")

@@ -293,6 +293,42 @@ def cmd_collect(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# `walk` subcommand
+# ---------------------------------------------------------------------------
+
+def cmd_walk(args: argparse.Namespace) -> None:
+    """Autonomous walk from start coords to destination coords."""
+    import asyncio
+
+    from src.agent.config.personalities import get_preset
+
+    set_global_log_level(args.log_level)
+
+    personality = get_preset(args.personality, "place_pulse_2.0")
+    agent = CityWalkAgent(
+        agent_id=f"walk_{args.personality}",
+        personality=personality,
+        framework_id="place_pulse_2.0",
+    )
+
+    result = asyncio.run(agent.autonomous_walk(
+        start_lat=args.start_lat,
+        start_lng=args.start_lng,
+        dest_lat=args.dest_lat,
+        dest_lng=args.dest_lng,
+        max_steps=args.max_steps,
+        output_dir=Path(args.output_dir) if args.output_dir else None,
+    ))
+
+    print(f"\n{'✅ ARRIVED' if result['arrived'] else '⏹ MAX STEPS REACHED'}")
+    print(f"Steps taken : {result['steps']}")
+    print(f"Final dist  : {result['final_distance_m']}m")
+    print(f"Persona     : {result['persona']}")
+    if args.output_dir:
+        print(f"Log saved   : {args.output_dir}/walk_log.json")
+
+
+# ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
 
@@ -327,6 +363,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--visualize-only", action="store_true",
                        help="Regenerate visualizations from existing results")
 
+    # ── walk ─────────────────────────────────────────────────────────────
+    p_walk = sub.add_parser("walk", help="Autonomous walk from start to destination")
+    p_walk.add_argument("--start-lat",   type=float, required=True)
+    p_walk.add_argument("--start-lng",   type=float, required=True)
+    p_walk.add_argument("--dest-lat",    type=float, required=True)
+    p_walk.add_argument("--dest-lng",    type=float, required=True)
+    p_walk.add_argument("--personality", default="homebuyer",
+                        help="Persona preset (homebuyer, runner, parent_with_kids, …)")
+    p_walk.add_argument("--max-steps",   type=int, default=60)
+    p_walk.add_argument("--output-dir",  default="outputs/walk")
+    p_walk.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        type=str.upper,
+    )
+
     # ── collect ──────────────────────────────────────────────────────────
     p_col = sub.add_parser("collect", help="Collect Street View images along a route")
     p_col.add_argument("--start",  type=parse_coord, required=True, metavar="LAT,LON")
@@ -354,6 +407,8 @@ def main() -> None:
         cmd_run(args)
     elif args.command == "collect":
         cmd_collect(args)
+    elif args.command == "walk":
+        cmd_walk(args)
 
 
 if __name__ == "__main__":
