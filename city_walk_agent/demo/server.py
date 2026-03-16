@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -34,7 +35,9 @@ load_dotenv(PROJECT_ROOT / ".env")
 from src.core import settings, load_framework
 from src.core.evaluation.evaluator import Evaluator
 from src.core.evaluation.vlm_client import VLMConfig
-from src.agent.config.personalities import ENHANCED_PERSONALITIES
+from src.agent.config.personalities import ENHANCED_PERSONALITIES, get_preset
+from src.agent.orchestrator import CityWalkAgent
+from src.agent.memory.memory_manager import MemoryManager
 
 # ── constants ─────────────────────────────────────────────────────────────────
 DEMO_DIR = Path(__file__).parent
@@ -176,6 +179,7 @@ class AnalyzeRequest(BaseModel):
 class NavStartBody(BaseModel):
     lat: float
     lng: float
+    persona: str = "objective"
 
 
 class NavNavigateBody(BaseModel):
@@ -190,6 +194,65 @@ class AnalyzeResponse(BaseModel):
     persona: str
     waypoint_id: int
     processing_time_sec: float
+
+
+# ── session store ─────────────────────────────────────────────────────────────
+
+@dataclass
+class NavSession:
+    session_id: str
+    agent: CityWalkAgent
+    memory_manager: MemoryManager
+    waypoint_counter: int = 0
+    created_at: float = field(default_factory=time.time)
+
+
+_sessions: Dict[str, NavSession] = {}
+
+
+def _create_session(persona_id: str) -> NavSession:
+    """Create a new navigation session with Orchestrator + MemoryManager."""
+    import uuid
+    session_id = str(uuid.uuid4())[:8]
+
+    personality = get_preset(persona_id, "place_pulse_2.0") if persona_id != "objective" else get_preset("homebuyer", "place_pulse_2.0")
+
+    agent = CityWalkAgent(
+        agent_id=f"demo_{session_id}",
+        personality=personality,
+        framework_id="place_pulse_2.0",
+    )
+
+    memory_manager = MemoryManager(agent_id=f"demo_{session_id}")
+    memory_manager.set_agent_attributes(
+        personality=personality,
+        profile={"name": "Demo Walker"},
+        status={"mode": "explore"},
+    )
+
+    # Inject memory_manager into continuous_analyzer
+    agent.continuous_analyzer.memory_manager = memory_manager
+
+    session = NavSession(
+        session_id=session_id,
+        agent=agent,
+        memory_manager=memory_manager,
+    )
+    _sessions[session_id] = session
+
+    # Evict sessions older than 2 hours
+    cutoff = time.time() - 7200
+    stale = [k for k, v in _sessions.items() if v.created_at < cutoff]
+    for k in stale:
+        del _sessions[k]
+
+    return session
+
+
+def _get_session(session_id: str) -> NavSession:
+    if session_id not in _sessions:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found or expired.")
+    return _sessions[session_id]
 
 
 # ── helper: build evaluator ───────────────────────────────────────────────────
@@ -445,19 +508,23 @@ async def nav_status():
 
 @app.post("/api/nav/start")
 async def nav_start(body: NavStartBody):
-    """{ lat, lng } → PanoResponse"""
-    session = _get_nav_session()
+    """{ lat, lng, persona? } → PanoResponse + session_id"""
+    nav = _get_nav_session()
     try:
-        pano_id = await session.coord_to_pano_id(body.lat, body.lng)
+        pano_id = await nav.coord_to_pano_id(body.lat, body.lng)
     except httpx.HTTPError as e:
         raise HTTPException(status_code=503, detail=f"Map Tiles API error: {e}")
     if pano_id is None:
         raise HTTPException(status_code=404, detail="No Street View panorama found near these coordinates.")
     try:
-        metadata = await session.get_metadata(pano_id)
+        metadata = await nav.get_metadata(pano_id)
     except httpx.HTTPError as e:
         raise HTTPException(status_code=503, detail=f"Metadata fetch error: {e}")
-    return _build_pano_response(pano_id, metadata, heading=0)
+
+    session = _create_session(body.persona)
+    response = _build_pano_response(pano_id, metadata, heading=0)
+    response["session_id"] = session.session_id
+    return response
 
 
 @app.post("/api/nav/navigate")
@@ -470,6 +537,131 @@ async def nav_navigate(body: NavNavigateBody):
         raise HTTPException(status_code=503, detail=f"Map Tiles API error: {e}")
     heading = body.heading if body.heading is not None else 0
     return _build_pano_response(body.pano_id, metadata, heading=heading)
+
+
+# ── stateful nav endpoints ────────────────────────────────────────────────────
+
+class NavAnalyzeBody(BaseModel):
+    session_id: str
+    pano_id: str
+    heading: float = 0.0
+    waypoint_id: Optional[int] = None
+
+
+@app.post("/api/nav/analyze")
+async def nav_analyze(body: NavAnalyzeBody):
+    """Analyze a single waypoint and update MemoryManager state."""
+    import tempfile
+    session = _get_session(body.session_id)
+
+    # Fetch image via existing helper
+    image_bytes = await _get_image_bytes(AnalyzeRequest(
+        lat=0, lon=0,
+        heading=body.heading,
+        pano_id=body.pano_id,
+        persona=getattr(session.agent.personality, "personality_id", "objective"),
+    ))
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+    try:
+        tmp.write(image_bytes)
+        tmp.flush()
+        image_path = Path(tmp.name)
+    finally:
+        tmp.close()
+
+    try:
+        waypoint_id = body.waypoint_id if body.waypoint_id is not None else session.waypoint_counter
+        session.waypoint_counter += 1
+
+        loop = asyncio.get_event_loop()
+        analysis = await loop.run_in_executor(
+            None,
+            lambda: session.agent.continuous_analyzer.analyze_waypoint(
+                waypoint_id=waypoint_id,
+                image_path=image_path,
+                metadata={"heading": body.heading, "lat": 0, "lon": 0},
+                visual_change_detected=True,
+                phash_distance=None,
+            ),
+        )
+
+        session.memory_manager.process_waypoint(analysis, triggered=False)
+
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        scores = analysis.persona_scores or analysis.objective_scores or {}
+        reasoning = analysis.persona_reasoning or analysis.objective_reasoning or {}
+
+        return {
+            "scores": scores,
+            "reasoning": reasoning,
+            "image_base64": image_b64,
+            "waypoint_id": waypoint_id,
+            "session_id": body.session_id,
+            "ltm_snapshot_count": len(session.memory_manager._route_snapshots),
+        }
+    finally:
+        image_path.unlink(missing_ok=True)
+
+
+class NavBranchBody(BaseModel):
+    session_id: str
+    branch_pano_id: str
+    candidate_headings: List[float]
+
+
+@app.post("/api/nav/branch")
+async def nav_branch(body: NavBranchBody):
+    """Evaluate candidate directions at a branch point and choose the best."""
+    session = _get_session(body.session_id)
+
+    if len(body.candidate_headings) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 candidate headings.")
+    if len(body.candidate_headings) > 5:
+        raise HTTPException(status_code=400, detail="Maximum 5 candidate headings.")
+
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(
+            None,
+            lambda: session.agent.branch_decision(
+                branch_pano_id=body.branch_pano_id,
+                candidate_headings=body.candidate_headings,
+                memory_manager=session.memory_manager,
+            ),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Branch decision failed: {e}")
+
+    return {
+        "session_id": body.session_id,
+        "branch_pano_id": body.branch_pano_id,
+        "chosen_direction": result["chosen_direction"],
+        "chosen_heading": result["chosen_heading"],
+        "chosen_pano_id": result["chosen_pano_id"],
+        "reason": result["reason"],
+        "confidence": result["confidence"],
+        "ranking": result["ranking"],
+        "candidates": [
+            {
+                "direction": c["direction"],
+                "heading": c["heading"],
+                "scores": c["scores"],
+                "interpretation": c["interpretation"],
+                "key_concern": c["key_concern"],
+            }
+            for c in result["candidates"]
+        ],
+    }
+
+
+@app.post("/api/nav/session/reset")
+async def nav_session_reset(body: dict):
+    """Clear a session's memory (start fresh on same route)."""
+    session_id = body.get("session_id")
+    if session_id and session_id in _sessions:
+        del _sessions[session_id]
+    return {"status": "ok"}
 
 
 # ── entry point ───────────────────────────────────────────────────────────────

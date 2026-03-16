@@ -422,6 +422,11 @@
       @keyframes spin { to { transform: rotate(360deg); } }
       @keyframes bob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
       .agent-bob { animation: bob .55s ease-in-out infinite; }
+
+      /* Branch panel card hover */
+      #branch-panel div[style*="cursor: pointer"]:hover {
+        border-color: var(--accent) !important;
+      }
     </style>
   </head>
   <body>
@@ -593,6 +598,9 @@
     let currentPano = null;
     let navMarker = null, navPolyline = null, navPoints = [];
     let navHistory = [];
+    let currentSessionId = null;
+    let branchPending = false;
+    let waypointCounter = 0;
 
     // Street View Panorama
     let panorama = null;
@@ -818,6 +826,8 @@
         if (navMarker)   { map.removeLayer(navMarker);   navMarker   = null; }
         if (navPolyline) { map.removeLayer(navPolyline); navPolyline = null; }
         navPoints = []; navHistory = []; currentPano = null;
+        currentSessionId = null; waypointCounter = 0; branchPending = false;
+        hideBranchPanel();
         // Re-draw route if loaded
         if (waypoints.length) drawRoute();
         setStatus(`${waypoints.length} waypoints · click Run or a marker`);
@@ -1060,10 +1070,14 @@
       try {
         const res = await fetch(`${API}/api/nav/start`, {
           method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ lat, lng }),
+          body: JSON.stringify({ lat, lng, persona: currentPersona }),
         });
         if (!res.ok) { const e = await res.json(); throw new Error(e.detail||res.statusText); }
         const data = await res.json();
+        currentSessionId = data.session_id;
+        waypointCounter = 0;
+        branchPending = false;
+        log(`Session created: ${currentSessionId}`, 'ok');
         updateExploreUI(data, true);
       } catch(e) {
         showExploreError(e.message); log(`exploreStart error: ${e.message}`, 'err');
@@ -1099,7 +1113,11 @@ function updateExploreUI(data, isStart) {
       setBadge(data.pano_id.slice(0,12)+'…');
 
       // pano info card
+      const intersectionBadge = data.is_intersection
+        ? `<span class="intersection">⑂ Intersection · ${data.link_count} links</span><br>`
+        : '';
       document.getElementById('pano-info').innerHTML =
+        intersectionBadge +
         `<span class="key">Pano ID</span> ${escHtml(data.pano_id.slice(0,20))}…<br>` +
         `<span class="key">Lat/Lng</span> ${data.lat.toFixed(5)}, ${data.lng.toFixed(5)}<br>` +
         `<span class="key">Date</span> ${data.date || 'unknown'}`;
@@ -1126,13 +1144,25 @@ function updateExploreUI(data, isStart) {
         const t0 = Date.now();
         // Use current panorama POV heading as VLM analysis heading
         const vlmHeading = panorama ? Math.round(panorama.getPov()?.heading ?? 0) : 0;
-        const res = await fetch(`${API}/analyze`, {
+
+        const useSession = currentSessionId && currentMode === 'explore';
+        const endpoint = useSession ? `${API}/api/nav/analyze` : `${API}/analyze`;
+        const body = useSession
+          ? {
+              session_id: currentSessionId,
+              pano_id: currentPano.pano_id,
+              heading: vlmHeading,
+              waypoint_id: waypointCounter++,
+            }
+          : {
+              lat: currentPano.lat, lon: currentPano.lng,
+              heading: vlmHeading, persona: currentPersona,
+              pano_id: currentPano.pano_id,
+            };
+
+        const res = await fetch(endpoint, {
           method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({
-            lat: currentPano.lat, lon: currentPano.lng,
-            heading: vlmHeading, persona: currentPersona,
-            pano_id: currentPano.pano_id,
-          }),
+          body: JSON.stringify(body),
         });
         if (!res.ok) { const e = await res.json().catch(()=>({detail:res.statusText})); throw new Error(e.detail||res.statusText); }
         const result = await res.json();
@@ -1144,14 +1174,156 @@ function updateExploreUI(data, isStart) {
         setAnalysisOverlay(vlmImageUrl, vlmHeading);
         renderScores(result.scores);
         renderReasoning(result.reasoning);
-        document.getElementById('meta-line').textContent = `${elapsed}s · ${result.persona}`;
+        const metaSuffix = result.ltm_snapshot_count !== undefined
+          ? `  ·  ${result.ltm_snapshot_count} snapshots`
+          : (result.persona ? `  ·  ${result.persona}` : '');
+        document.getElementById('meta-line').textContent = `${elapsed}s${metaSuffix}`;
         log(`Pano analysis done — ${elapsed}s`, 'ok');
         setStatus(`Analysis done · ${elapsed}s`);
+
+        // Check for intersection → trigger branch decision
+        if (currentPano?.is_intersection && currentSessionId && !branchPending) {
+          const headings = (currentPano.links || []).map(l => l.heading ?? l.yawDeg ?? 0);
+          if (headings.length >= 2) {
+            triggerBranchDecision(currentPano.pano_id, headings);
+          }
+        }
       } catch(e) {
         showAnalysisBadge(false);
         log(`analyzePano error: ${e.message}`, 'err');
         setStatus(`Analysis error: ${e.message}`);
       }
+    }
+
+    async function triggerBranchDecision(branchPanoId, headings) {
+      if (branchPending || !currentSessionId) return;
+      branchPending = true;
+
+      showAnalysisBadge(true, 'Choosing direction…');
+      setStatus('Branch point — evaluating directions…');
+      log(`Branch: ${headings.length} candidates at ${branchPanoId.slice(0,12)}…`);
+
+      try {
+        const res = await fetch(`${API}/api/nav/branch`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+            session_id: currentSessionId,
+            branch_pano_id: branchPanoId,
+            candidate_headings: headings,
+          }),
+        });
+        if (!res.ok) { const e = await res.json(); throw new Error(e.detail || res.statusText); }
+        const result = await res.json();
+
+        showAnalysisBadge(false);
+        renderBranchResult(result);
+        log(`Branch chosen: ${result.chosen_direction} (${result.chosen_heading}°) conf=${result.confidence?.toFixed(2)}`, 'ok');
+        setStatus(`Branch → ${result.chosen_direction} · ${result.reason?.slice(0,60)}…`);
+
+        // Auto-navigate to chosen direction after 3s (user can override by clicking a card)
+        setTimeout(() => {
+          if (branchPending) {
+            navigateToHeading(result.chosen_heading);
+            hideBranchPanel();
+          }
+        }, 3000);
+
+      } catch(e) {
+        showAnalysisBadge(false);
+        log(`Branch decision error: ${e.message}`, 'err');
+        setStatus(`Branch error: ${e.message}`);
+        branchPending = false;
+      }
+    }
+
+    async function navigateToHeading(heading) {
+      if (!currentPano) return;
+      setPanorama(currentPano.pano_id, heading);
+      setAnalysisOverlay(null, null);
+      setTimeout(() => analyzePano(), 500);
+    }
+
+    function hideBranchPanel() {
+      const panel = document.getElementById('branch-panel');
+      if (panel) panel.remove();
+    }
+
+    function renderBranchResult(result) {
+      hideBranchPanel();
+
+      const panel = document.createElement('div');
+      panel.id = 'branch-panel';
+      panel.style.cssText = `
+        position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+        z-index: 30; background: rgba(255,255,255,0.95);
+        backdrop-filter: blur(12px); border: 1px solid var(--border);
+        border-radius: 12px; padding: 12px 14px; min-width: 340px;
+        box-shadow: 0 4px 20px rgba(0,0,0,.12);
+      `;
+
+      const header = document.createElement('div');
+      header.style.cssText = 'font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:8px;';
+      header.textContent = `⑂ Branch Point — Recommended: Direction ${result.chosen_direction}`;
+      panel.appendChild(header);
+
+      const reason = document.createElement('div');
+      reason.style.cssText = 'font-size:11px;color:var(--text-2);margin-bottom:10px;line-height:1.5;';
+      reason.textContent = result.reason || '';
+      panel.appendChild(reason);
+
+      const cards = document.createElement('div');
+      cards.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;';
+
+      for (const c of result.candidates) {
+        const isChosen = c.direction === result.chosen_direction;
+        const card = document.createElement('div');
+        card.style.cssText = `
+          flex: 1; min-width: 90px; padding: 7px 9px;
+          border-radius: 8px; cursor: pointer;
+          border: 1.5px solid ${isChosen ? 'var(--accent)' : 'var(--border)'};
+          background: ${isChosen ? '#f0f6ff' : '#fafafa'};
+          transition: border-color .15s;
+        `;
+
+        const label = document.createElement('div');
+        label.style.cssText = 'font-size:12px;font-weight:700;color:var(--text-1);';
+        label.textContent = `${c.direction}  ${Math.round(c.heading)}°`;
+        card.appendChild(label);
+
+        const vals = Object.values(c.scores || {});
+        const avg = vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(1) : '—';
+        const score = document.createElement('div');
+        score.style.cssText = 'font-size:11px;color:var(--text-2);margin-top:2px;';
+        score.textContent = `avg ${avg}`;
+        card.appendChild(score);
+
+        if (c.key_concern) {
+          const concern = document.createElement('div');
+          concern.style.cssText = 'font-size:10px;color:var(--orange);margin-top:3px;line-height:1.4;';
+          concern.textContent = `⚠ ${c.key_concern}`;
+          card.appendChild(concern);
+        }
+
+        card.addEventListener('click', () => {
+          branchPending = false;
+          navigateToHeading(c.heading);
+          hideBranchPanel();
+          log(`Branch override → ${c.direction} (${c.heading}°)`, 'info');
+        });
+
+        card.addEventListener('mouseenter', () => { card.style.borderColor = 'var(--accent)'; });
+        card.addEventListener('mouseleave', () => { card.style.borderColor = isChosen ? 'var(--accent)' : 'var(--border)'; });
+
+        cards.appendChild(card);
+      }
+      panel.appendChild(cards);
+
+      const hint = document.createElement('div');
+      hint.style.cssText = 'font-size:10px;color:var(--text-3);margin-top:8px;text-align:center;';
+      hint.textContent = 'Auto-navigating in 3s — tap a card to override';
+      panel.appendChild(hint);
+
+      document.getElementById('sv-pane').appendChild(panel);
     }
 
     function showExploreError(msg) {
