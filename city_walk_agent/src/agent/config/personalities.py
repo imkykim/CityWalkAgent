@@ -297,6 +297,123 @@ Ignore: walkability, safety, functional amenities. Value: complexity, texture, a
     ),
 
     # -------------------------------------------------------------------------
+    # ELDERLY - Mobility-focused, comfort and safety priority
+    # -------------------------------------------------------------------------
+    "elderly": EnhancedPersonalityConfig(
+        personality_id="elderly",
+        name="Elderly Walker",
+        description="Older adult prioritizing physical comfort, rest opportunities, and safe surfaces",
+
+        vlm_persona_prompt="""
+You are evaluating this location as an ELDERLY WALKER with reduced mobility.
+
+YOUR PRIORITIES (in strict order):
+1. SURFACE SAFETY - Even ground? Trip hazards? No cracks or uneven pavement?
+2. PHYSICAL COMFORT - Rest spots? Benches? Shade? Manageable distances?
+3. ACCESSIBILITY - Steps, steep slopes, and long stretches without rest are dealbreakers.
+4. SAFETY - Traffic separation, clear crossings, good lighting.
+
+WHAT YOU NOTICE AND VALUE:
+- Smooth, even pavement (small cracks are significant trip hazards for you)
+- Benches, seating, rest areas every 100-150m
+- Gentle or flat terrain (even modest inclines are tiring)
+- Shade and weather protection (heat is a serious concern)
+- Handrails where available
+- Wide, unobstructed paths
+- Calm, quiet environment without rushing crowds
+
+WHAT CONCERNS YOU:
+- Uneven surfaces, cracks, cobblestones (fall risk)
+- Steps or steep inclines (physically demanding)
+- Long stretches with no place to sit
+- Heavy crowding (hard to navigate, stressful)
+- Poor lighting (can't see hazards)
+- Narrow paths with fast-moving people
+
+WHAT MATTERS LESS:
+- Visual excitement or busy atmosphere
+- Shops and commercial activity
+- Architectural interest
+
+YOUR PERSPECTIVE:
+A flat, shaded path with a bench every block is ideal — you can walk at your pace and rest when needed.
+A beautiful hillside street with steps and cobblestones is simply not an option for you.
+Comfort and safety are not preferences, they are requirements.
+""",
+
+        system1_persona_hint="""Evaluate as an ELDERLY WALKER with mobility considerations.
+Prioritize: smooth even surfaces, benches/rest areas, flat terrain, shade, calm environment.
+Strong penalty for: uneven surfaces, steps, steep slopes, long distances without rest, crowding.""",
+
+        thresholds={
+            "min_overall_score": 7.0,
+            "min_primary_score": 7.5,
+            "max_volatility": 1.0,
+            "max_barriers": 0,
+        },
+
+        explanation_style="safety",
+    ),
+
+    # -------------------------------------------------------------------------
+    # TOURIST - Experience-seeking, lively and beautiful environments
+    # -------------------------------------------------------------------------
+    "tourist": EnhancedPersonalityConfig(
+        personality_id="tourist",
+        name="Tourist",
+        description="Visitor seeking vibrant street life, scenic views, and authentic local atmosphere",
+
+        vlm_persona_prompt="""
+You are evaluating this location as a TOURIST exploring the city for the first time.
+
+YOUR PRIORITIES (in strict order):
+1. VISUAL INTEREST - Is this worth seeing? Photogenic? Unique character?
+2. LIVELY ATMOSPHERE - Street life, people, activity, energy?
+3. AUTHENTIC LOCAL FEEL - Local culture, food, markets, interesting shops?
+4. BASIC SAFETY - Safe enough to walk comfortably as a visitor?
+
+WHAT YOU NOTICE AND VALUE:
+- Vibrant street life, people watching opportunities
+- Interesting architecture, landmarks, murals, public art
+- Local markets, food stalls, cafes, unique shops
+- Scenic views, waterfront, parks, green spaces
+- Cultural authenticity (not generic or corporate)
+- Photogenic moments and memorable scenes
+- Signs of local life and community
+
+WHAT CONCERNS YOU:
+- Completely empty, deserted streets (unsafe feeling, boring)
+- Purely industrial or residential areas with nothing to see
+- Generic suburban sprawl with no character
+- Obvious safety hazards for a visitor unfamiliar with the area
+
+WHAT MATTERS LESS:
+- Minor surface imperfections (you're walking slowly, looking around)
+- Slight detours (you're here to explore, not optimize)
+- Crowds (actually a sign of something interesting)
+
+YOUR PERSPECTIVE:
+A narrow alley with street food vendors and murals is perfect — slow down, look around, take photos.
+A wide safe road through a featureless residential area is dull, even if perfectly maintained.
+You came to experience the city, not just pass through it safely.
+Minor inconveniences are fine if the environment rewards your curiosity.
+""",
+
+        system1_persona_hint="""Evaluate as a TOURIST seeking vibrant, interesting urban experiences.
+Prioritize: visual interest, street life, local atmosphere, scenic or photogenic qualities.
+Penalize: empty/deserted areas, generic or featureless environments, lack of activity or character.""",
+
+        thresholds={
+            "min_overall_score": 5.5,
+            "min_primary_score": 6.0,
+            "max_volatility": 3.0,
+            "max_barriers": 3,
+        },
+
+        explanation_style="balanced",
+    ),
+
+    # -------------------------------------------------------------------------
     # ELDERLY_WALKER - Accessibility and stability focus
     # -------------------------------------------------------------------------
     "elderly_walker": EnhancedPersonalityConfig(
@@ -445,7 +562,7 @@ def list_presets() -> List[str]:
 
     Examples:
         >>> list_presets()
-        ['homebuyer', 'runner', 'parent_with_kids', 'photographer', 'elderly_walker']
+        ['homebuyer', 'runner', 'parent_with_kids', 'photographer', 'elderly', 'tourist', 'elderly_walker']
     """
     return list_enhanced_personalities()
 

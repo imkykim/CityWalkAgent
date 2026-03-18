@@ -403,6 +403,9 @@ class PersonaReasoner:
             "prospective_homebuyer": "homebuyer",
             "urban_runner": "runner",
             "parent_with_young_children": "parent_with_kids",
+            "elderly_walker": "elderly",
+            "tourist_visitor": "tourist",
+            "visitor": "tourist",
         }
 
         try:
