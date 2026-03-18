@@ -189,10 +189,19 @@ Respond ONLY with valid JSON matching this exact schema:
                 f"{dimensions.get(d, d)}={c['scores'].get(d, 0):.1f}"
                 for d in dimension_ids
             )
-            concern_str = f"\n    Key concern: {c['key_concern']}" if c.get("key_concern") else ""
+            concern_str = (
+                f"\n    Key concern: {c['key_concern']}"
+                if c.get("key_concern") else ""
+            )
+            visit_count = c.get("visit_count", 0)
+            visit_str = (
+                f"\n    ⚠ Previously visited ({visit_count} times)"
+                if visit_count > 0 else ""
+            )
             candidate_lines.append(
                 f"[{c['direction']}] heading={c['heading']:.0f}°  {scores_str}\n"
-                f"    \"{c['interpretation'][:120]}\"{concern_str}"
+                f"    \"{c['interpretation'][:120]}\""
+                f"{concern_str}{visit_str}"
             )
         candidates_text = "\n\n".join(candidate_lines)
 

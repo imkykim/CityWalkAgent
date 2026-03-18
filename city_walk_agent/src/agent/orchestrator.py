@@ -45,22 +45,6 @@ def _bearing_to_cardinal(b: float) -> str:
     return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][round(b / 45) % 8]
 
 
-def _filter_headings_toward_dest(
-    links: List[Dict],
-    dest_bearing: float,
-    tolerance: float = 120.0,
-) -> List[float]:
-    """Return headings within tolerance° of dest_bearing.
-    Falls back to all headings if none qualify."""
-    result = [
-        float(l.get("heading") or l.get("yawDeg") or 0)
-        for l in links
-        if abs(((l.get("heading") or l.get("yawDeg") or 0) - dest_bearing + 180) % 360 - 180) <= tolerance
-    ]
-    return result if result else [
-        float(l.get("heading") or l.get("yawDeg") or 0) for l in links
-    ]
-
 
 def _closest_link(links: List[Dict], target_heading: float) -> Dict:
     return min(
@@ -2069,6 +2053,7 @@ class CityWalkAgent(BaseAgent):
         candidate_headings: List[float],
         memory_manager: Any,
         destination_context: Optional[str] = None,
+        visit_counts: Optional[Dict[str, int]] = None,
         output_dir: Optional[Path] = None,
     ) -> Dict[str, Any]:
         """Evaluate candidate directions at a branch point and choose the best.
@@ -2136,6 +2121,7 @@ class CityWalkAgent(BaseAgent):
                 "pano_id": branch_pano_id,
                 "scores": analysis.persona_scores,
                 "system1_reasoning": analysis.persona_reasoning,
+                "visit_count": (visit_counts or {}).get(branch_pano_id, 0),
             }
 
         self.logger.info(
@@ -2240,14 +2226,16 @@ class CityWalkAgent(BaseAgent):
         5. branch_decision() if 2+ candidates, else take single heading
         6. Move to next pano
         """
+        import asyncio
         import tempfile
 
-        import requests as _req
+        import httpx
 
         from src.agent.memory.memory_manager import MemoryManager
         from src.agent.system2.persona_reasoner import TriggerReason
         from demo.server import MapTilesSession
 
+        loop = asyncio.get_event_loop()
         nav = MapTilesSession(settings.google_maps_api_key)
 
         memory_manager = MemoryManager(agent_id=f"walk_{int(time.time())}")
@@ -2259,10 +2247,13 @@ class CityWalkAgent(BaseAgent):
             )
         self.continuous_analyzer.memory_manager = memory_manager
 
-        visited: set = set()
+        visit_counts: Dict[str, int] = {}
         route_taken: List[Dict] = []
         arrived = False
         current_lat, current_lng = start_lat, start_lng
+        prev_avg_score: float = 0.0
+        distance_from_last_trigger: float = 0.0
+        trigger_reason = None
 
         pano_id = await nav.coord_to_pano_id(start_lat, start_lng)
         if not pano_id:
@@ -2274,6 +2265,13 @@ class CityWalkAgent(BaseAgent):
         )
 
         for step in range(max_steps):
+            # Hard stop: same pano visited 5+ times
+            if visit_counts.get(pano_id, 0) >= 5:
+                self.logger.warning(
+                    f"Step {step}: pano {pano_id[:12]} visited 5+ times — stuck, stopping"
+                )
+                break
+
             # 1. Metadata
             try:
                 metadata = await nav.get_metadata(pano_id)
@@ -2306,6 +2304,7 @@ class CityWalkAgent(BaseAgent):
 
             # 4. Analyze current pano (System 1)
             analysis = None
+            image_path = None
             try:
                 sv_url = (
                     f"https://maps.googleapis.com/maps/api/streetview"
@@ -2313,36 +2312,69 @@ class CityWalkAgent(BaseAgent):
                     f"&heading={links[0].get('heading', 0):.0f}"
                     f"&fov=90&pitch=0&key={settings.google_maps_api_key}"
                 )
-                img_bytes = _req.get(sv_url, timeout=15).content
-                tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-                tmp.write(img_bytes)
-                tmp.flush()
-                tmp_path = Path(tmp.name)
-                tmp.close()
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    img_resp = await client.get(sv_url)
+                    img_resp.raise_for_status()
 
-                analysis = self.continuous_analyzer.analyze_waypoint(
-                    waypoint_id=step,
-                    image_path=tmp_path,
-                    metadata={"heading": links[0].get("heading", 0),
-                              "lat": current_lat, "lon": current_lng},
-                    visual_change_detected=True,
-                    phash_distance=None,
+                tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                tmp.write(img_resp.content)
+                tmp.flush()
+                tmp.close()
+                image_path = Path(tmp.name)
+
+                analysis = await loop.run_in_executor(
+                    None,
+                    lambda: self.continuous_analyzer.analyze_waypoint(
+                        waypoint_id=step,
+                        image_path=image_path,
+                        metadata={"heading": links[0].get("heading", 0),
+                                  "lat": current_lat, "lon": current_lng},
+                        visual_change_detected=True,
+                        phash_distance=None,
+                    ),
                 )
-                tmp_path.unlink(missing_ok=True)
             except Exception as e:
                 self.logger.warning(f"Step {step}: analysis error — {e}")
+            finally:
+                if image_path is not None:
+                    image_path.unlink(missing_ok=True)
 
-            # 5. Update memory
+            # 5. Update memory (S2 trigger logic)
+            trigger_reason = None
             if analysis:
-                is_intersection = len(links) >= 3
-                memory_manager.process_waypoint(
-                    analysis,
-                    triggered=is_intersection,
-                    trigger_reason=TriggerReason.VISUAL_CHANGE if is_intersection else None,
+                current_avg = (
+                    sum(analysis.persona_scores.values()) / len(analysis.persona_scores)
+                    if analysis.persona_scores else 0.0
+                )
+                score_delta = abs(current_avg - prev_avg_score)
+
+                trigger_reason = self.persona_reasoner.should_trigger(
+                    waypoint_id=step,
+                    visual_change=True,
+                    score_delta=score_delta,
+                    distance_from_last=distance_from_last_trigger,
                 )
 
-            # 6. Filter candidate headings toward destination
-            candidate_headings = _filter_headings_toward_dest(links, dest_bearing)
+                if trigger_reason is None and len(links) >= 3:
+                    trigger_reason = TriggerReason.VISUAL_CHANGE
+                    self.logger.debug(f"Step {step}: intersection trigger")
+
+                memory_manager.process_waypoint(
+                    analysis,
+                    triggered=trigger_reason is not None,
+                    trigger_reason=trigger_reason,
+                )
+
+                if trigger_reason is not None:
+                    distance_from_last_trigger = 0.0
+
+                prev_avg_score = current_avg
+
+            # 6. All links as candidates
+            candidate_headings = [
+                float(l.get("heading") or l.get("yawDeg") or 0)
+                for l in links
+            ]
 
             # 7. Choose direction
             chosen_heading = candidate_headings[0]
@@ -2350,11 +2382,15 @@ class CityWalkAgent(BaseAgent):
 
             if len(candidate_headings) >= 2 and analysis:
                 try:
-                    branch_result = self.branch_decision(
-                        branch_pano_id=pano_id,
-                        candidate_headings=candidate_headings,
-                        memory_manager=memory_manager,
-                        destination_context=dest_context,
+                    branch_result = await loop.run_in_executor(
+                        None,
+                        lambda: self.branch_decision(
+                            branch_pano_id=pano_id,
+                            candidate_headings=candidate_headings,
+                            memory_manager=memory_manager,
+                            destination_context=dest_context,
+                            visit_counts=visit_counts,
+                        ),
                     )
                     chosen_heading = branch_result["chosen_heading"]
                     recommendation = branch_result.get("reason")
@@ -2367,7 +2403,8 @@ class CityWalkAgent(BaseAgent):
 
             # 8. Find next pano (prefer unvisited)
             unvisited_links = [
-                l for l in links if (l.get("panoId") or l.get("id")) not in visited
+                l for l in links
+                if visit_counts.get(l.get("panoId") or l.get("id"), 0) == 0
             ]
             target_links = unvisited_links if unvisited_links else links
             next_link = _closest_link(target_links, chosen_heading)
@@ -2391,9 +2428,12 @@ class CityWalkAgent(BaseAgent):
                 "recommendation": recommendation,
                 "is_intersection": len(links) >= 3,
                 "candidate_count": len(candidate_headings),
+                "visit_count": visit_counts.get(pano_id, 0),
+                "trigger_reason": trigger_reason.value if trigger_reason else None,
             }
             route_taken.append(step_result)
-            visited.add(pano_id)
+            visit_counts[pano_id] = visit_counts.get(pano_id, 0) + 1
+            distance_from_last_trigger += 20.0
 
             self.logger.info(
                 f"Step {step:>3} | dist={dist_m:.0f}m {cardinal}({dest_bearing:.0f}°) "
