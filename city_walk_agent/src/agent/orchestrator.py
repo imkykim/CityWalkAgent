@@ -2254,6 +2254,7 @@ class CityWalkAgent(BaseAgent):
         prev_avg_score: float = 0.0
         distance_from_last_trigger: float = 0.0
         trigger_reason = None
+        current_intended_heading: Optional[float] = None
 
         pano_id = await nav.coord_to_pano_id(start_lat, start_lng)
         if not pano_id:
@@ -2377,10 +2378,11 @@ class CityWalkAgent(BaseAgent):
             ]
 
             # 7. Choose direction
+            is_intersection = len(links) >= 3
             chosen_heading = candidate_headings[0]
             recommendation = None
 
-            if len(candidate_headings) >= 2 and analysis:
+            if (is_intersection or trigger_reason is not None) and analysis:
                 try:
                     branch_result = await loop.run_in_executor(
                         None,
@@ -2393,13 +2395,42 @@ class CityWalkAgent(BaseAgent):
                         ),
                     )
                     chosen_heading = branch_result["chosen_heading"]
+                    current_intended_heading = chosen_heading
                     recommendation = branch_result.get("reason")
                     self.logger.info(
-                        f"Step {step:>3} | branch → {branch_result['chosen_direction']} "
-                        f"({chosen_heading:.0f}°) conf={branch_result['confidence']:.2f}"
+                        f"Step {step:>3} | {'intersection' if is_intersection else 'S2 rethink'}"
+                        f" → {branch_result['chosen_direction']} ({chosen_heading:.0f}°)"
+                        f" conf={branch_result['confidence']:.2f}"
                     )
                 except Exception as e:
                     self.logger.warning(f"Step {step}: branch error — {e}")
+                    # fallback: 가던 방향 유지
+                    ref = current_intended_heading if current_intended_heading is not None else dest_bearing
+                    chosen_heading = float(
+                        _closest_link(links, ref).get("heading")
+                        or _closest_link(links, ref).get("yawDeg")
+                        or 0
+                    )
+
+            else:
+                # 직선 + S2 없음 → 가던 방향 유지
+                if current_intended_heading is not None:
+                    chosen_heading = float(
+                        _closest_link(links, current_intended_heading).get("heading")
+                        or _closest_link(links, current_intended_heading).get("yawDeg")
+                        or 0
+                    )
+                else:
+                    # 첫 스텝: 목적지 방향으로 초기화
+                    chosen_heading = float(
+                        _closest_link(links, dest_bearing).get("heading")
+                        or _closest_link(links, dest_bearing).get("yawDeg")
+                        or 0
+                    )
+                    current_intended_heading = chosen_heading
+                    self.logger.debug(
+                        f"Step {step}: initial heading → {chosen_heading:.0f}° (toward dest)"
+                    )
 
             # 8. Find next pano (prefer unvisited)
             unvisited_links = [
@@ -2426,7 +2457,9 @@ class CityWalkAgent(BaseAgent):
                 "dest_cardinal": cardinal,
                 "scores": analysis.persona_scores if analysis else {},
                 "recommendation": recommendation,
-                "is_intersection": len(links) >= 3,
+                "is_intersection": is_intersection,
+                "branch_triggered": is_intersection or trigger_reason is not None,
+                "intended_heading": round(current_intended_heading or chosen_heading, 1),
                 "candidate_count": len(candidate_headings),
                 "visit_count": visit_counts.get(pano_id, 0),
                 "trigger_reason": trigger_reason.value if trigger_reason else None,
