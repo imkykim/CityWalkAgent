@@ -318,6 +318,7 @@ def cmd_walk(args: argparse.Namespace) -> None:
         dest_lng=args.dest_lng,
         max_steps=args.max_steps,
         output_dir=Path(args.output_dir) if args.output_dir else None,
+        save_images=args.save_images,
     ))
 
     print(f"\n{'✅ ARRIVED' if result['arrived'] else '⏹ MAX STEPS REACHED'}")
@@ -373,6 +374,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Persona preset (homebuyer, runner, parent_with_kids, …)")
     p_walk.add_argument("--max-steps",   type=int, default=60)
     p_walk.add_argument("--output-dir",  default="outputs/walk")
+    p_walk.add_argument(
+        "--save-images",
+        action="store_true",
+        default=False,
+        help="Save Street View images locally to output_dir/images/",
+    )
     p_walk.add_argument(
         "--log-level",
         default="INFO",

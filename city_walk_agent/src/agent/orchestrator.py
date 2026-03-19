@@ -395,7 +395,7 @@ class CityWalkAgent(BaseAgent):
         if self._persona_reasoner is None:
             self._persona_reasoner = PersonaReasoner(
                 framework_id=self.framework_id,
-                distance_trigger_meters=800.0,
+                distance_trigger_meters=200.0,
                 score_delta_threshold=2.0,
             )
             self.logger.debug(
@@ -2215,6 +2215,7 @@ class CityWalkAgent(BaseAgent):
         arrival_threshold_m: float = 50.0,
         output_dir: Optional[Path] = None,
         step_callback=None,
+        save_images: bool = False,
     ) -> Dict[str, Any]:
         """Walk autonomously from start to destination.
 
@@ -2230,6 +2231,8 @@ class CityWalkAgent(BaseAgent):
         import tempfile
 
         import httpx
+        import imagehash
+        from PIL import Image
 
         from src.agent.memory.memory_manager import MemoryManager
         from src.agent.system2.persona_reasoner import TriggerReason
@@ -2251,10 +2254,17 @@ class CityWalkAgent(BaseAgent):
         route_taken: List[Dict] = []
         arrived = False
         current_lat, current_lng = start_lat, start_lng
-        prev_avg_score: float = 0.0
+        prev_avg_score: Optional[float] = None
         distance_from_last_trigger: float = 0.0
         trigger_reason = None
         current_intended_heading: Optional[float] = None
+        prev_image_hash = None  # imagehash.ImageHash | None
+
+        images_dir: Optional[Path] = None
+        if save_images and output_dir:
+            images_dir = Path(output_dir) / "images"
+            images_dir.mkdir(parents=True, exist_ok=True)
+            self.logger.info(f"Image saving enabled → {images_dir}")
 
         pano_id = await nav.coord_to_pano_id(start_lat, start_lng)
         if not pano_id:
@@ -2306,6 +2316,9 @@ class CityWalkAgent(BaseAgent):
             # 4. Analyze current pano (System 1)
             analysis = None
             image_path = None
+            saved_image_path = None
+            phash_distance = None
+            visual_change = True  # fallback default
             try:
                 sv_url = (
                     f"https://maps.googleapis.com/maps/api/streetview"
@@ -2323,22 +2336,50 @@ class CityWalkAgent(BaseAgent):
                 tmp.close()
                 image_path = Path(tmp.name)
 
-                analysis = await loop.run_in_executor(
-                    None,
-                    lambda: self.continuous_analyzer.analyze_waypoint(
-                        waypoint_id=step,
-                        image_path=image_path,
-                        metadata={"heading": links[0].get("heading", 0),
-                                  "lat": current_lat, "lon": current_lng},
-                        visual_change_detected=True,
-                        phash_distance=None,
-                    ),
-                )
-            except Exception as e:
-                self.logger.warning(f"Step {step}: analysis error — {e}")
-            finally:
-                if image_path is not None:
+                try:
+                    # pHash 계산
+                    current_hash = imagehash.phash(Image.open(image_path))
+                    phash_distance = (
+                        float(current_hash - prev_image_hash)
+                        if prev_image_hash is not None
+                        else None
+                    )
+                    prev_image_hash = current_hash
+                    visual_change = phash_distance is None or phash_distance > 30
+                    self.logger.debug(
+                        f"Step {step}: phash_distance={phash_distance} "
+                        f"visual_change={visual_change}"
+                    )
+
+                    # 이미지 저장 (save_images=True일 때만)
+                    if images_dir is not None:
+                        saved_image_path = images_dir / f"step_{step:03d}_pano_{pano_id[:8]}.jpg"
+                        saved_image_path.write_bytes(img_resp.content)
+                        self.logger.debug(f"Step {step}: image saved → {saved_image_path.name}")
+
+                    # System 1 분석
+                    analysis = await loop.run_in_executor(
+                        None,
+                        lambda: self.continuous_analyzer.analyze_waypoint(
+                            waypoint_id=step,
+                            image_path=image_path,
+                            metadata={
+                                "heading": links[0].get("heading", 0),
+                                "lat": current_lat,
+                                "lon": current_lng,
+                            },
+                            visual_change_detected=visual_change,
+                            phash_distance=phash_distance,
+                        ),
+                    )
+                finally:
                     image_path.unlink(missing_ok=True)
+
+            except Exception as e:
+                self.logger.warning(f"Step {step}: image/analysis error — {e}")
+                analysis = None
+                phash_distance = None
+                visual_change = True
 
             # 5. Update memory (S2 trigger logic)
             trigger_reason = None
@@ -2347,11 +2388,11 @@ class CityWalkAgent(BaseAgent):
                     sum(analysis.persona_scores.values()) / len(analysis.persona_scores)
                     if analysis.persona_scores else 0.0
                 )
-                score_delta = abs(current_avg - prev_avg_score)
+                score_delta = abs(current_avg - prev_avg_score) if prev_avg_score is not None else 0.0
 
                 trigger_reason = self.persona_reasoner.should_trigger(
                     waypoint_id=step,
-                    visual_change=True,
+                    visual_change=False,  # pHash 없음 — 교차로 트리거는 아래 별도 처리
                     score_delta=score_delta,
                     distance_from_last=distance_from_last_trigger,
                 )
@@ -2463,6 +2504,9 @@ class CityWalkAgent(BaseAgent):
                 "candidate_count": len(candidate_headings),
                 "visit_count": visit_counts.get(pano_id, 0),
                 "trigger_reason": trigger_reason.value if trigger_reason else None,
+                "phash_distance": phash_distance,
+                "visual_change": visual_change,
+                "image_path": str(saved_image_path) if saved_image_path else None,
             }
             route_taken.append(step_result)
             visit_counts[pano_id] = visit_counts.get(pano_id, 0) + 1
