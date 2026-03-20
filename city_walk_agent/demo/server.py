@@ -18,9 +18,10 @@ from typing import Dict, List, Optional
 
 import httpx
 import uvicorn
+import uuid
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -194,6 +195,20 @@ class AnalyzeResponse(BaseModel):
     persona: str
     waypoint_id: int
     processing_time_sec: float
+
+
+# ── walk task state ───────────────────────────────────────────────────────────
+_walk_tasks: Dict[str, asyncio.Task] = {}
+_walk_queues: Dict[str, asyncio.Queue] = {}
+
+
+class WalkStartBody(BaseModel):
+    start_lat: float
+    start_lng: float
+    dest_lat: float
+    dest_lng: float
+    persona: str = "parent_with_kids"
+    max_steps: int = 40
 
 
 # ── session store ─────────────────────────────────────────────────────────────
@@ -662,6 +677,96 @@ async def nav_session_reset(body: dict):
     if session_id and session_id in _sessions:
         del _sessions[session_id]
     return {"status": "ok"}
+
+
+# ── autonomous walk SSE endpoints ────────────────────────────────────────────
+
+@app.post("/api/walk/start")
+async def walk_start(body: WalkStartBody):
+    """Start an autonomous walk and return a walk_id for SSE streaming."""
+    walk_id = str(uuid.uuid4())[:8]
+    q: asyncio.Queue = asyncio.Queue()
+    _walk_queues[walk_id] = q
+
+    personality = get_preset(body.persona, "place_pulse_2.0") if body.persona != "objective" else get_preset("homebuyer", "place_pulse_2.0")
+    agent = CityWalkAgent(
+        agent_id=f"walk_{walk_id}",
+        personality=personality,
+        framework_id="place_pulse_2.0",
+    )
+
+    async def step_callback(step_result: dict):
+        await q.put({"type": "step", "data": step_result})
+
+    async def run_walk():
+        try:
+            result = await agent.autonomous_walk(
+                start_lat=body.start_lat,
+                start_lng=body.start_lng,
+                dest_lat=body.dest_lat,
+                dest_lng=body.dest_lng,
+                max_steps=body.max_steps,
+                step_callback=step_callback,
+            )
+            mem = result.get("memory_debug") or {}
+            await q.put({"type": "complete", "data": {
+                "arrived": result.get("arrived"),
+                "steps": result.get("steps"),
+                "final_distance_m": result.get("final_distance_m"),
+                "persona": result.get("persona"),
+                "memory_debug": {
+                    "snapshot_count": len(mem.get("snapshots") or []),
+                    "episode_count": len(mem.get("episodes") or []),
+                },
+            }})
+        except asyncio.CancelledError:
+            await q.put({"type": "error", "data": {"message": "Walk cancelled"}})
+        except Exception as e:
+            await q.put({"type": "error", "data": {"message": str(e)}})
+        finally:
+            _walk_tasks.pop(walk_id, None)
+
+    task = asyncio.create_task(run_walk())
+    _walk_tasks[walk_id] = task
+    return {"walk_id": walk_id}
+
+
+@app.get("/api/walk/stream/{walk_id}")
+async def walk_stream(walk_id: str):
+    """SSE stream for autonomous walk steps."""
+    if walk_id not in _walk_queues:
+        raise HTTPException(status_code=404, detail=f"Walk {walk_id} not found.")
+    q = _walk_queues[walk_id]
+
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    msg = await asyncio.wait_for(q.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield 'data: {"type":"ping"}\n\n'
+                    continue
+                yield f"data: {json.dumps(msg, default=str)}\n\n"
+                if msg.get("type") in ("complete", "error"):
+                    break
+        finally:
+            _walk_queues.pop(walk_id, None)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/walk/stop/{walk_id}")
+async def walk_stop(walk_id: str):
+    """Cancel a running autonomous walk."""
+    task = _walk_tasks.pop(walk_id, None)
+    _walk_queues.pop(walk_id, None)
+    if task and not task.done():
+        task.cancel()
+    return {"status": "stopped", "walk_id": walk_id}
 
 
 # ── entry point ───────────────────────────────────────────────────────────────

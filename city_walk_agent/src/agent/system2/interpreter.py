@@ -194,6 +194,7 @@ def _explain_trigger(trigger_reason: Any) -> str:
         "score_volatility": "Significant score change from previous waypoint",
         "distance_milestone": "Regular evaluation checkpoint (600m)",
         "exceptional_moment": "Manually flagged as exceptional",
+        "intersection": "Agent reached an intersection — choosing direction from multiple candidates",
     }
     return explanations.get(value, "Unknown trigger")
 

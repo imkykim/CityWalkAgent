@@ -67,13 +67,7 @@
         font-size: 11px; color: var(--text-3);
         max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
-      #nav-dot {
-        width: 8px; height: 8px; border-radius: 50%;
-        background: var(--text-3); flex-shrink: 0;
-        transition: background .3s;
-      }
-      #nav-dot.ok  { background: var(--green); }
-      #nav-dot.err { background: var(--red); }
+      #nav-dot { display: none; }
 
       /* ── main viewport (sv-pane + map side by side) ── */
       #main {
@@ -348,12 +342,29 @@
       #pano-info .intersection { color: var(--orange); font-weight: 600; }
 
 
-      /* error box */
-      #explore-error {
+      /* auto-walk error box */
+      #aw-error {
         font-size: 11px; color: var(--red);
         background: #fff0f0; border: 1px solid var(--red);
         border-radius: 6px; padding: 5px 9px; display: none;
       }
+
+      /* S2 reasoning feed */
+      #bp-s2 { display: none; flex: 1; min-width: 0; flex-direction: column; padding: 12px 14px; border-left: 1px solid var(--border); overflow-y: auto; }
+      .s2-item { padding: 7px 0; border-bottom: 1px solid var(--surface); }
+      .s2-item:last-child { border-bottom: none; }
+      .s2-tag {
+        display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px;
+        border-radius: 10px; text-transform: uppercase; letter-spacing: .4px; margin-right: 5px;
+        background: var(--surface); color: var(--text-2);
+      }
+      .s2-tag.intersection { background: #fff0e0; color: var(--orange); }
+      .s2-tag.s2-trigger   { background: #e8f0ff; color: var(--accent); }
+      .s2-tag.distance     { background: #f0fff0; color: var(--green); }
+      .s2-reason { font-size: 11px; color: var(--text-2); margin-top: 4px; line-height: 1.55; }
+      .s2-meta   { font-size: 10px; color: var(--text-3); margin-top: 3px; }
+      .s2-conf-bar-wrap { height: 3px; background: var(--surface); border-radius: 2px; margin-top: 5px; overflow: hidden; }
+      .s2-conf-bar { height: 100%; border-radius: 2px; background: var(--accent); transition: width .4s; }
 
       /* scores */
       .score-row { margin-bottom: 8px; }
@@ -507,25 +518,36 @@
           <div id="wp-info"></div>
         </div>
 
-        <!-- EXPLORE mode controls -->
+        <!-- EXPLORE mode controls (Auto Walk) -->
         <div id="ctrl-explore" style="display:none;">
-          <div class="sec-label">Start Location</div>
+          <div class="sec-label">Start</div>
           <div class="coord-row">
             <label>Lat</label>
-            <input type="number" id="exp-lat" value="1.2835" step="0.0001">
+            <input type="number" id="aw-start-lat" value="1.2835" step="0.0001">
           </div>
           <div class="coord-row" style="margin-top:4px;">
             <label>Lng</label>
-            <input type="number" id="exp-lng" value="103.858" step="0.0001">
+            <input type="number" id="aw-start-lng" value="103.858" step="0.0001">
           </div>
-          <button id="explore-start-btn" onclick="exploreStart()" style="margin-top:8px;">▶ Start</button>
-          <div id="explore-error"></div>
-
-          <div id="pano-section" style="display:none;margin-top:10px;">
-            <div class="sec-label">Panorama</div>
-            <div id="pano-info"></div>
-            <button id="analyze-pano-btn" onclick="analyzePano()" style="margin-top:10px;width:100%;padding:5px 0;border:none;border-radius:16px;cursor:pointer;font-size:12px;font-weight:600;background:var(--green);color:#fff;transition:opacity .15s;" disabled>Analyze This View</button>
+          <div class="sec-label" style="margin-top:8px;">Destination</div>
+          <div class="coord-row">
+            <label>Lat</label>
+            <input type="number" id="aw-dest-lat" value="1.2900" step="0.0001">
           </div>
+          <div class="coord-row" style="margin-top:4px;">
+            <label>Lng</label>
+            <input type="number" id="aw-dest-lng" value="103.852" step="0.0001">
+          </div>
+          <div class="coord-row" style="margin-top:6px;">
+            <label style="white-space:nowrap;">Max steps</label>
+            <input type="number" id="aw-max-steps" value="40" min="5" max="120" step="5" style="width:60px;">
+          </div>
+          <div class="ctrl-row" style="margin-top:8px;">
+            <button id="aw-start-btn" onclick="autoWalkStart()" style="flex:1;padding:5px 0;border:none;border-radius:16px;cursor:pointer;font-size:12px;font-weight:600;background:var(--accent);color:#fff;transition:opacity .15s;">▶ Start</button>
+            <button id="aw-stop-btn"  onclick="autoWalkStop()"  style="padding:5px 10px;border:1px solid var(--border);border-radius:16px;cursor:pointer;font-size:12px;font-weight:500;background:transparent;color:var(--text-2);display:none;">■ Stop</button>
+          </div>
+          <div id="aw-error"></div>
+          <div id="aw-progress" style="font-size:11px;color:var(--text-3);margin-top:6px;">—</div>
         </div>
 
       </div><!-- /bp-left -->
@@ -541,6 +563,12 @@
       <div id="bp-right">
         <div class="sec-label">Reasoning</div>
         <div id="reasoning-area"><div class="ph">—</div></div>
+      </div>
+
+      <!-- S2 reasoning feed (explore mode only) -->
+      <div id="bp-s2">
+        <div class="sec-label">Agent Reasoning</div>
+        <div id="s2-feed"></div>
       </div>
 
     </div><!-- /bottom-panel -->
@@ -598,9 +626,12 @@
     let currentPano = null;
     let navMarker = null, navPolyline = null, navPoints = [];
     let navHistory = [];
-    let currentSessionId = null;
-    let branchPending = false;
-    let waypointCounter = 0;
+    // Auto walk state
+    let currentWalkId = null;
+    let walkEventSource = null;
+    let walkStepCount = 0;
+    let destMarker = null;
+    let walkCircles = [];
 
     // Street View Panorama
     let panorama = null;
@@ -645,23 +676,10 @@
           }
         );
         // Sync Leaflet map when user navigates via panorama's built-in arrows
+        // In auto-walk mode the server drives navigation; user can still look around
         panorama.addListener('position_changed', () => {
           const pos = panorama.getPosition();
-          if (!pos || currentMode !== 'explore') return;
-          const latlng = [pos.lat(), pos.lng()];
-          navPoints.push(latlng);
-          if (navMarker) map.removeLayer(navMarker);
-          navMarker = L.marker(latlng, { icon: L.divIcon({
-            html: '<div style="width:14px;height:14px;background:#0071e3;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);"></div>',
-            className:'', iconSize:[14,14], iconAnchor:[7,7]
-          })}).addTo(map);
-          if (navPolyline) map.removeLayer(navPolyline);
-          if (navPoints.length > 1) navPolyline = L.polyline(navPoints, { color:'#0071e3', dashArray:'6,4', weight:2 }).addTo(map);
-          map.panTo(latlng);
-          if (currentPano) { currentPano.lat = pos.lat(); currentPano.lng = pos.lng(); }
-          // Clear heading overlay and re-analyze at new position
-          setAnalysisOverlay(null, null);
-          analyzePano();
+          if (!pos) return;
         });
         // Keep VLM arrow pointing at the correct absolute heading as user rotates view
         panorama.addListener('pov_changed', _updateVlmArrow);
@@ -793,16 +811,15 @@
         attribution: '© OpenStreetMap', maxZoom: 19
       }).addTo(map);
 
-      // Map click in explore mode → set coords
+      // Map click in explore mode → set start coords
       map.on('click', e => {
         if (currentMode === 'explore') {
-          document.getElementById('exp-lat').value = e.latlng.lat.toFixed(6);
-          document.getElementById('exp-lng').value = e.latlng.lng.toFixed(6);
+          document.getElementById('aw-start-lat').value = e.latlng.lat.toFixed(6);
+          document.getElementById('aw-start-lng').value = e.latlng.lng.toFixed(6);
         }
       });
 
       await loadPersonas();
-      await checkNavStatus();
       await initStreetViewAPI();
       await loadRoute('singapore');
     });
@@ -822,12 +839,15 @@
       resetDisplay();
 
       if (mode === 'route') {
+        // Stop any running walk
+        autoWalkStop();
+        document.getElementById('bp-s2').style.display = 'none';
+        if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
+        walkCircles.forEach(c => map.removeLayer(c)); walkCircles = [];
         // Clear nav overlays
         if (navMarker)   { map.removeLayer(navMarker);   navMarker   = null; }
         if (navPolyline) { map.removeLayer(navPolyline); navPolyline = null; }
         navPoints = []; navHistory = []; currentPano = null;
-        currentSessionId = null; waypointCounter = 0; branchPending = false;
-        hideBranchPanel();
         // Re-draw route if loaded
         if (waypoints.length) drawRoute();
         setStatus(`${waypoints.length} waypoints · click Run or a marker`);
@@ -838,24 +858,11 @@
         [polyline, trailLine, agentMarker].forEach(l => l && map.removeLayer(l));
         polyline = trailLine = agentMarker = null;
         agentIndex = -1;
-        setStatus('Enter coordinates and click Start');
+        document.getElementById('aw-progress').textContent = '—';
+        document.getElementById('s2-feed').innerHTML = '';
+        setStatus('Enter coordinates and click ▶ Start');
       }
       log(`Mode → ${mode}`);
-    }
-
-    // ═══════════════════════════════════════════════════════
-    // NAV STATUS
-    // ═══════════════════════════════════════════════════════
-    async function checkNavStatus() {
-      const dot = document.getElementById('nav-dot');
-      try {
-        const r = await fetch(`${API}/api/nav/status`);
-        const d = await r.json();
-        if (d.session_ok) { dot.className = 'ok'; dot.title = 'Maps API: connected'; }
-        else              { dot.className = 'err'; dot.title = `Maps API: ${d.error || 'error'}`; }
-      } catch(e) {
-        dot.className = 'err'; dot.title = 'Maps API: server unreachable';
-      }
     }
 
     // ═══════════════════════════════════════════════════════
@@ -1058,283 +1065,181 @@
     }
 
     // ═══════════════════════════════════════════════════════
-    // EXPLORE MODE
+    // EXPLORE MODE — Auto Walk
     // ═══════════════════════════════════════════════════════
-    async function exploreStart() {
-      const lat = parseFloat(document.getElementById('exp-lat').value);
-      const lng = parseFloat(document.getElementById('exp-lng').value);
-      if (isNaN(lat)||isNaN(lng)) { showExploreError('Enter valid coordinates.'); return; }
-      clearExploreError();
-      setExploreLoading(true);
-      log(`Explore start: ${lat}, ${lng}`);
-      try {
-        const res = await fetch(`${API}/api/nav/start`, {
-          method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ lat, lng, persona: currentPersona }),
-        });
-        if (!res.ok) { const e = await res.json(); throw new Error(e.detail||res.statusText); }
-        const data = await res.json();
-        currentSessionId = data.session_id;
-        waypointCounter = 0;
-        branchPending = false;
-        log(`Session created: ${currentSessionId}`, 'ok');
-        updateExploreUI(data, true);
-      } catch(e) {
-        showExploreError(e.message); log(`exploreStart error: ${e.message}`, 'err');
-      } finally { setExploreLoading(false); }
-    }
-
-function updateExploreUI(data, isStart) {
-      currentPano = data;
-      if (isStart) {
-        navPoints = []; navHistory = [data.pano_id];
-        if (navMarker)   { map.removeLayer(navMarker);   navMarker = null; }
-        if (navPolyline) { map.removeLayer(navPolyline); navPolyline = null; }
-      } else {
-        if (navHistory[navHistory.length-1] !== data.pano_id) navHistory.push(data.pano_id);
-        if (navHistory.length > 20) navHistory.shift();
+    async function autoWalkStart() {
+      const startLat = parseFloat(document.getElementById('aw-start-lat').value);
+      const startLng = parseFloat(document.getElementById('aw-start-lng').value);
+      const destLat  = parseFloat(document.getElementById('aw-dest-lat').value);
+      const destLng  = parseFloat(document.getElementById('aw-dest-lng').value);
+      const maxSteps = parseInt(document.getElementById('aw-max-steps').value) || 40;
+      if (isNaN(startLat)||isNaN(startLng)||isNaN(destLat)||isNaN(destLng)) {
+        showAwError('Enter valid coordinates.'); return;
       }
+      clearAwError();
 
-      // Map marker
-      const latlng = [data.lat, data.lng];
-      navPoints.push(latlng);
-      if (navMarker) map.removeLayer(navMarker);
-      navMarker = L.marker(latlng, { icon: L.divIcon({
-        html: '<div style="width:14px;height:14px;background:#0071e3;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);"></div>',
-        className:'', iconSize:[14,14], iconAnchor:[7,7]
-      })}).addTo(map);
-      if (navPolyline) map.removeLayer(navPolyline);
-      if (navPoints.length > 1) navPolyline = L.polyline(navPoints, { color:'#0071e3', dashArray:'6,4', weight:2 }).addTo(map);
-      map.panTo(latlng);
+      // Reset map
+      autoWalkReset(true);
+      walkStepCount = 0;
+      document.getElementById('aw-progress').textContent = 'Starting…';
+      document.getElementById('s2-feed').innerHTML = '';
+      document.getElementById('bp-s2').style.display = 'flex';
 
-      // sv-pane: interactive panorama (VLM heading overlay set after analyzePano)
-      setPanorama(data.pano_id, 0);
-      setAnalysisOverlay(null, null);
-      setBadge(data.pano_id.slice(0,12)+'…');
+      // Place destination marker
+      destMarker = L.circleMarker([destLat, destLng], {
+        radius: 8, color: '#ff453a', fillColor: '#ff453a', fillOpacity: 0.9, weight: 2
+      }).bindTooltip('Destination').addTo(map);
 
-      // pano info card
-      const intersectionBadge = data.is_intersection
-        ? `<span class="intersection">⑂ Intersection · ${data.link_count} links</span><br>`
-        : '';
-      document.getElementById('pano-info').innerHTML =
-        intersectionBadge +
-        `<span class="key">Pano ID</span> ${escHtml(data.pano_id.slice(0,20))}…<br>` +
-        `<span class="key">Lat/Lng</span> ${data.lat.toFixed(5)}, ${data.lng.toFixed(5)}<br>` +
-        `<span class="key">Date</span> ${data.date || 'unknown'}`;
+      document.getElementById('aw-start-btn').disabled = true;
+      document.getElementById('aw-stop-btn').style.display = '';
 
-      document.getElementById('pano-section').style.display = '';
-      document.getElementById('analyze-pano-btn').disabled = false;
-      setStatus(`Pano ${data.pano_id.slice(0,10)}…`);
-      log(`Explore: pano=${data.pano_id.slice(0,16)} lat=${data.lat.toFixed(4)} lng=${data.lng.toFixed(4)}`, 'ok');
-
-      analyzePano();
-    }
-
-    async function analyzePano() {
-      if (!currentPano) return;
-      // If panorama navigated to a new position, update currentPano with live panoId
-      if (panorama && panorama.getLocation()) {
-        const loc = panorama.getLocation();
-        if (loc && loc.pano) currentPano.pano_id = loc.pano;
-      }
-      showAnalysisBadge(true, 'Analyzing…');
-      setStatus('Analyzing pano…');
-      log(`Analyzing pano ${currentPano.pano_id.slice(0,16)}…`);
-      try {
-        const t0 = Date.now();
-        // Use current panorama POV heading as VLM analysis heading
-        const vlmHeading = panorama ? Math.round(panorama.getPov()?.heading ?? 0) : 0;
-
-        const useSession = currentSessionId && currentMode === 'explore';
-        const endpoint = useSession ? `${API}/api/nav/analyze` : `${API}/analyze`;
-        const body = useSession
-          ? {
-              session_id: currentSessionId,
-              pano_id: currentPano.pano_id,
-              heading: vlmHeading,
-              waypoint_id: waypointCounter++,
-            }
-          : {
-              lat: currentPano.lat, lon: currentPano.lng,
-              heading: vlmHeading, persona: currentPersona,
-              pano_id: currentPano.pano_id,
-            };
-
-        const res = await fetch(endpoint, {
-          method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify(body),
-        });
-        if (!res.ok) { const e = await res.json().catch(()=>({detail:res.statusText})); throw new Error(e.detail||res.statusText); }
-        const result = await res.json();
-        const elapsed = ((Date.now()-t0)/1000).toFixed(1);
-        showAnalysisBadge(false);
-        const vlmImageUrl = result.image_base64
-          ? `data:image/jpeg;base64,${result.image_base64}`
-          : currentPano.street_view_image_url;
-        setAnalysisOverlay(vlmImageUrl, vlmHeading);
-        renderScores(result.scores);
-        renderReasoning(result.reasoning);
-        const metaSuffix = result.ltm_snapshot_count !== undefined
-          ? `  ·  ${result.ltm_snapshot_count} snapshots`
-          : (result.persona ? `  ·  ${result.persona}` : '');
-        document.getElementById('meta-line').textContent = `${elapsed}s${metaSuffix}`;
-        log(`Pano analysis done — ${elapsed}s`, 'ok');
-        setStatus(`Analysis done · ${elapsed}s`);
-
-        // Check for intersection → trigger branch decision
-        if (currentPano?.is_intersection && currentSessionId && !branchPending) {
-          const headings = (currentPano.links || []).map(l => l.heading ?? l.yawDeg ?? 0);
-          if (headings.length >= 2) {
-            triggerBranchDecision(currentPano.pano_id, headings);
-          }
-        }
-      } catch(e) {
-        showAnalysisBadge(false);
-        log(`analyzePano error: ${e.message}`, 'err');
-        setStatus(`Analysis error: ${e.message}`);
-      }
-    }
-
-    async function triggerBranchDecision(branchPanoId, headings) {
-      if (branchPending || !currentSessionId) return;
-      branchPending = true;
-
-      showAnalysisBadge(true, 'Choosing direction…');
-      setStatus('Branch point — evaluating directions…');
-      log(`Branch: ${headings.length} candidates at ${branchPanoId.slice(0,12)}…`);
+      log(`Auto walk: (${startLat},${startLng}) → (${destLat},${destLng}) max=${maxSteps}`);
 
       try {
-        const res = await fetch(`${API}/api/nav/branch`, {
+        const res = await fetch(`${API}/api/walk/start`, {
           method: 'POST', headers: {'Content-Type':'application/json'},
           body: JSON.stringify({
-            session_id: currentSessionId,
-            branch_pano_id: branchPanoId,
-            candidate_headings: headings,
+            start_lat: startLat, start_lng: startLng,
+            dest_lat: destLat, dest_lng: destLng,
+            persona: currentPersona, max_steps: maxSteps,
           }),
         });
-        if (!res.ok) { const e = await res.json(); throw new Error(e.detail || res.statusText); }
-        const result = await res.json();
+        if (!res.ok) { const e = await res.json(); throw new Error(e.detail||res.statusText); }
+        const { walk_id } = await res.json();
+        currentWalkId = walk_id;
+        log(`Walk started: ${walk_id}`, 'ok');
+        setStatus(`Walking… id=${walk_id}`);
 
-        showAnalysisBadge(false);
-        renderBranchResult(result);
-        log(`Branch chosen: ${result.chosen_direction} (${result.chosen_heading}°) conf=${result.confidence?.toFixed(2)}`, 'ok');
-        setStatus(`Branch → ${result.chosen_direction} · ${result.reason?.slice(0,60)}…`);
-
-        // Auto-navigate to chosen direction after 3s (user can override by clicking a card)
-        setTimeout(() => {
-          if (branchPending) {
-            navigateToHeading(result.chosen_heading);
-            hideBranchPanel();
-          }
-        }, 3000);
-
+        walkEventSource = new EventSource(`${API}/api/walk/stream/${walk_id}`);
+        walkEventSource.onmessage = e => {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'step')     handleWalkStep(msg.data);
+            if (msg.type === 'complete') handleWalkComplete(msg.data);
+            if (msg.type === 'error')    { showAwError(msg.data.message || 'Walk error'); autoWalkReset(false); }
+          } catch(err) { log(`SSE parse error: ${err.message}`, 'warn'); }
+        };
+        walkEventSource.onerror = () => {
+          if (currentWalkId) { log('SSE connection lost', 'warn'); autoWalkReset(false); }
+        };
       } catch(e) {
-        showAnalysisBadge(false);
-        log(`Branch decision error: ${e.message}`, 'err');
-        setStatus(`Branch error: ${e.message}`);
-        branchPending = false;
+        showAwError(e.message); log(`autoWalkStart error: ${e.message}`, 'err');
+        autoWalkReset(false);
       }
     }
 
-    async function navigateToHeading(heading) {
-      if (!currentPano) return;
-      setPanorama(currentPano.pano_id, heading);
+    function handleWalkStep(step) {
+      walkStepCount++;
+      const latlng = [step.lat, step.lng];
+      navPoints.push(latlng);
+
+      // Map polyline
+      if (navPolyline) map.removeLayer(navPolyline);
+      if (navPoints.length > 1) {
+        navPolyline = L.polyline(navPoints, { color: '#0071e3', weight: 2.5, opacity: 0.7 }).addTo(map);
+      }
+
+      // Waypoint dot: red circle for intersection, small blue for normal
+      const dotColor = step.is_intersection ? '#ff9f0a' : '#0071e3';
+      const dotRadius = step.is_intersection ? 6 : 3.5;
+      const circle = L.circleMarker(latlng, {
+        radius: dotRadius, color: dotColor, fillColor: dotColor, fillOpacity: 0.85, weight: 1.5
+      }).addTo(map);
+      walkCircles.push(circle);
+
+      // Move agent marker
+      if (navMarker) map.removeLayer(navMarker);
+      navMarker = L.marker(latlng, { icon: agentIcon(true), zIndexOffset: 1000 }).addTo(map);
+      map.panTo(latlng, { animate: true, duration: 0.3 });
+
+      // Street View
+      setPanorama(step.pano_id, step.heading);
+      setBadge(`Step ${step.step}`);
       setAnalysisOverlay(null, null);
-      setTimeout(() => analyzePano(), 500);
-    }
 
-    function hideBranchPanel() {
-      const panel = document.getElementById('branch-panel');
-      if (panel) panel.remove();
-    }
+      // Scores
+      if (step.scores && Object.keys(step.scores).length) renderScores(step.scores);
 
-    function renderBranchResult(result) {
-      hideBranchPanel();
+      // Progress
+      document.getElementById('aw-progress').textContent =
+        `Step ${step.step} · ${Math.round(step.dist_to_dest_m)}m to dest`;
+      setStatus(`Step ${step.step} · ${Math.round(step.dist_to_dest_m)}m remaining`);
+      log(`Step ${step.step}: ${step.lat.toFixed(5)},${step.lng.toFixed(5)} dist=${step.dist_to_dest_m}m${step.is_intersection?' [intersec]':''}`, 'info');
 
-      const panel = document.createElement('div');
-      panel.id = 'branch-panel';
-      panel.style.cssText = `
-        position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
-        z-index: 30; background: rgba(255,255,255,0.95);
-        backdrop-filter: blur(12px); border: 1px solid var(--border);
-        border-radius: 12px; padding: 12px 14px; min-width: 340px;
-        box-shadow: 0 4px 20px rgba(0,0,0,.12);
-      `;
-
-      const header = document.createElement('div');
-      header.style.cssText = 'font-size:11px;font-weight:600;color:var(--text-2);margin-bottom:8px;';
-      header.textContent = `⑂ Branch Point — Recommended: Direction ${result.chosen_direction}`;
-      panel.appendChild(header);
-
-      const reason = document.createElement('div');
-      reason.style.cssText = 'font-size:11px;color:var(--text-2);margin-bottom:10px;line-height:1.5;';
-      reason.textContent = result.reason || '';
-      panel.appendChild(reason);
-
-      const cards = document.createElement('div');
-      cards.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;';
-
-      for (const c of result.candidates) {
-        const isChosen = c.direction === result.chosen_direction;
-        const card = document.createElement('div');
-        card.style.cssText = `
-          flex: 1; min-width: 90px; padding: 7px 9px;
-          border-radius: 8px; cursor: pointer;
-          border: 1.5px solid ${isChosen ? 'var(--accent)' : 'var(--border)'};
-          background: ${isChosen ? '#f0f6ff' : '#fafafa'};
-          transition: border-color .15s;
-        `;
-
-        const label = document.createElement('div');
-        label.style.cssText = 'font-size:12px;font-weight:700;color:var(--text-1);';
-        label.textContent = `${c.direction}  ${Math.round(c.heading)}°`;
-        card.appendChild(label);
-
-        const vals = Object.values(c.scores || {});
-        const avg = vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(1) : '—';
-        const score = document.createElement('div');
-        score.style.cssText = 'font-size:11px;color:var(--text-2);margin-top:2px;';
-        score.textContent = `avg ${avg}`;
-        card.appendChild(score);
-
-        if (c.key_concern) {
-          const concern = document.createElement('div');
-          concern.style.cssText = 'font-size:10px;color:var(--orange);margin-top:3px;line-height:1.4;';
-          concern.textContent = `⚠ ${c.key_concern}`;
-          card.appendChild(concern);
-        }
-
-        card.addEventListener('click', () => {
-          branchPending = false;
-          navigateToHeading(c.heading);
-          hideBranchPanel();
-          log(`Branch override → ${c.direction} (${c.heading}°)`, 'info');
-        });
-
-        card.addEventListener('mouseenter', () => { card.style.borderColor = 'var(--accent)'; });
-        card.addEventListener('mouseleave', () => { card.style.borderColor = isChosen ? 'var(--accent)' : 'var(--border)'; });
-
-        cards.appendChild(card);
+      // S2 feed: only for branch steps with a recommendation
+      if (step.branch_triggered && step.recommendation) {
+        addS2FeedItem(step);
       }
-      panel.appendChild(cards);
-
-      const hint = document.createElement('div');
-      hint.style.cssText = 'font-size:10px;color:var(--text-3);margin-top:8px;text-align:center;';
-      hint.textContent = 'Auto-navigating in 3s — tap a card to override';
-      panel.appendChild(hint);
-
-      document.getElementById('sv-pane').appendChild(panel);
     }
 
-    function showExploreError(msg) {
-      const el = document.getElementById('explore-error');
+    function addS2FeedItem(step) {
+      const feed = document.getElementById('s2-feed');
+      const tagClass = step.is_intersection ? 'intersection' : (step.trigger_reason === 'score_delta' ? 's2-trigger' : 'distance');
+      const tagLabel = step.is_intersection ? '⑂ Intersection' : (step.trigger_reason || 'Rethink');
+      const conf = step.confidence != null ? step.confidence : null;
+
+      const scores = step.scores || {};
+      const scoreVals = Object.values(scores);
+      const avgScore = scoreVals.length ? (scoreVals.reduce((a,b)=>a+b,0)/scoreVals.length).toFixed(1) : null;
+      const topScores = Object.entries(scores).slice(0,3).map(([k,v])=>`${k}:${v.toFixed(1)}`).join(' ');
+
+      const item = document.createElement('div');
+      item.className = 's2-item';
+      item.innerHTML = `
+        <div>
+          <span class="s2-tag ${tagClass}">${escHtml(tagLabel)}</span>
+          <span style="font-size:10px;color:var(--text-3)">Step ${step.step} · ${Math.round(step.dist_to_dest_m)}m</span>
+        </div>
+        <div class="s2-reason">${escHtml(step.recommendation)}</div>
+        ${avgScore ? `<div class="s2-meta">avg ${avgScore}${topScores ? ' · '+escHtml(topScores) : ''}</div>` : ''}
+        ${conf != null ? `<div class="s2-conf-bar-wrap"><div class="s2-conf-bar" style="width:${Math.round(conf*100)}%"></div></div>` : ''}
+      `;
+      feed.prepend(item);
+      // Keep max 10 items
+      while (feed.children.length > 10) feed.removeChild(feed.lastChild);
+    }
+
+    function handleWalkComplete(result) {
+      const arrived = result.arrived ? '✓ Arrived' : '— Did not arrive';
+      const steps = result.steps ?? walkStepCount;
+      const dist = result.final_distance_m != null ? `${Math.round(result.final_distance_m)}m from dest` : '';
+      const mem = result.memory_debug;
+      const ltmInfo = mem ? ` · ${mem.snapshot_count ?? 0} snapshots · ${mem.episode_count ?? 0} episodes` : '';
+      document.getElementById('aw-progress').textContent = `${arrived} · ${steps} steps · ${dist}${ltmInfo}`;
+      setStatus(`Walk complete — ${arrived}`);
+      log(`Walk complete: arrived=${result.arrived} steps=${steps} dist=${dist}`, 'ok');
+      autoWalkReset(false);
+    }
+
+    async function autoWalkStop() {
+      if (!currentWalkId) return;
+      const wid = currentWalkId;
+      autoWalkReset(false);
+      try {
+        await fetch(`${API}/api/walk/stop/${wid}`, { method: 'POST' });
+        log(`Walk ${wid} stopped`, 'info');
+      } catch(e) { /* ignore */ }
+    }
+
+    function autoWalkReset(clearMap = false) {
+      if (walkEventSource) { walkEventSource.close(); walkEventSource = null; }
+      currentWalkId = null;
+      document.getElementById('aw-start-btn').disabled = false;
+      document.getElementById('aw-stop-btn').style.display = 'none';
+      if (clearMap) {
+        if (navMarker)   { map.removeLayer(navMarker);   navMarker   = null; }
+        if (navPolyline) { map.removeLayer(navPolyline); navPolyline = null; }
+        if (destMarker)  { map.removeLayer(destMarker);  destMarker  = null; }
+        walkCircles.forEach(c => map.removeLayer(c)); walkCircles = [];
+        navPoints = [];
+      }
+    }
+
+    function showAwError(msg) {
+      const el = document.getElementById('aw-error');
       el.textContent = `⚠ ${msg}`; el.style.display = '';
     }
-    function clearExploreError() { document.getElementById('explore-error').style.display = 'none'; }
-    function setExploreLoading(on) {
-      document.getElementById('explore-start-btn').disabled = on;
-      document.getElementById('explore-start-btn').textContent = on ? '⏳ Loading…' : '▶ Start';
-    }
+    function clearAwError() { document.getElementById('aw-error').style.display = 'none'; }
 
     // ═══════════════════════════════════════════════════════
     // PERSONA

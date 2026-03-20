@@ -32,6 +32,7 @@ class TriggerReason(Enum):
     DISTANCE_MILESTONE = "distance_milestone"
     USER_REQUEST = "user_request"
     EXCEPTIONAL_MOMENT = "exceptional_moment"
+    INTERSECTION = "intersection"
 
 
 @dataclass
@@ -451,6 +452,7 @@ class PersonaReasoner:
             TriggerReason.SCORE_VOLATILITY: "Significant score change from previous waypoint",
             TriggerReason.DISTANCE_MILESTONE: "Regular evaluation checkpoint (600m)",
             TriggerReason.EXCEPTIONAL_MOMENT: "Manually flagged as exceptional",
+            TriggerReason.INTERSECTION: "Agent reached an intersection — choosing direction from multiple candidates",
         }
         return explanations.get(trigger_reason, "Unknown trigger")
 

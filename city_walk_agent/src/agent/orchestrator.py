@@ -2235,7 +2235,7 @@ class CityWalkAgent(BaseAgent):
         from PIL import Image
 
         from src.agent.memory.memory_manager import MemoryManager
-        from src.agent.system2.persona_reasoner import TriggerReason
+        from src.agent.system2.persona_reasoner import TriggerReason, ReasoningResult
         from demo.server import MapTilesSession
 
         loop = asyncio.get_event_loop()
@@ -2397,8 +2397,9 @@ class CityWalkAgent(BaseAgent):
                     distance_from_last=distance_from_last_trigger,
                 )
 
-                if trigger_reason is None and len(links) >= 3:
-                    trigger_reason = TriggerReason.VISUAL_CHANGE
+                if len(links) >= 3:
+                    if trigger_reason is None:
+                        trigger_reason = TriggerReason.INTERSECTION
                     self.logger.debug(f"Step {step}: intersection trigger")
 
                 memory_manager.process_waypoint(
@@ -2422,6 +2423,7 @@ class CityWalkAgent(BaseAgent):
             is_intersection = len(links) >= 3
             chosen_heading = candidate_headings[0]
             recommendation = None
+            step_confidence: Optional[float] = None
 
             if (is_intersection or trigger_reason is not None) and analysis:
                 try:
@@ -2438,11 +2440,35 @@ class CityWalkAgent(BaseAgent):
                     chosen_heading = branch_result["chosen_heading"]
                     current_intended_heading = chosen_heading
                     recommendation = branch_result.get("reason")
+                    step_confidence = branch_result.get("confidence", 0.5)
                     self.logger.info(
                         f"Step {step:>3} | {'intersection' if is_intersection else 'S2 rethink'}"
                         f" → {branch_result['chosen_direction']} ({chosen_heading:.0f}°)"
                         f" conf={branch_result['confidence']:.2f}"
                     )
+                    if analysis:
+                        branch_reasoning_result = ReasoningResult(
+                            waypoint_id=step,
+                            trigger_reason=trigger_reason or TriggerReason.VISUAL_CHANGE,
+                            interpretation=branch_result.get("reason", ""),
+                            score_change_reason=None,
+                            persona_divergence=None,
+                            key_concern=None,
+                            significance="high" if is_intersection else "medium",
+                            avoid_recommendation=False,
+                            decision_reason=branch_result.get("reason"),
+                            prediction=None,
+                            alternative_suggestion=None,
+                            recommendation=branch_result.get("reason"),
+                            confidence=branch_result.get("confidence", 0.5),
+                            system1_scores=analysis.persona_scores,
+                        )
+                        memory_manager.update_with_system2_result(step, branch_reasoning_result)
+                        self.logger.debug(
+                            f"Step {step}: branch result logged to LTM episodes"
+                            f" | significance={'high' if is_intersection else 'medium'}"
+                            f" | episodes={len(memory_manager._route_reasoning_log)}"
+                        )
                 except Exception as e:
                     self.logger.warning(f"Step {step}: branch error — {e}")
                     # fallback: 가던 방향 유지
@@ -2507,6 +2533,7 @@ class CityWalkAgent(BaseAgent):
                 "phash_distance": phash_distance,
                 "visual_change": visual_change,
                 "image_path": str(saved_image_path) if saved_image_path else None,
+                "confidence": step_confidence,
             }
             route_taken.append(step_result)
             visit_counts[pano_id] = visit_counts.get(pano_id, 0) + 1
