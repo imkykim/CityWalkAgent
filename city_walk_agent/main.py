@@ -319,6 +319,7 @@ def cmd_walk(args: argparse.Namespace) -> None:
         max_steps=args.max_steps,
         output_dir=Path(args.output_dir) if args.output_dir else None,
         save_images=args.save_images,
+        lookahead_depth=args.lookahead_depth,
     ))
 
     print(f"\n{'✅ ARRIVED' if result['arrived'] else '⏹ MAX STEPS REACHED'}")
@@ -379,6 +380,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Save Street View images locally to output_dir/images/",
+    )
+    p_walk.add_argument(
+        "--lookahead-depth", type=int, default=1,
+        help="Waypoints to explore per direction at intersections (default: 1)",
     )
     p_walk.add_argument(
         "--log-level",

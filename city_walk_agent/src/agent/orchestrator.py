@@ -2048,7 +2048,139 @@ class CityWalkAgent(BaseAgent):
             "no_change": sum(1 for adj in all_adjustments if abs(adj) < 0.1),
         }
 
-    def branch_decision(
+    async def _fetch_and_analyze_lookahead(
+        self,
+        start_pano_id: str,
+        initial_heading: float,
+        direction_label: str,
+        lookahead_depth: int,
+        visit_counts: Dict[str, int],
+    ) -> Dict[str, Any]:
+        """Walk lookahead_depth waypoints in one direction, collecting System 1 scores.
+
+        System 2 (PersonaReasoner) is intentionally skipped for speed.
+        """
+        import asyncio
+        import tempfile
+
+        import httpx
+        from demo.server import MapTilesSession
+
+        nav = MapTilesSession(settings.google_maps_api_key)
+        loop = asyncio.get_event_loop()
+
+        waypoint_scores: List[Dict[str, float]] = []
+        waypoint_summaries: List[str] = []
+        current_pano = start_pano_id
+        current_heading = initial_heading
+
+        for depth in range(lookahead_depth):
+            sv_url = (
+                f"https://maps.googleapis.com/maps/api/streetview"
+                f"?pano={current_pano}&size=640x640"
+                f"&heading={current_heading:.0f}&fov=90&pitch=0"
+                f"&key={settings.google_maps_api_key}"
+            )
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    img_resp = await client.get(sv_url)
+                    img_resp.raise_for_status()
+
+                tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+                tmp.write(img_resp.content)
+                tmp.flush()
+                tmp.close()
+                image_path = Path(tmp.name)
+
+                try:
+                    analysis = await loop.run_in_executor(
+                        None,
+                        lambda p=image_path, d=depth: self.continuous_analyzer.analyze_waypoint(
+                            waypoint_id=d,
+                            image_path=p,
+                            metadata={"heading": current_heading, "lat": 0, "lon": 0},
+                            visual_change_detected=True,
+                            phash_distance=None,
+                        ),
+                    )
+                    waypoint_scores.append(dict(analysis.persona_scores))
+                    reasoning = analysis.persona_reasoning or {}
+                    summary = next(iter(reasoning.values()), "").split(".")[0][:80]
+                    waypoint_summaries.append(summary)
+                finally:
+                    image_path.unlink(missing_ok=True)
+
+                # Advance to next pano along same heading
+                if depth < lookahead_depth - 1:
+                    try:
+                        meta = await nav.get_metadata(current_pano)
+                        links = meta.get("links", [])
+                        if not links:
+                            break
+                        next_link = min(
+                            links,
+                            key=lambda l: abs(
+                                ((l.get("heading") or l.get("yawDeg") or 0)
+                                 - current_heading + 180) % 360 - 180
+                            ),
+                        )
+                        current_pano = next_link.get("panoId") or next_link.get("id")
+                        current_heading = float(
+                            next_link.get("heading")
+                            or next_link.get("yawDeg")
+                            or current_heading
+                        )
+                    except Exception:
+                        break
+
+            except Exception as e:
+                self.logger.warning(
+                    f"Look-ahead failed at depth={depth} direction={direction_label}: {e}"
+                )
+                break
+
+        if not waypoint_scores:
+            return {
+                "direction": direction_label,
+                "heading": initial_heading,
+                "pano_id": start_pano_id,
+                "scores": {},
+                "system1_reasoning": {},
+                "waypoint_scores": [],
+                "waypoint_summaries": [],
+                "score_trend": "unknown",
+                "avg_scores": {},
+                "visit_count": visit_counts.get(start_pano_id, 0),
+            }
+
+        all_dims = set(k for s in waypoint_scores for k in s)
+        avg_scores = {
+            dim: sum(s.get(dim, 0) for s in waypoint_scores) / len(waypoint_scores)
+            for dim in all_dims
+        }
+
+        if len(waypoint_scores) >= 2:
+            first_avg = sum(waypoint_scores[0].values()) / len(waypoint_scores[0])
+            last_avg = sum(waypoint_scores[-1].values()) / len(waypoint_scores[-1])
+            delta = last_avg - first_avg
+            trend = "improving" if delta > 0.5 else "declining" if delta < -0.5 else "stable"
+        else:
+            trend = "stable"
+
+        return {
+            "direction": direction_label,
+            "heading": initial_heading,
+            "pano_id": start_pano_id,
+            "scores": waypoint_scores[0],
+            "system1_reasoning": {},
+            "waypoint_scores": waypoint_scores,
+            "waypoint_summaries": waypoint_summaries,
+            "score_trend": trend,
+            "avg_scores": avg_scores,
+            "visit_count": visit_counts.get(start_pano_id, 0),
+        }
+
+    async def branch_decision(
         self,
         branch_pano_id: str,
         candidate_headings: List[float],
@@ -2056,6 +2188,7 @@ class CityWalkAgent(BaseAgent):
         destination_context: Optional[str] = None,
         visit_counts: Optional[Dict[str, int]] = None,
         output_dir: Optional[Path] = None,
+        lookahead_depth: int = 1,
     ) -> Dict[str, Any]:
         """Evaluate candidate directions at a branch point and choose the best.
 
@@ -2064,6 +2197,7 @@ class CityWalkAgent(BaseAgent):
             candidate_headings: List of compass headings to evaluate (2–5 directions)
             memory_manager: Current route MemoryManager (provides LTM context)
             output_dir: Optional directory to save branch decision log
+            lookahead_depth: Waypoints to explore per direction (1 = current behaviour)
 
         Returns:
             {
@@ -2076,11 +2210,8 @@ class CityWalkAgent(BaseAgent):
                 "candidates": List[Dict],  # full per-direction analysis
             }
         """
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import asyncio
         import string
-        import tempfile
-
-        import requests
 
         if not (2 <= len(candidate_headings) <= 5):
             raise ValueError(
@@ -2089,68 +2220,40 @@ class CityWalkAgent(BaseAgent):
 
         direction_labels = list(string.ascii_uppercase[: len(candidate_headings)])
 
-        def fetch_and_analyze(label: str, heading: float) -> Dict[str, Any]:
-            image_url = (
-                f"https://maps.googleapis.com/maps/api/streetview"
-                f"?size=640x640&pano={branch_pano_id}&heading={heading}"
-                f"&pitch=0&fov=90&key={settings.google_maps_api_key}"
-            )
-            tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-            try:
-                resp = requests.get(image_url, timeout=15)
-                resp.raise_for_status()
-                tmp.write(resp.content)
-                tmp.flush()
-                image_path = Path(tmp.name)
-            finally:
-                tmp.close()
-
-            try:
-                analysis = self.continuous_analyzer.analyze_waypoint(
-                    waypoint_id=0,
-                    image_path=image_path,
-                    metadata={"heading": heading, "lat": 0, "lon": 0},
-                    visual_change_detected=True,
-                    phash_distance=None,
-                )
-            finally:
-                image_path.unlink(missing_ok=True)
-
-            return {
-                "direction": label,
-                "heading": heading,
-                "pano_id": branch_pano_id,
-                "scores": analysis.persona_scores,
-                "system1_reasoning": analysis.persona_reasoning,
-                "visit_count": (visit_counts or {}).get(branch_pano_id, 0),
-            }
-
         self.logger.info(
-            f"Branch decision: {len(candidate_headings)} candidates at pano={branch_pano_id}"
+            f"Branch decision: {len(candidate_headings)} candidates "
+            f"× depth={lookahead_depth} at pano={branch_pano_id[:12]}"
         )
 
-        with ThreadPoolExecutor(max_workers=len(candidate_headings)) as executor:
-            futures = {
-                executor.submit(fetch_and_analyze, label, heading): label
-                for label, heading in zip(direction_labels, candidate_headings)
-            }
-            direction_results = []
-            for future in as_completed(futures):
-                direction_results.append(future.result())
-
+        # All directions × depth waypoints in parallel
+        direction_results = list(
+            await asyncio.gather(
+                *[
+                    self._fetch_and_analyze_lookahead(
+                        start_pano_id=branch_pano_id,
+                        initial_heading=heading,
+                        direction_label=label,
+                        lookahead_depth=lookahead_depth,
+                        visit_counts=visit_counts or {},
+                    )
+                    for label, heading in zip(direction_labels, candidate_headings)
+                ]
+            )
+        )
         direction_results.sort(key=lambda x: direction_labels.index(x["direction"]))
 
         ltm_patterns = {
             "snapshots": list(memory_manager._route_snapshots),
             "reasoning_episodes": list(memory_manager._route_reasoning_log),
         }
+        stm_ctx = memory_manager.stm.get_context()
 
         def run_interpreter(dr: Dict) -> Dict:
             interp = self.persona_reasoner.interpreter.interpret_waypoint(
                 waypoint_id=0,
-                system1_scores=dr["scores"],
+                system1_scores=dr["avg_scores"] or dr["scores"],
                 system1_reasoning=dr["system1_reasoning"],
-                stm_context=memory_manager.stm.get_context(),
+                stm_context=stm_ctx,
                 trigger_reason=None,
                 personality=self.personality,
                 dimension_ids=self.persona_reasoner.dimension_ids,
@@ -2158,10 +2261,19 @@ class CityWalkAgent(BaseAgent):
                 waypoints_since_trigger=memory_manager._waypoints_since_trigger,
                 ltm_patterns=ltm_patterns,
             )
-            return {**dr, "interpretation": interp.get("text", ""), "key_concern": interp.get("key_concern")}
+            return {
+                **dr,
+                "interpretation": interp.get("text", ""),
+                "key_concern": interp.get("key_concern"),
+            }
 
-        with ThreadPoolExecutor(max_workers=len(direction_results)) as executor:
-            candidates = list(executor.map(run_interpreter, direction_results))
+        # Interpreters in parallel (sync → run_in_executor)
+        loop = asyncio.get_event_loop()
+        candidates = list(
+            await asyncio.gather(
+                *[loop.run_in_executor(None, run_interpreter, dr) for dr in direction_results]
+            )
+        )
 
         decision = self.persona_reasoner.decider.decide_branch(
             candidates=candidates,
@@ -2183,11 +2295,15 @@ class CityWalkAgent(BaseAgent):
             branch_log = {
                 "branch_pano_id": branch_pano_id,
                 "candidate_headings": candidate_headings,
+                "lookahead_depth": lookahead_depth,
                 "candidates": [
                     {
                         "direction": c["direction"],
                         "heading": c["heading"],
                         "scores": c["scores"],
+                        "avg_scores": c.get("avg_scores", {}),
+                        "score_trend": c.get("score_trend", "stable"),
+                        "waypoint_scores": c.get("waypoint_scores", []),
                         "interpretation": c["interpretation"],
                         "key_concern": c["key_concern"],
                     }
@@ -2217,6 +2333,7 @@ class CityWalkAgent(BaseAgent):
         output_dir: Optional[Path] = None,
         step_callback=None,
         save_images: bool = False,
+        lookahead_depth: int = 1,
     ) -> Dict[str, Any]:
         """Walk autonomously from start to destination.
 
@@ -2430,15 +2547,13 @@ class CityWalkAgent(BaseAgent):
 
             if (is_intersection or trigger_reason is not None) and analysis:
                 try:
-                    branch_result = await loop.run_in_executor(
-                        None,
-                        lambda: self.branch_decision(
-                            branch_pano_id=pano_id,
-                            candidate_headings=candidate_headings,
-                            memory_manager=memory_manager,
-                            destination_context=dest_context,
-                            visit_counts=visit_counts,
-                        ),
+                    branch_result = await self.branch_decision(
+                        branch_pano_id=pano_id,
+                        candidate_headings=candidate_headings,
+                        memory_manager=memory_manager,
+                        destination_context=dest_context,
+                        visit_counts=visit_counts,
+                        lookahead_depth=lookahead_depth,
                     )
                     chosen_heading = branch_result["chosen_heading"]
                     current_intended_heading = chosen_heading

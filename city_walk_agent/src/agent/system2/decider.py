@@ -189,6 +189,27 @@ Respond ONLY with valid JSON matching this exact schema:
                 f"{dimensions.get(d, d)}={c['scores'].get(d, 0):.1f}"
                 for d in dimension_ids
             )
+
+            # look-ahead trend (only shown when depth > 1)
+            trend = c.get("score_trend", "")
+            avg_scores = c.get("avg_scores", {})
+            waypoint_scores = c.get("waypoint_scores", [])
+            trend_str = ""
+            if len(waypoint_scores) > 1:
+                avg_str = "  ".join(
+                    f"{dimensions.get(d, d)}={v:.1f}"
+                    for d, v in avg_scores.items()
+                )
+                trend_icon = (
+                    "↑" if trend == "improving"
+                    else "↓" if trend == "declining"
+                    else "→"
+                )
+                trend_str = (
+                    f"\n    {trend_icon} Trend: {trend.upper()} over {len(waypoint_scores)} waypoints"
+                    f"\n    Avg: {avg_str}"
+                )
+
             concern_str = (
                 f"\n    Key concern: {c['key_concern']}"
                 if c.get("key_concern") else ""
@@ -201,7 +222,7 @@ Respond ONLY with valid JSON matching this exact schema:
             candidate_lines.append(
                 f"[{c['direction']}] heading={c['heading']:.0f}°  {scores_str}\n"
                 f"    \"{c['interpretation'][:120]}\""
-                f"{concern_str}{visit_str}"
+                f"{trend_str}{concern_str}{visit_str}"
             )
         candidates_text = "\n\n".join(candidate_lines)
 
