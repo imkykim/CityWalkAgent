@@ -1110,13 +1110,14 @@
         log(`Walk started: ${walk_id}`, 'ok');
         setStatus(`Walking… id=${walk_id}`);
 
+        showAnalysisBadge(true, 'Analysing…');
         walkEventSource = new EventSource(`${API}/api/walk/stream/${walk_id}`);
         walkEventSource.onmessage = e => {
           try {
             const msg = JSON.parse(e.data);
             if (msg.type === 'step')     handleWalkStep(msg.data);
             if (msg.type === 'complete') handleWalkComplete(msg.data);
-            if (msg.type === 'error')    { showAwError(msg.data.message || 'Walk error'); autoWalkReset(false); }
+            if (msg.type === 'error')    { showAnalysisBadge(false); showAwError(msg.data.message || 'Walk error'); autoWalkReset(false); }
           } catch(err) { log(`SSE parse error: ${err.message}`, 'warn'); }
         };
         walkEventSource.onerror = () => {
@@ -1132,6 +1133,9 @@
       walkStepCount++;
       const latlng = [step.lat, step.lng];
       navPoints.push(latlng);
+
+      // Hide "Analysing..." badge — analysis complete
+      showAnalysisBadge(false);
 
       // Map polyline
       if (navPolyline) map.removeLayer(navPolyline);
@@ -1155,10 +1159,22 @@
       // Street View
       setPanorama(step.pano_id, step.heading);
       setBadge(`Step ${step.step}`);
-      setAnalysisOverlay(null, null);
+
+      // Agent view thumbnail (image the agent actually analyzed)
+      if (step.image_base64) {
+        const imgUrl = `data:image/jpeg;base64,${step.image_base64}`;
+        setAnalysisOverlay(imgUrl, step.heading);
+      } else {
+        setAnalysisOverlay(null, null);
+      }
 
       // Scores
       if (step.scores && Object.keys(step.scores).length) renderScores(step.scores);
+
+      // Scoring reasoning (System 1 result)
+      if (step.reasoning && Object.keys(step.reasoning).length) {
+        renderReasoning(step.reasoning);
+      }
 
       // Progress
       document.getElementById('aw-progress').textContent =
@@ -1170,6 +1186,9 @@
       if (step.branch_triggered && step.recommendation) {
         addS2FeedItem(step);
       }
+
+      // Show "Analysing..." for the next step
+      showAnalysisBadge(true, 'Analysing…');
     }
 
     function addS2FeedItem(step) {
@@ -1200,6 +1219,7 @@
     }
 
     function handleWalkComplete(result) {
+      showAnalysisBadge(false);
       const arrived = result.arrived ? '✓ Arrived' : '— Did not arrive';
       const steps = result.steps ?? walkStepCount;
       const dist = result.final_distance_m != null ? `${Math.round(result.final_distance_m)}m from dest` : '';

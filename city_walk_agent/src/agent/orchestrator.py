@@ -10,6 +10,7 @@ Analysis mode: run_with_memory() / run_with_memory_from_folder()
    - Includes pHash detection, triggered reasoning, and moment curation
 """
 
+import base64
 import json
 import math
 import time
@@ -2319,6 +2320,7 @@ class CityWalkAgent(BaseAgent):
             saved_image_path = None
             phash_distance = None
             visual_change = True  # fallback default
+            img_bytes = None
             try:
                 sv_url = (
                     f"https://maps.googleapis.com/maps/api/streetview"
@@ -2330,6 +2332,7 @@ class CityWalkAgent(BaseAgent):
                     img_resp = await client.get(sv_url)
                     img_resp.raise_for_status()
 
+                img_bytes = img_resp.content
                 tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
                 tmp.write(img_resp.content)
                 tmp.flush()
@@ -2523,6 +2526,8 @@ class CityWalkAgent(BaseAgent):
                 "dest_bearing": round(dest_bearing, 1),
                 "dest_cardinal": cardinal,
                 "scores": analysis.persona_scores if analysis else {},
+                "reasoning": analysis.persona_reasoning if analysis else {},
+                "image_base64": base64.b64encode(img_bytes).decode("utf-8") if img_bytes else None,
                 "recommendation": recommendation,
                 "is_intersection": is_intersection,
                 "branch_triggered": is_intersection or trigger_reason is not None,
