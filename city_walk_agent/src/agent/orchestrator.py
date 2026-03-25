@@ -2625,6 +2625,7 @@ class CityWalkAgent(BaseAgent):
             chosen_heading = candidate_headings[0]
             recommendation = None
             step_confidence: Optional[float] = None
+            branch_result: Optional[Dict[str, Any]] = None
 
             if (is_intersection or trigger_reason is not None) and analysis:
                 try:
@@ -2735,6 +2736,25 @@ class CityWalkAgent(BaseAgent):
                 "visual_change": visual_change,
                 "image_path": str(saved_image_path) if saved_image_path else None,
                 "confidence": step_confidence,
+                "branch_candidates": [
+                    {
+                        "direction": c["direction"],
+                        "heading": round(c["heading"], 1),
+                        "pano_id": c.get("pano_id"),
+                        "scores": c.get("avg_scores") or c.get("scores", {}),
+                        "avg_score": round(
+                            sum(c["scores"].values()) / len(c["scores"])
+                            if c.get("scores") else 0,
+                            2,
+                        ),
+                        "trend": c.get("score_trend", "stable"),
+                        "interpretation": c.get("interpretation", ""),
+                        "key_concern": c.get("key_concern"),
+                        "chosen": c["direction"] == (branch_result or {}).get("chosen_direction"),
+                        "lookahead_depth": len(c.get("waypoint_scores") or []) or 1,
+                    }
+                    for c in ((branch_result or {}).get("candidates") or [])
+                ],
             }
             route_taken.append(step_result)
             visit_counts[pano_id] = visit_counts.get(pano_id, 0) + 1

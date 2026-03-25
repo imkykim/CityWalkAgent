@@ -438,6 +438,95 @@
       #branch-panel div[style*="cursor: pointer"]:hover {
         border-color: var(--accent) !important;
       }
+
+      /* ── Branch evaluation overlay ── */
+      #branch-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 20;
+        display: none;
+        flex-direction: column;
+        background: rgba(0,0,0,0.04);
+      }
+      #branch-overlay.active { display: flex; }
+
+      #branch-thumbs {
+        display: flex;
+        height: 100%;
+        gap: 2px;
+      }
+      .branch-thumb {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+        cursor: default;
+        transition: opacity 0.6s ease;
+      }
+      .branch-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .branch-thumb-label {
+        position: absolute;
+        top: 8px; left: 8px;
+        background: rgba(0,0,0,0.55);
+        color: #fff;
+        font-size: 11px; font-weight: 700;
+        padding: 2px 7px;
+        border-radius: 4px;
+        letter-spacing: 0.5px;
+      }
+      .branch-thumb-scores {
+        position: absolute;
+        bottom: 8px; left: 8px; right: 8px;
+        background: rgba(0,0,0,0.5);
+        color: #fff;
+        font-size: 10px;
+        padding: 4px 6px;
+        border-radius: 4px;
+        line-height: 1.6;
+      }
+      .branch-thumb.chosen { outline: 3px solid #0071e3; outline-offset: -3px; }
+      .branch-thumb.rejected { opacity: 0.25; }
+      .branch-thumb-trend { display: inline-block; font-size: 10px; margin-left: 4px; color: #a0e0a0; }
+      .branch-thumb-trend.down { color: #e0a0a0; }
+      .branch-thumb-spinner {
+        position: absolute; inset: 0;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(255,255,255,0.15);
+      }
+
+      #branch-cards { display: none; gap: 8px; padding: 0; }
+      #branch-cards.active { display: flex; }
+      #bp-center.branch-active { flex: 2; }
+
+      .branch-card {
+        flex: 1;
+        border: 1.5px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 11px;
+        transition: border-color 0.4s, opacity 0.6s;
+        min-width: 0;
+      }
+      .branch-card.chosen { border-color: var(--accent); background: #f0f6ff; }
+      .branch-card.rejected { opacity: 0.3; }
+      .branch-card-dir { font-size: 13px; font-weight: 700; color: var(--text-1); margin-bottom: 4px; }
+      .branch-card-avg { font-size: 11px; color: var(--text-2); margin-bottom: 6px; }
+      .branch-card-scores { line-height: 1.7; }
+      .branch-card-scores .dim { display: flex; justify-content: space-between; }
+      .branch-card-scores .dim-name { color: var(--text-3); font-size: 10px; text-transform: capitalize; }
+      .branch-card-scores .dim-val { font-weight: 600; font-size: 11px; }
+      .branch-card-interp {
+        margin-top: 5px; font-size: 10px; color: var(--text-2); font-style: italic;
+        line-height: 1.5;
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+      }
+      .branch-card-concern { margin-top: 3px; font-size: 10px; color: var(--orange); }
+
+      @keyframes ghost-pulse {
+        0%   { transform: scale(1);   opacity: 0.7; }
+        50%  { transform: scale(1.3); opacity: 0.4; }
+        100% { transform: scale(1);   opacity: 0.7; }
+      }
+      .ghost-pulse { animation: ghost-pulse 1.2s ease-in-out infinite; }
     </style>
   </head>
   <body>
@@ -484,6 +573,10 @@
         <div id="analysis-badge">
           <div class="mini-spin"></div>
           <span id="analysis-badge-text">Analyzing…</span>
+        </div>
+        <!-- Branch evaluation overlay — shown during intersection analysis -->
+        <div id="branch-overlay">
+          <div id="branch-thumbs"></div>
         </div>
       </div>
 
@@ -554,9 +647,10 @@
 
       <!-- center: scores -->
       <div id="bp-center">
-        <div class="sec-label">Scores</div>
+        <div class="sec-label" id="bp-center-label">Scores</div>
         <div id="scores-area"><div class="ph">—</div></div>
         <div id="meta-line"></div>
+        <div id="branch-cards"></div>
       </div>
 
       <!-- right: reasoning -->
@@ -632,6 +726,11 @@
     let walkStepCount = 0;
     let destMarker = null;
     let walkCircles = [];
+    // Branch visualization state
+    let branchGhostMarkers = [];
+    let branchLines = [];
+    let isBranching = false;
+    let _mapsApiKey = null;
 
     // Street View Panorama
     let panorama = null;
@@ -657,6 +756,7 @@
       try {
         const { key } = await fetch('/api/maps-key').then(r => r.json());
         if (!key) return;
+        _mapsApiKey = key;
         await new Promise((resolve) => {
           const s = document.createElement('script');
           s.src = `https://maps.googleapis.com/maps/api/js?key=${key}&callback=_mapsReady`;
@@ -1129,6 +1229,139 @@
       }
     }
 
+    // ── Branch visualization ─────────────────────────────────────────────
+
+    function clearBranchGhosts() {
+      branchGhostMarkers.forEach(m => map.removeLayer(m));
+      branchLines.forEach(l => map.removeLayer(l));
+      branchGhostMarkers = [];
+      branchLines = [];
+    }
+
+    function clearBranchVisualization() {
+      // Hide overlay and cards
+      document.getElementById('branch-overlay').classList.remove('active');
+      const cards = document.getElementById('branch-cards');
+      cards.classList.remove('active');
+      cards.innerHTML = '';
+      document.getElementById('bp-center').classList.remove('branch-active');
+      document.getElementById('bp-center-label').textContent = 'Scores';
+      clearBranchGhosts();
+      isBranching = false;
+    }
+
+    function showBranchEvaluation(step) {
+      if (!step.branch_candidates || !step.branch_candidates.length) return;
+      isBranching = true;
+      const candidates = step.branch_candidates;
+      const origin = [step.lat, step.lng];
+
+      // Build Street View thumbnail overlay
+      const overlay = document.getElementById('branch-overlay');
+      const thumbsEl = document.getElementById('branch-thumbs');
+      thumbsEl.innerHTML = '';
+      overlay.classList.add('active');
+
+      candidates.forEach(c => {
+        const div = document.createElement('div');
+        div.className = 'branch-thumb';
+        div.id = `branch-thumb-${c.direction}`;
+
+        // Spinner while loading
+        div.innerHTML = `<div class="branch-thumb-spinner"><div class="mini-spin"></div></div>`;
+
+        // Overlay label
+        const label = document.createElement('div');
+        label.className = 'branch-thumb-label';
+        const trendClass = c.trend === 'improving' ? '' : (c.trend === 'declining' ? 'down' : '');
+        const trendIcon = c.trend === 'improving' ? '↑' : (c.trend === 'declining' ? '↓' : '→');
+        label.innerHTML = `<span>${escHtml(c.direction)}</span><span class="branch-thumb-trend ${trendClass}">${trendIcon}</span>`;
+        div.appendChild(label);
+        thumbsEl.appendChild(div);
+
+        // Load SV static image via Maps Static API
+        if (_mapsApiKey) {
+          const img = new Image();
+          img.onload = () => {
+            const spinner = div.querySelector('.branch-thumb-spinner');
+            if (spinner) spinner.remove();
+            div.style.backgroundImage = `url('${img.src}')`;
+            div.style.backgroundSize = 'cover';
+            div.style.backgroundPosition = 'center';
+          };
+          img.src = `https://maps.googleapis.com/maps/api/streetview?size=400x300&pano=${c.pano_id || ''}&heading=${c.heading}&pitch=0&fov=90&key=${_mapsApiKey}`;
+        }
+
+        // Ghost marker on map
+        const headingRad = (c.heading * Math.PI) / 180;
+        const offsetDist = 0.00015;
+        const ghostLat = origin[0] + offsetDist * Math.cos(headingRad);
+        const ghostLng = origin[1] + offsetDist * Math.sin(headingRad) / Math.cos(origin[0] * Math.PI / 180);
+        const ghostIcon = L.divIcon({
+          className: '',
+          html: `<div style="width:14px;height:14px;border-radius:50%;background:#ff9f0a;border:2px solid #fff;box-shadow:0 0 6px rgba(255,159,10,0.7)" class="ghost-pulse"></div>`,
+          iconSize: [14, 14],
+          iconAnchor: [7, 7],
+        });
+        const gm = L.marker([ghostLat, ghostLng], { icon: ghostIcon, zIndexOffset: 500 }).addTo(map);
+        branchGhostMarkers.push(gm);
+
+        const line = L.polyline([origin, [ghostLat, ghostLng]], {
+          color: '#ff9f0a', weight: 2, opacity: 0.55, dashArray: '5 4'
+        }).addTo(map);
+        branchLines.push(line);
+      });
+    }
+
+    function showBranchCards(step) {
+      if (!step.branch_candidates || !step.branch_candidates.length) return;
+      const candidates = step.branch_candidates;
+      const cards = document.getElementById('branch-cards');
+      const center = document.getElementById('bp-center');
+      cards.innerHTML = '';
+
+      candidates.forEach(c => {
+        const card = document.createElement('div');
+        card.className = `branch-card${c.chosen ? ' chosen' : ' rejected'}`;
+        const scores = c.scores || {};
+        const scoreRows = Object.entries(scores).map(([k, v]) =>
+          `<div class="dim"><span class="dim-name">${escHtml(k)}</span><span class="dim-val">${v.toFixed(1)}</span></div>`
+        ).join('');
+        const trendIcon = c.trend === 'improving' ? '↑' : (c.trend === 'declining' ? '↓' : '→');
+        const avgStr = c.avg_score != null ? ` · avg ${c.avg_score.toFixed(1)}` : '';
+        card.innerHTML = `
+          <div class="branch-card-dir">${c.chosen ? '✓ ' : ''}${escHtml(c.direction)} <span style="font-size:10px;color:var(--text-3)">${trendIcon}${avgStr}</span></div>
+          <div class="branch-card-scores">${scoreRows}</div>
+          ${c.interpretation ? `<div class="branch-card-interp">${escHtml(c.interpretation)}</div>` : ''}
+          ${c.key_concern ? `<div class="branch-card-concern">⚠ ${escHtml(c.key_concern)}</div>` : ''}
+        `;
+        cards.appendChild(card);
+      });
+
+      cards.classList.add('active');
+      center.classList.add('branch-active');
+      document.getElementById('bp-center-label').textContent = 'Branch Evaluation';
+    }
+
+    function resolveBranchEvaluation(step) {
+      // Mark chosen/rejected on thumbnails
+      const candidates = step.branch_candidates || [];
+      candidates.forEach(c => {
+        const thumb = document.getElementById(`branch-thumb-${c.direction}`);
+        if (!thumb) return;
+        thumb.classList.add(c.chosen ? 'chosen' : 'rejected');
+      });
+      // After 3 s, fade out overlay, keep cards briefly
+      setTimeout(() => {
+        document.getElementById('branch-overlay').classList.remove('active');
+        clearBranchGhosts();
+        // After another 8 s clear cards too
+        setTimeout(() => clearBranchVisualization(), 8000);
+      }, 3000);
+    }
+
+    // ── Walk step handler ────────────────────────────────────────────────
+
     function handleWalkStep(step) {
       walkStepCount++;
       const latlng = [step.lat, step.lng];
@@ -1182,6 +1415,16 @@
       setStatus(`Step ${step.step} · ${Math.round(step.dist_to_dest_m)}m remaining`);
       log(`Step ${step.step}: ${step.lat.toFixed(5)},${step.lng.toFixed(5)} dist=${step.dist_to_dest_m}m${step.is_intersection?' [intersec]':''}`, 'info');
 
+      // Branch visualization
+      if (step.branch_triggered && step.branch_candidates && step.branch_candidates.length) {
+        clearBranchVisualization();
+        showBranchEvaluation(step);
+        showBranchCards(step);
+        resolveBranchEvaluation(step);
+      } else if (!step.branch_triggered && isBranching) {
+        clearBranchVisualization();
+      }
+
       // S2 feed: only for branch steps with a recommendation
       if (step.branch_triggered && step.recommendation) {
         addS2FeedItem(step);
@@ -1197,10 +1440,23 @@
       const tagLabel = step.is_intersection ? '⑂ Intersection' : (step.trigger_reason || 'Rethink');
       const conf = step.confidence != null ? step.confidence : null;
 
-      const scores = step.scores || {};
-      const scoreVals = Object.values(scores);
-      const avgScore = scoreVals.length ? (scoreVals.reduce((a,b)=>a+b,0)/scoreVals.length).toFixed(1) : null;
-      const topScores = Object.entries(scores).slice(0,3).map(([k,v])=>`${k}:${v.toFixed(1)}`).join(' ');
+      // Build candidate summary if available
+      let candidateSummary = '';
+      const candidates = step.branch_candidates || [];
+      if (candidates.length) {
+        const chosen = candidates.find(c => c.chosen);
+        const others = candidates.filter(c => !c.chosen);
+        const chosenStr = chosen ? `✓ ${escHtml(chosen.direction)} (${chosen.avg_score != null ? chosen.avg_score.toFixed(1) : '?'})` : '';
+        const otherStr = others.map(c => `${escHtml(c.direction)} (${c.avg_score != null ? c.avg_score.toFixed(1) : '?'})`).join(', ');
+        candidateSummary = `<div class="s2-meta" style="color:var(--accent)">${chosenStr}</div>`;
+        if (otherStr) candidateSummary += `<div class="s2-meta" style="opacity:0.55">vs ${otherStr}</div>`;
+      } else {
+        const scores = step.scores || {};
+        const scoreVals = Object.values(scores);
+        const avgScore = scoreVals.length ? (scoreVals.reduce((a,b)=>a+b,0)/scoreVals.length).toFixed(1) : null;
+        const topScores = Object.entries(scores).slice(0,3).map(([k,v])=>`${k}:${v.toFixed(1)}`).join(' ');
+        if (avgScore) candidateSummary = `<div class="s2-meta">avg ${avgScore}${topScores ? ' · '+escHtml(topScores) : ''}</div>`;
+      }
 
       const item = document.createElement('div');
       item.className = 's2-item';
@@ -1210,7 +1466,7 @@
           <span style="font-size:10px;color:var(--text-3)">Step ${step.step} · ${Math.round(step.dist_to_dest_m)}m</span>
         </div>
         <div class="s2-reason">${escHtml(step.recommendation)}</div>
-        ${avgScore ? `<div class="s2-meta">avg ${avgScore}${topScores ? ' · '+escHtml(topScores) : ''}</div>` : ''}
+        ${candidateSummary}
         ${conf != null ? `<div class="s2-conf-bar-wrap"><div class="s2-conf-bar" style="width:${Math.round(conf*100)}%"></div></div>` : ''}
       `;
       feed.prepend(item);
@@ -1246,6 +1502,7 @@
       currentWalkId = null;
       document.getElementById('aw-start-btn').disabled = false;
       document.getElementById('aw-stop-btn').style.display = 'none';
+      clearBranchVisualization();
       if (clearMap) {
         if (navMarker)   { map.removeLayer(navMarker);   navMarker   = null; }
         if (navPolyline) { map.removeLayer(navPolyline); navPolyline = null; }
