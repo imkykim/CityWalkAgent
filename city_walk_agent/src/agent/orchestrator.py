@@ -2048,137 +2048,109 @@ class CityWalkAgent(BaseAgent):
             "no_change": sum(1 for adj in all_adjustments if abs(adj) < 0.1),
         }
 
-    async def _fetch_and_analyze_lookahead(
+    async def _resolve_pano_chain(
         self,
         start_pano_id: str,
         initial_heading: float,
         direction_label: str,
         lookahead_depth: int,
-        visit_counts: Dict[str, int],
-    ) -> Dict[str, Any]:
-        """Walk lookahead_depth waypoints in one direction, collecting System 1 scores.
+    ) -> List[Dict[str, Any]]:
+        """Follow pano links for lookahead_depth steps and return (pano_id, heading) pairs.
 
-        System 2 (PersonaReasoner) is intentionally skipped for speed.
+        Sequential because each step's pano_id depends on the previous step's metadata.
+        Returns a list of dicts: [{"pano_id": ..., "heading": ..., "label": ...}, ...]
         """
-        import asyncio
-        import tempfile
-
         import httpx
         from demo.server import MapTilesSession
 
         nav = MapTilesSession(settings.google_maps_api_key)
-        loop = asyncio.get_event_loop()
-
-        waypoint_scores: List[Dict[str, float]] = []
-        waypoint_summaries: List[str] = []
+        chain: List[Dict[str, Any]] = []
         current_pano = start_pano_id
         current_heading = initial_heading
 
         for depth in range(lookahead_depth):
-            sv_url = (
-                f"https://maps.googleapis.com/maps/api/streetview"
-                f"?pano={current_pano}&size=640x640"
-                f"&heading={current_heading:.0f}&fov=90&pitch=0"
-                f"&key={settings.google_maps_api_key}"
-            )
-            try:
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    img_resp = await client.get(sv_url)
-                    img_resp.raise_for_status()
-
-                tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-                tmp.write(img_resp.content)
-                tmp.flush()
-                tmp.close()
-                image_path = Path(tmp.name)
-
+            chain.append({
+                "pano_id": current_pano,
+                "heading": current_heading,
+                "direction_label": direction_label,
+                "depth": depth,
+            })
+            if depth < lookahead_depth - 1:
                 try:
-                    analysis = await loop.run_in_executor(
-                        None,
-                        lambda p=image_path, d=depth: self.continuous_analyzer.analyze_waypoint(
-                            waypoint_id=d,
-                            image_path=p,
-                            metadata={"heading": current_heading, "lat": 0, "lon": 0},
-                            visual_change_detected=True,
-                            phash_distance=None,
+                    meta = await nav.get_metadata(current_pano)
+                    links = meta.get("links", [])
+                    if not links:
+                        break
+                    next_link = min(
+                        links,
+                        key=lambda l: abs(
+                            ((l.get("heading") or l.get("yawDeg") or 0)
+                             - current_heading + 180) % 360 - 180
                         ),
                     )
-                    waypoint_scores.append(dict(analysis.persona_scores))
-                    reasoning = analysis.persona_reasoning or {}
-                    summary = next(iter(reasoning.values()), "").split(".")[0][:80]
-                    waypoint_summaries.append(summary)
-                finally:
-                    image_path.unlink(missing_ok=True)
+                    current_pano = next_link.get("panoId") or next_link.get("id")
+                    current_heading = float(
+                        next_link.get("heading")
+                        or next_link.get("yawDeg")
+                        or current_heading
+                    )
+                except Exception as e:
+                    self.logger.warning(
+                        f"Pano chain advance failed at depth={depth} "
+                        f"direction={direction_label}: {e}"
+                    )
+                    break
 
-                # Advance to next pano along same heading
-                if depth < lookahead_depth - 1:
-                    try:
-                        meta = await nav.get_metadata(current_pano)
-                        links = meta.get("links", [])
-                        if not links:
-                            break
-                        next_link = min(
-                            links,
-                            key=lambda l: abs(
-                                ((l.get("heading") or l.get("yawDeg") or 0)
-                                 - current_heading + 180) % 360 - 180
-                            ),
-                        )
-                        current_pano = next_link.get("panoId") or next_link.get("id")
-                        current_heading = float(
-                            next_link.get("heading")
-                            or next_link.get("yawDeg")
-                            or current_heading
-                        )
-                    except Exception:
-                        break
+        return chain
 
-            except Exception as e:
-                self.logger.warning(
-                    f"Look-ahead failed at depth={depth} direction={direction_label}: {e}"
+    @staticmethod
+    async def _fetch_sv_image(pano_id: str, heading: float) -> Optional[bytes]:
+        """Download a single Street View Static image. Returns None on failure."""
+        import httpx
+
+        url = (
+            f"https://maps.googleapis.com/maps/api/streetview"
+            f"?pano={pano_id}&size=640x640"
+            f"&heading={heading:.0f}&fov=90&pitch=0"
+            f"&key={settings.google_maps_api_key}"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp.content
+        except Exception:
+            return None
+
+    def _run_vlm(
+        self,
+        image_bytes: bytes,
+        heading: float,
+        waypoint_id: int,
+    ) -> Optional[Any]:
+        """Write image to a temp file and run analyze_waypoint() (sync, CPU-bound)."""
+        import tempfile
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
+        try:
+            tmp.write(image_bytes)
+            tmp.flush()
+            tmp.close()
+            image_path = Path(tmp.name)
+            try:
+                return self.continuous_analyzer.analyze_waypoint(
+                    waypoint_id=waypoint_id,
+                    image_path=image_path,
+                    metadata={"heading": heading, "lat": 0, "lon": 0},
+                    visual_change_detected=True,
+                    phash_distance=None,
                 )
-                break
-
-        if not waypoint_scores:
-            return {
-                "direction": direction_label,
-                "heading": initial_heading,
-                "pano_id": start_pano_id,
-                "scores": {},
-                "system1_reasoning": {},
-                "waypoint_scores": [],
-                "waypoint_summaries": [],
-                "score_trend": "unknown",
-                "avg_scores": {},
-                "visit_count": visit_counts.get(start_pano_id, 0),
-            }
-
-        all_dims = set(k for s in waypoint_scores for k in s)
-        avg_scores = {
-            dim: sum(s.get(dim, 0) for s in waypoint_scores) / len(waypoint_scores)
-            for dim in all_dims
-        }
-
-        if len(waypoint_scores) >= 2:
-            first_avg = sum(waypoint_scores[0].values()) / len(waypoint_scores[0])
-            last_avg = sum(waypoint_scores[-1].values()) / len(waypoint_scores[-1])
-            delta = last_avg - first_avg
-            trend = "improving" if delta > 0.5 else "declining" if delta < -0.5 else "stable"
-        else:
-            trend = "stable"
-
-        return {
-            "direction": direction_label,
-            "heading": initial_heading,
-            "pano_id": start_pano_id,
-            "scores": waypoint_scores[0],
-            "system1_reasoning": {},
-            "waypoint_scores": waypoint_scores,
-            "waypoint_summaries": waypoint_summaries,
-            "score_trend": trend,
-            "avg_scores": avg_scores,
-            "visit_count": visit_counts.get(start_pano_id, 0),
-        }
+            finally:
+                image_path.unlink(missing_ok=True)
+        except Exception:
+            tmp_path = Path(tmp.name)
+            tmp_path.unlink(missing_ok=True)
+            return None
 
     async def branch_decision(
         self,
@@ -2225,21 +2197,130 @@ class CityWalkAgent(BaseAgent):
             f"× depth={lookahead_depth} at pano={branch_pano_id[:12]}"
         )
 
-        # All directions × depth waypoints in parallel
-        direction_results = list(
+        # ── Step 1: resolve pano chains (sequential per direction, parallel across directions)
+        chains_per_dir: List[List[Dict]] = list(
             await asyncio.gather(
                 *[
-                    self._fetch_and_analyze_lookahead(
+                    self._resolve_pano_chain(
                         start_pano_id=branch_pano_id,
                         initial_heading=heading,
                         direction_label=label,
                         lookahead_depth=lookahead_depth,
-                        visit_counts=visit_counts or {},
                     )
                     for label, heading in zip(direction_labels, candidate_headings)
                 ]
             )
         )
+
+        # Flatten all (direction, depth) slots into a single list for bulk download
+        all_slots: List[Dict] = [
+            slot for chain in chains_per_dir for slot in chain
+        ]
+
+        # ── Step 2: download all images in parallel (gather — no VLM involved)
+        image_bytes_list: List[Optional[bytes]] = list(
+            await asyncio.gather(
+                *[self._fetch_sv_image(s["pano_id"], s["heading"]) for s in all_slots]
+            )
+        )
+        self.logger.debug(
+            f"Branch look-ahead: downloaded {sum(1 for b in image_bytes_list if b)} "
+            f"/ {len(all_slots)} images"
+        )
+
+        # ── Step 3: VLM calls — Semaphore(48) + retry(2)
+        _branch_semaphore = asyncio.Semaphore(48)
+        loop = asyncio.get_event_loop()
+
+        async def _vlm_with_retry(image_bytes: Optional[bytes], slot: Dict, idx: int, max_retry: int = 2):
+            if not image_bytes:
+                return None
+            for attempt in range(max_retry + 1):
+                async with _branch_semaphore:
+                    try:
+                        result = await loop.run_in_executor(
+                            None,
+                            lambda b=image_bytes, h=slot["heading"], i=idx: self._run_vlm(b, h, i),
+                        )
+                        if result is not None and result.persona_scores:
+                            return result
+                    except Exception as e:
+                        if attempt == max_retry:
+                            self.logger.warning(
+                                f"Branch VLM failed after {max_retry + 1} attempts "
+                                f"(slot={idx}): {e}"
+                            )
+                            return None
+                if attempt < max_retry:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+            return None
+
+        analyses = list(
+            await asyncio.gather(
+                *[_vlm_with_retry(img, slot, i) for i, (img, slot) in enumerate(zip(image_bytes_list, all_slots))]
+            )
+        )
+
+        # ── Step 4: reassemble per-direction results
+        idx = 0
+        direction_results: List[Dict[str, Any]] = []
+        for chain in chains_per_dir:
+            label = chain[0]["direction_label"] if chain else "?"
+            heading = chain[0]["heading"] if chain else 0.0
+            waypoint_scores: List[Dict[str, float]] = []
+            waypoint_summaries: List[str] = []
+
+            for _ in chain:
+                analysis = analyses[idx]
+                idx += 1
+                if analysis is not None:
+                    waypoint_scores.append(dict(analysis.persona_scores))
+                    reasoning = analysis.persona_reasoning or {}
+                    summary = next(iter(reasoning.values()), "").split(".")[0][:80]
+                    waypoint_summaries.append(summary)
+
+            if not waypoint_scores:
+                direction_results.append({
+                    "direction": label,
+                    "heading": heading,
+                    "pano_id": branch_pano_id,
+                    "scores": {},
+                    "system1_reasoning": {},
+                    "waypoint_scores": [],
+                    "waypoint_summaries": [],
+                    "score_trend": "unknown",
+                    "avg_scores": {},
+                    "visit_count": (visit_counts or {}).get(branch_pano_id, 0),
+                })
+                continue
+
+            all_dims = set(k for s in waypoint_scores for k in s)
+            avg_scores = {
+                dim: sum(s.get(dim, 0) for s in waypoint_scores) / len(waypoint_scores)
+                for dim in all_dims
+            }
+
+            if len(waypoint_scores) >= 2:
+                first_avg = sum(waypoint_scores[0].values()) / len(waypoint_scores[0])
+                last_avg = sum(waypoint_scores[-1].values()) / len(waypoint_scores[-1])
+                delta = last_avg - first_avg
+                trend = "improving" if delta > 0.5 else "declining" if delta < -0.5 else "stable"
+            else:
+                trend = "stable"
+
+            direction_results.append({
+                "direction": label,
+                "heading": heading,
+                "pano_id": branch_pano_id,
+                "scores": waypoint_scores[0],
+                "system1_reasoning": {},
+                "waypoint_scores": waypoint_scores,
+                "waypoint_summaries": waypoint_summaries,
+                "score_trend": trend,
+                "avg_scores": avg_scores,
+                "visit_count": (visit_counts or {}).get(branch_pano_id, 0),
+            })
+
         direction_results.sort(key=lambda x: direction_labels.index(x["direction"]))
 
         ltm_patterns = {

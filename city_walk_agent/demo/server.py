@@ -635,15 +635,11 @@ async def nav_branch(body: NavBranchBody):
     if len(body.candidate_headings) > 5:
         raise HTTPException(status_code=400, detail="Maximum 5 candidate headings.")
 
-    loop = asyncio.get_event_loop()
     try:
-        result = await loop.run_in_executor(
-            None,
-            lambda: session.agent.branch_decision(
-                branch_pano_id=body.branch_pano_id,
-                candidate_headings=body.candidate_headings,
-                memory_manager=session.memory_manager,
-            ),
+        result = await session.agent.branch_decision(
+            branch_pano_id=body.branch_pano_id,
+            candidate_headings=body.candidate_headings,
+            memory_manager=session.memory_manager,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Branch decision failed: {e}")
