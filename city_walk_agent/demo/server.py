@@ -209,6 +209,7 @@ class WalkStartBody(BaseModel):
     dest_lng: float
     persona: str = "parent_with_kids"
     max_steps: int = 40
+    lookahead_depth: int = 3
 
 
 # ── session store ─────────────────────────────────────────────────────────────
@@ -703,6 +704,7 @@ async def walk_start(body: WalkStartBody):
                 dest_lng=body.dest_lng,
                 max_steps=body.max_steps,
                 step_callback=step_callback,
+                lookahead_depth=body.lookahead_depth,
             )
             mem = result.get("memory_debug") or {}
             await q.put({"type": "complete", "data": {

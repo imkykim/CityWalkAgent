@@ -635,6 +635,15 @@
             <label style="white-space:nowrap;">Max steps</label>
             <input type="number" id="aw-max-steps" value="40" min="5" max="120" step="5" style="width:60px;">
           </div>
+          <div style="margin-top:6px;">
+            <div style="font-size:10px;color:var(--text-3);margin-bottom:4px;">Lookahead depth</div>
+            <div class="ctrl-row" style="gap:4px;" id="aw-depth-btns">
+              <button onclick="setLookaheadDepth(1)" data-depth="1" class="depth-btn" style="flex:1;padding:3px 0;border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:11px;background:transparent;color:var(--text-2);">1</button>
+              <button onclick="setLookaheadDepth(2)" data-depth="2" class="depth-btn" style="flex:1;padding:3px 0;border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:11px;background:transparent;color:var(--text-2);">2</button>
+              <button onclick="setLookaheadDepth(3)" data-depth="3" class="depth-btn active-depth" style="flex:1;padding:3px 0;border:1px solid var(--accent);border-radius:10px;cursor:pointer;font-size:11px;background:var(--accent);color:#fff;">3</button>
+              <button onclick="setLookaheadDepth(5)" data-depth="5" class="depth-btn" style="flex:1;padding:3px 0;border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:11px;background:transparent;color:var(--text-2);">5</button>
+            </div>
+          </div>
           <div class="ctrl-row" style="margin-top:8px;">
             <button id="aw-start-btn" onclick="autoWalkStart()" style="flex:1;padding:5px 0;border:none;border-radius:16px;cursor:pointer;font-size:12px;font-weight:600;background:var(--accent);color:#fff;transition:opacity .15s;">▶ Start</button>
             <button id="aw-stop-btn"  onclick="autoWalkStop()"  style="padding:5px 10px;border:1px solid var(--border);border-radius:16px;cursor:pointer;font-size:12px;font-weight:500;background:transparent;color:var(--text-2);display:none;">■ Stop</button>
@@ -731,6 +740,7 @@
     let branchLines = [];
     let isBranching = false;
     let _mapsApiKey = null;
+    let currentLookaheadDepth = 3;
 
     // Street View Panorama
     let panorama = null;
@@ -1167,6 +1177,17 @@
     // ═══════════════════════════════════════════════════════
     // EXPLORE MODE — Auto Walk
     // ═══════════════════════════════════════════════════════
+    function setLookaheadDepth(n) {
+      currentLookaheadDepth = n;
+      document.querySelectorAll('.depth-btn').forEach(btn => {
+        const active = parseInt(btn.dataset.depth) === n;
+        btn.classList.toggle('active-depth', active);
+        btn.style.background = active ? 'var(--accent)' : 'transparent';
+        btn.style.color = active ? '#fff' : 'var(--text-2)';
+        btn.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+      });
+    }
+
     async function autoWalkStart() {
       const startLat = parseFloat(document.getElementById('aw-start-lat').value);
       const startLng = parseFloat(document.getElementById('aw-start-lng').value);
@@ -1202,6 +1223,7 @@
             start_lat: startLat, start_lng: startLng,
             dest_lat: destLat, dest_lng: destLng,
             persona: currentPersona, max_steps: maxSteps,
+            lookahead_depth: currentLookaheadDepth,
           }),
         });
         if (!res.ok) { const e = await res.json(); throw new Error(e.detail||res.statusText); }
