@@ -527,7 +527,9 @@
         100% { transform: scale(1);   opacity: 0.7; }
       }
       .ghost-pulse { animation: ghost-pulse 1.2s ease-in-out infinite; }
+      #bp-chart { background: var(--bg); }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   </head>
   <body>
 
@@ -668,6 +670,12 @@
         <div id="reasoning-area"><div class="ph">—</div></div>
       </div>
 
+      <!-- Score trend chart (explore mode only) -->
+      <div id="bp-chart" style="display:none; flex-direction:column; padding:12px 14px; border-left:1px solid var(--border); border-bottom:1px solid var(--border); min-height:0; flex-shrink:0;">
+        <div class="sec-label" style="margin-bottom:6px;">Score Trend</div>
+        <canvas id="score-chart" height="110"></canvas>
+      </div>
+
       <!-- S2 reasoning feed (explore mode only) -->
       <div id="bp-s2">
         <div class="sec-label">Agent Reasoning</div>
@@ -729,6 +737,8 @@
     let currentPano = null;
     let navMarker = null, navPolyline = null, navPoints = [];
     let navHistory = [];
+    let walkSegments = [];
+    let prevNavLatLng = null;
     // Auto walk state
     let currentWalkId = null;
     let walkEventSource = null;
@@ -741,6 +751,11 @@
     let isBranching = false;
     let _mapsApiKey = null;
     let currentLookaheadDepth = 3;
+    // Score trend chart state
+    let scoreChart = null;
+    let chartLabels = [];
+    let chartDatasets = {};
+    let chartBranchPoints = [];
 
     // Street View Panorama
     let panorama = null;
@@ -952,6 +967,7 @@
         // Stop any running walk
         autoWalkStop();
         document.getElementById('bp-s2').style.display = 'none';
+        document.getElementById('bp-chart').style.display = 'none';
         if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
         walkCircles.forEach(c => map.removeLayer(c)); walkCircles = [];
         // Clear nav overlays
@@ -1175,6 +1191,137 @@
     }
 
     // ═══════════════════════════════════════════════════════
+    // SCORE TREND CHART
+    // ═══════════════════════════════════════════════════════
+    function initScoreChart() {
+      const canvas = document.getElementById('score-chart');
+      if (scoreChart) { scoreChart.destroy(); scoreChart = null; }
+      chartLabels = [];
+      chartDatasets = {};
+      chartBranchPoints = [];
+
+      const DIM_COLORS = {
+        safety:    '#2E86AB',
+        lively:    '#F18F01',
+        beautiful: '#C73E1D',
+        wealthy:   '#10B981',
+        safe:      '#2E86AB',
+      };
+      const FALLBACK_COLORS = ['#60A5FA','#EAB308','#A23B72','#D97706','#1D4ED8'];
+
+      scoreChart = new Chart(canvas, {
+        type: 'line',
+        data: { labels: [], datasets: [] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 150 },
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: {
+              display: true, position: 'top',
+              labels: { font: { size: 9 }, boxWidth: 10, padding: 8, color: '#6e6e73' }
+            },
+            tooltip: {
+              callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}` }
+            },
+          },
+          scales: {
+            x: {
+              ticks: { font: { size: 9 }, color: '#aeaeb2', maxTicksLimit: 12 },
+              grid: { color: 'rgba(0,0,0,0.04)' }
+            },
+            y: {
+              min: 0, max: 10,
+              ticks: { font: { size: 9 }, color: '#aeaeb2', stepSize: 2 },
+              grid: { color: 'rgba(0,0,0,0.06)' }
+            }
+          }
+        },
+        plugins: [{
+          id: 'branchLines',
+          afterDraw(chart) {
+            if (!chartBranchPoints.length) return;
+            const ctx2 = chart.ctx;
+            const xAxis = chart.scales.x;
+            const yAxis = chart.scales.y;
+            ctx2.save();
+            ctx2.strokeStyle = 'rgba(255,159,10,0.5)';
+            ctx2.lineWidth = 1;
+            ctx2.setLineDash([3, 3]);
+            for (const stepIdx of chartBranchPoints) {
+              const labelIdx = chartLabels.indexOf(String(stepIdx));
+              if (labelIdx < 0) continue;
+              const x = xAxis.getPixelForValue(labelIdx);
+              ctx2.beginPath();
+              ctx2.moveTo(x, yAxis.top);
+              ctx2.lineTo(x, yAxis.bottom);
+              ctx2.stroke();
+            }
+            ctx2.restore();
+          }
+        }]
+      });
+
+      scoreChart._dimColors = DIM_COLORS;
+      scoreChart._fallbackColors = FALLBACK_COLORS;
+      scoreChart._colorIndex = 0;
+    }
+
+    function updateScoreChart(step) {
+      if (!scoreChart) return;
+      const scores = step.scores;
+      if (!scores || !Object.keys(scores).length) return;
+
+      chartLabels.push(String(step.step));
+      scoreChart.data.labels = chartLabels;
+
+      const dims = Object.keys(scores);
+      const DIM_COLORS = scoreChart._dimColors;
+      const FALLBACK = scoreChart._fallbackColors;
+
+      dims.forEach(dim => {
+        if (!chartDatasets[dim]) {
+          chartDatasets[dim] = [];
+          const color = DIM_COLORS[dim.toLowerCase()] || FALLBACK[scoreChart._colorIndex++ % FALLBACK.length];
+          scoreChart.data.datasets.push({
+            label: dim.charAt(0).toUpperCase() + dim.slice(1),
+            data: chartDatasets[dim],
+            borderColor: color,
+            backgroundColor: color + '18',
+            pointRadius: 2.5,
+            pointHoverRadius: 4,
+            borderWidth: 1.5,
+            tension: 0.3,
+            fill: false,
+          });
+        }
+        chartDatasets[dim].push(scores[dim]);
+      });
+
+      if (!chartDatasets['__avg__']) {
+        chartDatasets['__avg__'] = [];
+        scoreChart.data.datasets.push({
+          label: 'Average',
+          data: chartDatasets['__avg__'],
+          borderColor: '#333333',
+          backgroundColor: 'transparent',
+          pointRadius: 0,
+          borderWidth: 1.5,
+          borderDash: [4, 3],
+          tension: 0.3,
+          fill: false,
+        });
+      }
+      const vals = dims.map(d => scores[d]);
+      chartDatasets['__avg__'].push(vals.reduce((a, b) => a + b, 0) / vals.length);
+
+      if (step.branch_triggered) chartBranchPoints.push(step.step);
+
+      scoreChart.update();
+    }
+
+    // ═══════════════════════════════════════════════════════
     // EXPLORE MODE — Auto Walk
     // ═══════════════════════════════════════════════════════
     function setLookaheadDepth(n) {
@@ -1205,6 +1352,8 @@
       document.getElementById('aw-progress').textContent = 'Starting…';
       document.getElementById('s2-feed').innerHTML = '';
       document.getElementById('bp-s2').style.display = 'flex';
+      document.getElementById('bp-chart').style.display = 'flex';
+      initScoreChart();
 
       // Place destination marker
       destMarker = L.circleMarker([destLat, destLng], {
@@ -1249,6 +1398,13 @@
         showAwError(e.message); log(`autoWalkStart error: ${e.message}`, 'err');
         autoWalkReset(false);
       }
+    }
+
+    function scoreToColor(avg) {
+      if (avg >= 8) return '#10b981';
+      if (avg >= 6) return '#84cc16';
+      if (avg >= 4) return '#f59e0b';
+      return '#ef4444';
     }
 
     // ── Branch visualization ─────────────────────────────────────────────
@@ -1392,11 +1548,20 @@
       // Hide "Analysing..." badge — analysis complete
       showAnalysisBadge(false);
 
-      // Map polyline
-      if (navPolyline) map.removeLayer(navPolyline);
-      if (navPoints.length > 1) {
-        navPolyline = L.polyline(navPoints, { color: '#0071e3', weight: 2.5, opacity: 0.7 }).addTo(map);
+      // Map polyline — colored segment per step
+      const currLatLng = [step.lat, step.lng];
+      if (prevNavLatLng) {
+        const scores = step.scores || {};
+        const vals = Object.values(scores);
+        const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 5;
+        const seg = L.polyline([prevNavLatLng, currLatLng], {
+          color: scoreToColor(avg),
+          weight: 4,
+          opacity: 0.85,
+        }).addTo(map);
+        walkSegments.push(seg);
       }
+      prevNavLatLng = currLatLng;
 
       // Waypoint dot: red circle for intersection, small blue for normal
       const dotColor = step.is_intersection ? '#ff9f0a' : '#0071e3';
@@ -1425,6 +1590,7 @@
 
       // Scores
       if (step.scores && Object.keys(step.scores).length) renderScores(step.scores);
+      updateScoreChart(step);
 
       // Scoring reasoning (System 1 result)
       if (step.reasoning && Object.keys(step.reasoning).length) {
@@ -1525,9 +1691,13 @@
       document.getElementById('aw-start-btn').disabled = false;
       document.getElementById('aw-stop-btn').style.display = 'none';
       clearBranchVisualization();
+      if (scoreChart) { scoreChart.destroy(); scoreChart = null; }
+      document.getElementById('bp-chart').style.display = 'none';
       if (clearMap) {
         if (navMarker)   { map.removeLayer(navMarker);   navMarker   = null; }
         if (navPolyline) { map.removeLayer(navPolyline); navPolyline = null; }
+        walkSegments.forEach(s => map.removeLayer(s)); walkSegments = [];
+        prevNavLatLng = null;
         if (destMarker)  { map.removeLayer(destMarker);  destMarker  = null; }
         walkCircles.forEach(c => map.removeLayer(c)); walkCircles = [];
         navPoints = [];
