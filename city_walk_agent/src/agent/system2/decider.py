@@ -181,7 +181,11 @@ Respond ONLY with valid JSON matching this exact schema:
 
         ltm_text = _format_ltm_patterns(ltm_patterns)
 
-        dest_line = f"Destination: {destination_context}" if destination_context else ""
+        dest_line = (
+            f"Destination: {destination_context}\n"
+            f"PRIORITY: You must make meaningful progress toward the destination. "
+            f"Only choose a direction that moves away from it if its quality score is dramatically higher (2+ points average difference)."
+        ) if destination_context else ""
 
         candidate_lines = []
         for c in candidates:
@@ -240,8 +244,7 @@ Route context:
 Your options:
 {candidates_text}
 
-Which direction do you choose?
-
+Choose the direction that best balances quality AND progress toward the destination.
 Respond ONLY with valid JSON:
 {{
   "chosen_direction": "(one of: {directions_str})",

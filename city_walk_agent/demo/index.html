@@ -452,6 +452,8 @@
 
       #branch-thumbs {
         display: flex;
+        flex-direction: column;
+        width: 100%;
         height: 100%;
         gap: 2px;
       }
@@ -461,8 +463,16 @@
         overflow: hidden;
         cursor: default;
         transition: opacity 0.6s ease;
+        min-height: 0;
       }
-      .branch-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .branch-thumb img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
       .branch-thumb-label {
         position: absolute;
         top: 8px; left: 8px;
@@ -1463,11 +1473,10 @@
           img.onload = () => {
             const spinner = div.querySelector('.branch-thumb-spinner');
             if (spinner) spinner.remove();
-            div.style.backgroundImage = `url('${img.src}')`;
-            div.style.backgroundSize = 'cover';
-            div.style.backgroundPosition = 'center';
+            img.className = '';
+            div.appendChild(img);
           };
-          img.src = `https://maps.googleapis.com/maps/api/streetview?size=400x300&pano=${c.pano_id || ''}&heading=${c.heading}&pitch=0&fov=90&key=${_mapsApiKey}`;
+          img.src = `https://maps.googleapis.com/maps/api/streetview?size=800x300&pano=${c.pano_id || ''}&heading=${c.heading}&pitch=0&fov=90&key=${_mapsApiKey}`;
         }
 
         // Ghost marker on map
