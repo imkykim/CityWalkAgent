@@ -2161,6 +2161,7 @@ class CityWalkAgent(BaseAgent):
         visit_counts: Optional[Dict[str, int]] = None,
         output_dir: Optional[Path] = None,
         lookahead_depth: int = 1,
+        progress_callback=None,
     ) -> Dict[str, Any]:
         """Evaluate candidate directions at a branch point and choose the best.
 
@@ -2243,6 +2244,17 @@ class CityWalkAgent(BaseAgent):
                             lambda b=image_bytes, h=slot["heading"], i=idx: self._run_vlm(b, h, i),
                         )
                         if result is not None and result.persona_scores:
+                            if progress_callback:
+                                try:
+                                    await progress_callback({
+                                        "direction": slot["direction_label"],
+                                        "depth": slot["depth"],
+                                        "pano_id": slot["pano_id"],
+                                        "heading": slot["heading"],
+                                        "scores": dict(result.persona_scores),
+                                    })
+                                except Exception:
+                                    pass
                             return result
                     except Exception as e:
                         if attempt == max_retry:
@@ -2267,6 +2279,7 @@ class CityWalkAgent(BaseAgent):
         for chain in chains_per_dir:
             label = chain[0]["direction_label"] if chain else "?"
             heading = chain[0]["heading"] if chain else 0.0
+            last_pano_id = chain[-1]["pano_id"] if chain else branch_pano_id
             waypoint_scores: List[Dict[str, float]] = []
             waypoint_summaries: List[str] = []
 
@@ -2284,6 +2297,7 @@ class CityWalkAgent(BaseAgent):
                     "direction": label,
                     "heading": heading,
                     "pano_id": branch_pano_id,
+                    "last_pano_id": last_pano_id,
                     "scores": {},
                     "system1_reasoning": {},
                     "waypoint_scores": [],
@@ -2312,6 +2326,7 @@ class CityWalkAgent(BaseAgent):
                 "direction": label,
                 "heading": heading,
                 "pano_id": branch_pano_id,
+                "last_pano_id": last_pano_id,
                 "scores": waypoint_scores[0],
                 "system1_reasoning": {},
                 "waypoint_scores": waypoint_scores,
@@ -2614,11 +2629,23 @@ class CityWalkAgent(BaseAgent):
 
                 prev_avg_score = current_avg
 
-            # 6. All links as candidates
+            # 6. All links as candidates — exclude the direction we came from
+            came_from_heading = (
+                (current_intended_heading + 180) % 360
+                if current_intended_heading is not None else None
+            )
             candidate_headings = [
                 float(l.get("heading") or l.get("yawDeg") or 0)
                 for l in links
+                if came_from_heading is None or
+                   abs(((float(l.get("heading") or l.get("yawDeg") or 0)) - came_from_heading + 180) % 360 - 180) > 45
             ]
+            # Fallback: if all links were filtered (dead end after U-turn), use all
+            if not candidate_headings:
+                candidate_headings = [
+                    float(l.get("heading") or l.get("yawDeg") or 0)
+                    for l in links
+                ]
 
             # 7. Choose direction
             is_intersection = len(links) >= 3
@@ -2629,6 +2656,27 @@ class CityWalkAgent(BaseAgent):
 
             if (is_intersection or trigger_reason is not None) and analysis:
                 try:
+                    # Notify frontend that branch exploration is starting
+                    if step_callback:
+                        await step_callback({
+                            "__event__": "branch_start",
+                            "lat": current_lat,
+                            "lng": current_lng,
+                            "pano_id": pano_id,
+                            "candidates": [
+                                {"direction": lbl, "heading": round(hdg, 1)}
+                                for lbl, hdg in zip(
+                                    list(__import__("string").ascii_uppercase[:len(candidate_headings)]),
+                                    candidate_headings,
+                                )
+                            ],
+                            "lookahead_depth": lookahead_depth,
+                        })
+
+                    async def _branch_progress(data: dict):
+                        if step_callback:
+                            await step_callback({"__event__": "branch_progress", **data})
+
                     branch_result = await self.branch_decision(
                         branch_pano_id=pano_id,
                         candidate_headings=candidate_headings,
@@ -2636,6 +2684,7 @@ class CityWalkAgent(BaseAgent):
                         destination_context=dest_context,
                         visit_counts=visit_counts,
                         lookahead_depth=lookahead_depth,
+                        progress_callback=_branch_progress,
                     )
                     chosen_heading = branch_result["chosen_heading"]
                     current_intended_heading = chosen_heading
@@ -2699,14 +2748,28 @@ class CityWalkAgent(BaseAgent):
                         f"Step {step}: initial heading → {chosen_heading:.0f}° (toward dest)"
                     )
 
-            # 8. Find next pano (prefer unvisited)
-            unvisited_links = [
-                l for l in links
-                if visit_counts.get(l.get("panoId") or l.get("id"), 0) == 0
-            ]
-            target_links = unvisited_links if unvisited_links else links
-            next_link = _closest_link(target_links, chosen_heading)
-            next_pano_id = next_link.get("panoId") or next_link.get("id")
+            # 8. Find next pano — if branch explored lookahead, jump to its last pano
+            branch_last_pano: Optional[str] = None
+            if branch_result:
+                chosen_candidate = next(
+                    (c for c in branch_result.get("candidates", [])
+                     if c["direction"] == branch_result["chosen_direction"]),
+                    None,
+                )
+                if chosen_candidate:
+                    branch_last_pano = chosen_candidate.get("last_pano_id")
+
+            if branch_last_pano and branch_last_pano != pano_id:
+                next_pano_id = branch_last_pano
+                self.logger.debug(f"Step {step}: jumping to lookahead end pano {next_pano_id[:12]}")
+            else:
+                unvisited_links = [
+                    l for l in links
+                    if visit_counts.get(l.get("panoId") or l.get("id"), 0) == 0
+                ]
+                target_links = unvisited_links if unvisited_links else links
+                next_link = _closest_link(target_links, chosen_heading)
+                next_pano_id = next_link.get("panoId") or next_link.get("id")
 
             if not next_pano_id:
                 self.logger.warning(f"Step {step}: no next pano — stopping")

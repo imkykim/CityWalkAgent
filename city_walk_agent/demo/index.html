@@ -547,8 +547,7 @@
     <div id="topbar">
       <h1>CityWalk</h1>
       <div class="divider"></div>
-      <button class="pill active" id="mode-route"   onclick="setMode('route')">📁 Route</button>
-      <button class="pill"        id="mode-explore" onclick="setMode('explore')">🗺️ Explore</button>
+      <button class="pill active" id="mode-explore">🗺️ Explore</button>
       <div class="divider"></div>
       <select id="persona-select" class="topbar-persona" onchange="onPersonaChange()">
         <option value="objective">Objective</option>
@@ -608,7 +607,8 @@
       <!-- left column: mode-specific controls -->
       <div id="bp-left">
 
-        <!-- ROUTE mode controls -->
+        <!-- ROUTE mode controls (hidden — temporarily disabled) -->
+        <!--
         <div id="ctrl-route">
           <div class="sec-label">Route</div>
           <div class="route-btns">
@@ -622,9 +622,10 @@
           </div>
           <div id="wp-info"></div>
         </div>
+        -->
 
         <!-- EXPLORE mode controls (Auto Walk) -->
-        <div id="ctrl-explore" style="display:none;">
+        <div id="ctrl-explore">
           <div class="sec-label">Start</div>
           <div class="coord-row">
             <label>Lat</label>
@@ -733,7 +734,7 @@
     // STATE
     // ═══════════════════════════════════════════════════════
     const API = '';
-    let currentMode = 'route';   // 'route' | 'explore'
+    let currentMode = 'explore';  // 'explore' only (route mode temporarily disabled)
 
     // Route state
     let map, waypoints = [], markers = [], polyline = null, trailLine = null, agentMarker = null;
@@ -963,41 +964,7 @@
     // MODE SWITCHING
     // ═══════════════════════════════════════════════════════
     function setMode(mode) {
-      if (mode === currentMode) return;
-      currentMode = mode;
-      document.getElementById('mode-route').classList.toggle('active', mode === 'route');
-      document.getElementById('mode-explore').classList.toggle('active', mode === 'explore');
-      document.getElementById('ctrl-route').style.display   = mode === 'route'   ? '' : 'none';
-      document.getElementById('ctrl-explore').style.display = mode === 'explore' ? '' : 'none';
-
-      // Reset shared display
-      resetDisplay();
-
-      if (mode === 'route') {
-        // Stop any running walk
-        autoWalkStop();
-        document.getElementById('bp-s2').style.display = 'none';
-        document.getElementById('bp-chart').style.display = 'none';
-        if (destMarker) { map.removeLayer(destMarker); destMarker = null; }
-        walkCircles.forEach(c => map.removeLayer(c)); walkCircles = [];
-        // Clear nav overlays
-        if (navMarker)   { map.removeLayer(navMarker);   navMarker   = null; }
-        if (navPolyline) { map.removeLayer(navPolyline); navPolyline = null; }
-        navPoints = []; navHistory = []; currentPano = null;
-        // Re-draw route if loaded
-        if (waypoints.length) drawRoute();
-        setStatus(`${waypoints.length} waypoints · click Run or a marker`);
-      } else {
-        // Clear route overlays
-        stopRun();
-        markers.forEach(m => map.removeLayer(m)); markers = [];
-        [polyline, trailLine, agentMarker].forEach(l => l && map.removeLayer(l));
-        polyline = trailLine = agentMarker = null;
-        agentIndex = -1;
-        document.getElementById('aw-progress').textContent = '—';
-        document.getElementById('s2-feed').innerHTML = '';
-        setStatus('Enter coordinates and click ▶ Start');
-      }
+      // Route mode temporarily disabled — explore only
       log(`Mode → ${mode}`);
     }
 
@@ -1396,9 +1363,11 @@
         walkEventSource.onmessage = e => {
           try {
             const msg = JSON.parse(e.data);
-            if (msg.type === 'step')     handleWalkStep(msg.data);
-            if (msg.type === 'complete') handleWalkComplete(msg.data);
-            if (msg.type === 'error')    { showAnalysisBadge(false); showAwError(msg.data.message || 'Walk error'); autoWalkReset(false); }
+            if (msg.type === 'step')            handleWalkStep(msg.data);
+            if (msg.type === 'complete')        handleWalkComplete(msg.data);
+            if (msg.type === 'branch_start')    handleBranchStart(msg.data);
+            if (msg.type === 'branch_progress') handleBranchProgress(msg.data);
+            if (msg.type === 'error')           { showAnalysisBadge(false); showAwError(msg.data.message || 'Walk error'); autoWalkReset(false); }
           } catch(err) { log(`SSE parse error: ${err.message}`, 'warn'); }
         };
         walkEventSource.onerror = () => {
@@ -1418,6 +1387,12 @@
     }
 
     // ── Branch visualization ─────────────────────────────────────────────
+    // State for live branch exploration
+    let _branchOrigin = null;          // [lat, lng] of intersection
+    let _branchCandidates = [];        // [{direction, heading}] from branch_start
+    let _branchExploreLines = {};      // direction → [L.polyline, ...] (live exploration path)
+    let _branchExplorePts = {};        // direction → [[lat,lng], ...] accumulated chain
+    let _branchRejectedLines = [];     // kept as grey after resolution
 
     function clearBranchGhosts() {
       branchGhostMarkers.forEach(m => map.removeLayer(m));
@@ -1427,87 +1402,182 @@
     }
 
     function clearBranchVisualization() {
-      // Hide overlay and cards
       document.getElementById('branch-overlay').classList.remove('active');
+      document.getElementById('sv-wrap').style.visibility = '';
       const cards = document.getElementById('branch-cards');
       cards.classList.remove('active');
       cards.innerHTML = '';
       document.getElementById('bp-center').classList.remove('branch-active');
       document.getElementById('bp-center-label').textContent = 'Scores';
       clearBranchGhosts();
+      // Clear live explore lines
+      Object.values(_branchExploreLines).forEach(segs => segs.forEach(s => map.removeLayer(s)));
+      _branchExploreLines = {};
+      _branchExplorePts = {};
+      _branchOrigin = null;
+      _branchCandidates = [];
       isBranching = false;
     }
 
-    function showBranchEvaluation(step) {
-      if (!step.branch_candidates || !step.branch_candidates.length) return;
+    // Called when backend starts branch exploration at an intersection
+    function handleBranchStart(data) {
       isBranching = true;
-      const candidates = step.branch_candidates;
-      const origin = [step.lat, step.lng];
+      _branchOrigin = [data.lat, data.lng];
+      _branchCandidates = data.candidates || [];
+      _branchExploreLines = {};
+      _branchExplorePts = {};
 
-      // Build Street View thumbnail overlay
+      // Initialize per-direction state and add direction-arrow ghost markers
+      _branchCandidates.forEach(c => {
+        _branchExploreLines[c.direction] = [];
+        _branchExplorePts[c.direction] = [_branchOrigin];
+
+        // Directional ghost marker (pulsing dot offset slightly from origin)
+        const rad = (c.heading * Math.PI) / 180;
+        const d = 0.00012;
+        const gLat = _branchOrigin[0] + d * Math.cos(rad);
+        const gLng = _branchOrigin[1] + d * Math.sin(rad) / Math.cos(_branchOrigin[0] * Math.PI / 180);
+        const ghostIcon = L.divIcon({
+          className: '',
+          html: `<div style="width:12px;height:12px;border-radius:50%;background:#ff9f0a;border:2px solid #fff;box-shadow:0 0 5px rgba(255,159,10,0.8)" class="ghost-pulse"></div>`,
+          iconSize: [12, 12], iconAnchor: [6, 6],
+        });
+        const gm = L.marker([gLat, gLng], { icon: ghostIcon, zIndexOffset: 500 }).addTo(map);
+        branchGhostMarkers.push(gm);
+      });
+
+      // Hide the Street View panorama so Google SV iframe can't bleed through overlay
+      document.getElementById('sv-wrap').style.visibility = 'hidden';
+
+      // Open the split-view overlay with spinners
       const overlay = document.getElementById('branch-overlay');
       const thumbsEl = document.getElementById('branch-thumbs');
       thumbsEl.innerHTML = '';
       overlay.classList.add('active');
 
-      candidates.forEach(c => {
+      _branchCandidates.forEach(c => {
         const div = document.createElement('div');
         div.className = 'branch-thumb';
         div.id = `branch-thumb-${c.direction}`;
-
-        // Spinner while loading
-        div.innerHTML = `<div class="branch-thumb-spinner"><div class="mini-spin"></div></div>`;
-
-        // Overlay label
-        const label = document.createElement('div');
-        label.className = 'branch-thumb-label';
-        const trendClass = c.trend === 'improving' ? '' : (c.trend === 'declining' ? 'down' : '');
-        const trendIcon = c.trend === 'improving' ? '↑' : (c.trend === 'declining' ? '↓' : '→');
-        label.innerHTML = `<span>${escHtml(c.direction)}</span><span class="branch-thumb-trend ${trendClass}">${trendIcon}</span>`;
-        div.appendChild(label);
+        div.innerHTML = `
+          <div class="branch-thumb-spinner"><div class="mini-spin"></div></div>
+          <div class="branch-thumb-label">
+            <span>${escHtml(c.direction)}</span>
+            <span style="font-size:9px;color:#ccc">${c.heading.toFixed(0)}°</span>
+          </div>`;
         thumbsEl.appendChild(div);
-
-        // Load SV static image via Maps Static API
-        if (_mapsApiKey) {
-          const img = new Image();
-          img.onload = () => {
-            const spinner = div.querySelector('.branch-thumb-spinner');
-            if (spinner) spinner.remove();
-            img.className = '';
-            div.appendChild(img);
-          };
-          img.src = `https://maps.googleapis.com/maps/api/streetview?size=800x300&pano=${c.pano_id || ''}&heading=${c.heading}&pitch=0&fov=90&key=${_mapsApiKey}`;
-        }
-
-        // Ghost marker on map
-        const headingRad = (c.heading * Math.PI) / 180;
-        const offsetDist = 0.00015;
-        const ghostLat = origin[0] + offsetDist * Math.cos(headingRad);
-        const ghostLng = origin[1] + offsetDist * Math.sin(headingRad) / Math.cos(origin[0] * Math.PI / 180);
-        const ghostIcon = L.divIcon({
-          className: '',
-          html: `<div style="width:14px;height:14px;border-radius:50%;background:#ff9f0a;border:2px solid #fff;box-shadow:0 0 6px rgba(255,159,10,0.7)" class="ghost-pulse"></div>`,
-          iconSize: [14, 14],
-          iconAnchor: [7, 7],
-        });
-        const gm = L.marker([ghostLat, ghostLng], { icon: ghostIcon, zIndexOffset: 500 }).addTo(map);
-        branchGhostMarkers.push(gm);
-
-        const line = L.polyline([origin, [ghostLat, ghostLng]], {
-          color: '#ff9f0a', weight: 2, opacity: 0.55, dashArray: '5 4'
-        }).addTo(map);
-        branchLines.push(line);
       });
+
+      showAnalysisBadge(true, 'Exploring branches…');
+    }
+
+    // Called each time one VLM result arrives during branch exploration
+    function handleBranchProgress(data) {
+      if (!_branchOrigin) return;
+      const dir = data.direction;
+      const panoId = data.pano_id;
+      const heading = data.heading;
+
+      // Update Street View thumbnail for this direction slot
+      const thumb = document.getElementById(`branch-thumb-${dir}`);
+      if (thumb && _mapsApiKey && panoId) {
+        const spinner = thumb.querySelector('.branch-thumb-spinner');
+        const img = new Image();
+        img.onload = () => {
+          if (spinner) spinner.remove();
+          // Remove any existing img in this thumb
+          thumb.querySelectorAll('img').forEach(el => el.remove());
+          img.className = '';
+          thumb.appendChild(img);
+        };
+        img.src = `https://maps.googleapis.com/maps/api/streetview?size=800x300&pano=${panoId}&heading=${heading}&pitch=0&fov=90&key=${_mapsApiKey}`;
+      }
+
+      // Update score badge on thumb
+      if (thumb && data.scores && Object.keys(data.scores).length) {
+        const vals = Object.values(data.scores);
+        const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+        let badge = thumb.querySelector('.branch-score-badge');
+        if (!badge) {
+          badge = document.createElement('div');
+          badge.className = 'branch-score-badge';
+          badge.style.cssText = 'position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,0.6);color:#fff;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;';
+          thumb.appendChild(badge);
+        }
+        badge.textContent = `avg ${avg.toFixed(1)}`;
+        badge.style.color = scoreToColor(avg);
+      }
+
+      // Extend the map exploration path for this direction using pano metadata
+      // We approximate position by offsetting from origin along heading by depth * ~20m
+      if (_branchExplorePts[dir]) {
+        const depth = _branchExplorePts[dir].length;  // 0-indexed chain length
+        const distPerStep = 0.000185; // ~20m in degrees lat
+        const rad = (heading * Math.PI) / 180;
+        const prevPt = _branchExplorePts[dir][_branchExplorePts[dir].length - 1];
+        const newLat = prevPt[0] + distPerStep * Math.cos(rad);
+        const newLng = prevPt[1] + distPerStep * Math.sin(rad) / Math.cos(prevPt[0] * Math.PI / 180);
+        const newPt = [newLat, newLng];
+        _branchExplorePts[dir].push(newPt);
+
+        const scores = data.scores || {};
+        const vals2 = Object.values(scores);
+        const avg2 = vals2.length ? vals2.reduce((a, b) => a + b, 0) / vals2.length : 5;
+        const seg = L.polyline([prevPt, newPt], {
+          color: scoreToColor(avg2),
+          weight: 3,
+          opacity: 0.9,
+          dashArray: '6 3',
+        }).addTo(map);
+        _branchExploreLines[dir].push(seg);
+      }
+    }
+
+    // Called from handleWalkStep when branch_candidates arrives (exploration complete)
+    function resolveBranchEvaluation(step) {
+      const candidates = step.branch_candidates || [];
+      candidates.forEach(c => {
+        const thumb = document.getElementById(`branch-thumb-${c.direction}`);
+        if (thumb) thumb.classList.add(c.chosen ? 'chosen' : 'rejected');
+
+        // Turn rejected exploration lines grey
+        if (!c.chosen && _branchExploreLines[c.direction]) {
+          _branchExploreLines[c.direction].forEach(seg => {
+            seg.setStyle({ color: '#aaaaaa', opacity: 0.35, dashArray: '4 4', weight: 2 });
+          });
+          // Keep grey lines on map — move them to branchLines for later cleanup
+          _branchExploreLines[c.direction].forEach(s => _branchRejectedLines.push(s));
+          _branchExploreLines[c.direction] = [];
+        }
+        // Remove chosen direction's dashed lines (will be redrawn as solid by handleWalkStep)
+        if (c.chosen && _branchExploreLines[c.direction]) {
+          _branchExploreLines[c.direction].forEach(seg => map.removeLayer(seg));
+          _branchExploreLines[c.direction] = [];
+        }
+      });
+
+      // Immediately collapse overlay → restore SV and switch to chosen pano
+      document.getElementById('branch-overlay').classList.remove('active');
+      document.getElementById('sv-wrap').style.visibility = '';
+      clearBranchGhosts();
+      if (step._pendingPano) {
+        setPanorama(step._pendingPano, step._pendingHeading);
+        showAnalysisBadge(true, 'Analysing…');
+      }
+      // Cards stay visible until next step clears them via clearBranchVisualization
+
+      _branchExploreLines = {};
+      _branchExplorePts = {};
+      isBranching = false;
     }
 
     function showBranchCards(step) {
       if (!step.branch_candidates || !step.branch_candidates.length) return;
-      const candidates = step.branch_candidates;
       const cards = document.getElementById('branch-cards');
       const center = document.getElementById('bp-center');
       cards.innerHTML = '';
 
-      candidates.forEach(c => {
+      step.branch_candidates.forEach(c => {
         const card = document.createElement('div');
         card.className = `branch-card${c.chosen ? ' chosen' : ' rejected'}`;
         const scores = c.scores || {};
@@ -1528,23 +1598,6 @@
       cards.classList.add('active');
       center.classList.add('branch-active');
       document.getElementById('bp-center-label').textContent = 'Branch Evaluation';
-    }
-
-    function resolveBranchEvaluation(step) {
-      // Mark chosen/rejected on thumbnails
-      const candidates = step.branch_candidates || [];
-      candidates.forEach(c => {
-        const thumb = document.getElementById(`branch-thumb-${c.direction}`);
-        if (!thumb) return;
-        thumb.classList.add(c.chosen ? 'chosen' : 'rejected');
-      });
-      // After 3 s, fade out overlay, keep cards briefly
-      setTimeout(() => {
-        document.getElementById('branch-overlay').classList.remove('active');
-        clearBranchGhosts();
-        // After another 8 s clear cards too
-        setTimeout(() => clearBranchVisualization(), 8000);
-      }, 3000);
     }
 
     // ── Walk step handler ────────────────────────────────────────────────
@@ -1585,8 +1638,14 @@
       navMarker = L.marker(latlng, { icon: agentIcon(true), zIndexOffset: 1000 }).addTo(map);
       map.panTo(latlng, { animate: true, duration: 0.3 });
 
-      // Street View
-      setPanorama(step.pano_id, step.heading);
+      // Street View — defer pano switch when branch overlay is active
+      if (step.branch_triggered) {
+        // Will be set after overlay dismisses (resolveBranchEvaluation handles it)
+        step._pendingPano = step.pano_id;
+        step._pendingHeading = step.heading;
+      } else {
+        setPanorama(step.pano_id, step.heading);
+      }
       setBadge(`Step ${step.step}`);
 
       // Agent view thumbnail (image the agent actually analyzed)
@@ -1612,13 +1671,12 @@
       setStatus(`Step ${step.step} · ${Math.round(step.dist_to_dest_m)}m remaining`);
       log(`Step ${step.step}: ${step.lat.toFixed(5)},${step.lng.toFixed(5)} dist=${step.dist_to_dest_m}m${step.is_intersection?' [intersec]':''}`, 'info');
 
-      // Branch visualization
+      // Branch visualization — resolve after exploration SSEs have populated the overlay
       if (step.branch_triggered && step.branch_candidates && step.branch_candidates.length) {
-        clearBranchVisualization();
-        showBranchEvaluation(step);
         showBranchCards(step);
         resolveBranchEvaluation(step);
-      } else if (!step.branch_triggered && isBranching) {
+      } else {
+        // Clear any leftover branch cards from previous intersection
         clearBranchVisualization();
       }
 
@@ -1627,8 +1685,8 @@
         addS2FeedItem(step);
       }
 
-      // Show "Analysing..." for the next step
-      showAnalysisBadge(true, 'Analysing…');
+      // Show "Analysing..." for next step (branch steps defer this until overlay closes)
+      if (!step.branch_triggered) showAnalysisBadge(true, 'Analysing…');
     }
 
     function addS2FeedItem(step) {
@@ -1700,8 +1758,7 @@
       document.getElementById('aw-start-btn').disabled = false;
       document.getElementById('aw-stop-btn').style.display = 'none';
       clearBranchVisualization();
-      if (scoreChart) { scoreChart.destroy(); scoreChart = null; }
-      document.getElementById('bp-chart').style.display = 'none';
+      _branchRejectedLines.forEach(s => map.removeLayer(s)); _branchRejectedLines = [];
       if (clearMap) {
         if (navMarker)   { map.removeLayer(navMarker);   navMarker   = null; }
         if (navPolyline) { map.removeLayer(navPolyline); navPolyline = null; }

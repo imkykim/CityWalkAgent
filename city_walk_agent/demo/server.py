@@ -693,7 +693,11 @@ async def walk_start(body: WalkStartBody):
     )
 
     async def step_callback(step_result: dict):
-        await q.put({"type": "step", "data": step_result})
+        event = step_result.pop("__event__", None)
+        if event:
+            await q.put({"type": event, "data": step_result})
+        else:
+            await q.put({"type": "step", "data": step_result})
 
     async def run_walk():
         try:
