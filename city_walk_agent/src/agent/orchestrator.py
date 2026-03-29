@@ -14,6 +14,7 @@ import base64
 import json
 import math
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -2464,6 +2465,9 @@ class CityWalkAgent(BaseAgent):
             )
         self.continuous_analyzer.memory_manager = memory_manager
 
+        walk_start_ts = time.time()
+        walk_start_time = datetime.now().isoformat()
+
         visit_counts: Dict[str, int] = {}
         route_taken: List[Dict] = []
         arrived = False
@@ -2850,10 +2854,31 @@ class CityWalkAgent(BaseAgent):
         }
 
         if output_dir:
-            Path(output_dir).mkdir(parents=True, exist_ok=True)
-            with open(Path(output_dir) / "walk_log.json", "w", encoding="utf-8") as f:
-                json.dump(result, f, indent=2, ensure_ascii=False, default=str)
-            self.logger.info(f"Walk log saved → {output_dir}/walk_log.json")
+            from src.utils.walk_output_writer import save_walk_outputs
+
+            run_params = {
+                "start_lat": start_lat,
+                "start_lng": start_lng,
+                "dest_lat": dest_lat,
+                "dest_lng": dest_lng,
+                "persona": getattr(self.personality, "name", "objective"),
+                "max_steps": max_steps,
+                "lookahead_depth": lookahead_depth,
+                "save_images": save_images,
+                "start_time": walk_start_time,
+                "duration_seconds": round(time.time() - walk_start_ts, 1),
+            }
+
+            saved = save_walk_outputs(
+                output_dir=Path(output_dir),
+                walk_result=result,
+                run_params=run_params,
+                framework_id=self.framework_id,
+            )
+            self.logger.info(
+                f"Walk outputs saved → {output_dir}",
+                files=list(saved.keys()),
+            )
 
         self.logger.info(
             f"Walk complete | arrived={arrived} steps={len(route_taken)} "

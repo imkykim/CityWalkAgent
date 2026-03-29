@@ -311,13 +311,19 @@ def cmd_walk(args: argparse.Namespace) -> None:
         framework_id="place_pulse_2.0",
     )
 
+    # Auto-name output directory for experiment isolation
+    from datetime import datetime as _dt
+    base_dir = Path(args.output_dir) if args.output_dir else Path("outputs/walk")
+    timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+    experiment_dir = base_dir / f"{args.personality}_{timestamp}"
+
     result = asyncio.run(agent.autonomous_walk(
         start_lat=args.start_lat,
         start_lng=args.start_lng,
         dest_lat=args.dest_lat,
         dest_lng=args.dest_lng,
         max_steps=args.max_steps,
-        output_dir=Path(args.output_dir) if args.output_dir else None,
+        output_dir=experiment_dir,
         save_images=args.save_images,
         lookahead_depth=args.lookahead_depth,
     ))
@@ -326,8 +332,10 @@ def cmd_walk(args: argparse.Namespace) -> None:
     print(f"Steps taken : {result['steps']}")
     print(f"Final dist  : {result['final_distance_m']}m")
     print(f"Persona     : {result['persona']}")
-    if args.output_dir:
-        print(f"Log saved   : {args.output_dir}/walk_log.json")
+    print(f"Outputs     : {experiment_dir}/")
+    print(f"  Files: run_metadata.json, walk_log.json, score_timeline.csv,")
+    print(f"         branch_decisions.json, s2_reasoning.json,")
+    print(f"         route_map.html, score_chart.png, summary_radar.png")
 
 
 # ---------------------------------------------------------------------------
