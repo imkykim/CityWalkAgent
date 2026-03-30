@@ -2143,8 +2143,9 @@ class CityWalkAgent(BaseAgent):
                     waypoint_id=waypoint_id,
                     image_path=image_path,
                     metadata={"heading": heading, "lat": 0, "lon": 0},
-                    visual_change_detected=True,
+                    visual_change_detected=False,
                     phash_distance=None,
+                    branch_exploration=True,
                 )
             finally:
                 image_path.unlink(missing_ok=True)

@@ -135,6 +135,7 @@ class ContinuousAnalyzer:
         metadata: Dict,
         visual_change_detected: bool = False,
         phash_distance: Optional[float] = None,
+        branch_exploration: bool = False,
     ) -> WaypointAnalysis:
         """
         Analyze single waypoint using dual evaluation (objective + persona).
@@ -148,6 +149,7 @@ class ContinuousAnalyzer:
             metadata: Metadata dict with timestamp, lat, lon, heading
             visual_change_detected: Whether visual change was detected (from CognitiveController)
             phash_distance: pHash distance from previous waypoint (from CognitiveController)
+            branch_exploration: True when called during intersection lookahead evaluation
 
         Returns:
             WaypointAnalysis object with dual evaluation results
@@ -158,7 +160,9 @@ class ContinuousAnalyzer:
         if phash_distance is not None:
             self.phash_distances.append(phash_distance)
 
-        if visual_change_detected:
+        if branch_exploration:
+            logger.debug(f"Branch exploration: evaluating lookahead waypoint {waypoint_id}")
+        elif visual_change_detected:
             distance_display = (
                 f"{phash_distance:.2f}" if phash_distance is not None else "N/A"
             )

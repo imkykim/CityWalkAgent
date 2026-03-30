@@ -37,19 +37,78 @@
 
       /* ── topbar ── */
       #topbar {
-        height: 50px;
+        height: 46px;
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 0 16px;
-        background: rgba(255,255,255,0.92);
+        gap: 6px;
+        padding: 0 14px;
+        background: rgba(255,255,255,0.95);
         backdrop-filter: blur(20px);
         border-bottom: 1px solid var(--border);
         flex-shrink: 0;
         z-index: 200;
       }
-      #topbar h1 { font-size: 14px; font-weight: 600; letter-spacing: -0.2px; margin-right: 2px; }
-      .divider { width: 1px; height: 16px; background: var(--border); margin: 0 2px; flex-shrink: 0; }
+      #topbar-logo {
+        font-size: 13px; font-weight: 700; letter-spacing: -0.3px;
+        color: var(--text-1); flex-shrink: 0;
+      }
+      .divider { width: 1px; height: 16px; background: var(--border); margin: 0 3px; flex-shrink: 0; }
+
+      /* persona + settings grouped pill */
+      #topbar-config {
+        display: flex; align-items: center;
+        background: var(--surface); border: 1px solid var(--border);
+        border-radius: 20px; overflow: hidden; flex-shrink: 0;
+      }
+      #persona-select {
+        padding: 4px 22px 4px 10px;
+        border: none; border-radius: 0;
+        font-size: 11px; font-weight: 500;
+        background: transparent; color: var(--text-2);
+        cursor: pointer; appearance: none; -webkit-appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23aeaeb2'/%3E%3C/svg%3E");
+        background-repeat: no-repeat; background-position: right 7px center;
+        outline: none;
+      }
+      #persona-select:hover { color: var(--text-1); }
+      #topbar-config-sep { width: 1px; height: 22px; background: var(--border); flex-shrink: 0; }
+      #settings-toggle {
+        padding: 4px 9px;
+        border: none; border-radius: 0;
+        cursor: pointer; font-size: 12px;
+        background: transparent; color: var(--text-3);
+        transition: color .12s, background .12s;
+        display: flex; align-items: center;
+      }
+      #settings-toggle:hover { color: var(--text-1); background: #e5e5ea; }
+      #settings-toggle.active { color: var(--accent); background: #edf3ff; }
+
+      /* walk controls */
+      #topbar-walk { display: flex; align-items: center; gap: 5px; }
+      #topbar-start-btn {
+        padding: 4px 13px; border: none; border-radius: 16px; cursor: pointer;
+        font-size: 12px; font-weight: 600;
+        background: var(--accent); color: #fff;
+        transition: opacity .15s; flex-shrink: 0;
+      }
+      #topbar-start-btn:hover { opacity: .85; }
+      #topbar-start-btn:disabled { opacity: .4; cursor: not-allowed; }
+      #topbar-stop-btn {
+        padding: 3px 9px;
+        border: 1px solid #ff453a33; border-radius: 14px; cursor: pointer;
+        font-size: 11px; font-weight: 500;
+        background: transparent; color: var(--red);
+        display: none; flex-shrink: 0;
+        transition: background .12s;
+      }
+      #topbar-stop-btn:hover { background: #fff0f0; }
+
+      #status-msg {
+        margin-left: auto;
+        font-size: 11px; color: var(--text-3);
+        max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      #nav-dot { display: none; }
 
       .pill {
         padding: 4px 11px;
@@ -62,12 +121,15 @@
       .pill:hover { background: #e5e5ea; color: var(--text-1); }
       .pill.active { background: var(--accent); color: #fff; }
 
-      #status-msg {
-        margin-left: auto;
+      /* walk status in scores panel */
+      #walk-status {
+        margin-top: 10px; padding-top: 8px;
+        border-top: 1px solid var(--surface);
         font-size: 11px; color: var(--text-3);
-        max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        line-height: 1.7; display: none;
       }
-      #nav-dot { display: none; }
+      #walk-status .ws-row { display: flex; justify-content: space-between; }
+      #walk-status .ws-val { color: var(--text-2); font-weight: 500; }
 
       /* ── main viewport (sv-pane + map side by side) ── */
       #main {
@@ -246,26 +308,19 @@
         background: var(--bg);
       }
 
-      /* bottom-left: context/controls */
-      #bp-left {
-        width: 240px; flex-shrink: 0;
-        border-right: 1px solid var(--border);
-        padding: 12px 14px;
-        overflow-y: auto;
-        display: flex; flex-direction: column; gap: 10px;
-      }
       /* bottom-center: scores */
       #bp-center {
-        width: 220px; flex-shrink: 0;
+        flex-shrink: 0; min-width: 120px;
         border-right: 1px solid var(--border);
         padding: 12px 14px;
         overflow-y: auto;
       }
       /* bottom-right: reasoning */
       #bp-right {
-        flex: 1; min-width: 0;
+        min-width: 120px;
         padding: 12px 14px;
         overflow-y: auto;
+        border-right: 1px solid var(--border);
       }
 
       .sec-label {
@@ -327,14 +382,6 @@
         font-size: 12px; outline: none;
       }
       .coord-row input:focus { border-color: var(--accent); }
-      #explore-start-btn {
-        width: 100%; padding: 6px 0;
-        border: none; border-radius: 16px; cursor: pointer;
-        font-size: 12px; font-weight: 600;
-        background: var(--accent); color: #fff; transition: opacity .15s;
-      }
-      #explore-start-btn:hover { opacity: .85; }
-      #explore-start-btn:disabled { opacity: .5; cursor: not-allowed; }
 
       /* pano info */
       #pano-info { font-size: 11px; color: var(--text-2); line-height: 1.8; }
@@ -414,14 +461,51 @@
       .log-warn { color: var(--orange); }
       .log-err  { color: var(--red); }
 
-      .topbar-persona {
-        width: 130px; padding: 4px 24px 4px 8px;
-        border: 1px solid var(--border); border-radius: 16px;
-        font-size: 11px; background: var(--surface); color: var(--text-2);
-        cursor: pointer; appearance: none; -webkit-appearance: none;
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23aeaeb2'/%3E%3C/svg%3E");
-        background-repeat: no-repeat; background-position: right 8px center;
+
+      /* ── settings panel (slides down from topbar) ── */
+      #settings-panel {
+        flex-shrink: 0;
+        background: rgba(255,255,255,0.97);
+        backdrop-filter: blur(20px);
+        border-bottom: 1px solid var(--border);
+        overflow: hidden;
+        max-height: 0;
+        transition: max-height .25s ease, padding .25s ease;
+        z-index: 150;
       }
+      #settings-panel.open { max-height: 160px; }
+      #settings-inner {
+        display: flex;
+        gap: 20px;
+        padding: 12px 18px;
+        align-items: flex-start;
+      }
+      .set-group { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+      .set-group-label { font-size: 10px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: .6px; margin-bottom: 2px; }
+      .set-coord-row { display: flex; align-items: center; gap: 5px; }
+      .set-coord-row label { font-size: 11px; color: var(--text-3); width: 22px; flex-shrink: 0; }
+      .set-coord-row input {
+        width: 110px; padding: 4px 7px;
+        border: 1px solid var(--border); border-radius: 7px;
+        font-size: 12px; outline: none;
+      }
+      .set-coord-row input:focus { border-color: var(--accent); }
+      .set-row { display: flex; align-items: center; gap: 6px; }
+      .set-row label { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+      .set-row input[type=number] {
+        width: 64px; padding: 4px 7px;
+        border: 1px solid var(--border); border-radius: 7px;
+        font-size: 12px; outline: none;
+      }
+      .set-row input:focus { border-color: var(--accent); }
+      .depth-btn-sm {
+        padding: 3px 7px; border: 1px solid var(--border); border-radius: 10px;
+        cursor: pointer; font-size: 11px; background: transparent; color: var(--text-2);
+        transition: background .12s, border-color .12s, color .12s;
+      }
+      .depth-btn-sm.active-depth { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+      #topbar-progress { display: none; }
 
       #log-toggle {
         padding: 3px 9px; border: 1px solid var(--border); border-radius: 16px;
@@ -429,6 +513,15 @@
       }
       #log-toggle:hover { background: var(--surface); color: var(--text-2); }
       #log-toggle.active { background: var(--surface); color: var(--accent); border-color: var(--accent); }
+
+      /* bottom-panel col resize handles */
+      .bp-drag {
+        width: 4px; flex-shrink: 0;
+        background: var(--border); cursor: col-resize;
+        transition: background .15s; z-index: 10; position: relative;
+      }
+      .bp-drag:hover, .bp-drag.dragging { background: var(--accent); }
+      .bp-drag::after { content:""; position:absolute; inset:0 -4px; }
 
       @keyframes spin { to { transform: rotate(360deg); } }
       @keyframes bob { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-3px)} }
@@ -545,16 +638,81 @@
 
     <!-- ── topbar ── -->
     <div id="topbar">
-      <h1>CityWalk</h1>
+      <span id="topbar-logo">CityWalk</span>
       <div class="divider"></div>
-      <button class="pill active" id="mode-explore">🗺️ Explore</button>
+      <!-- persona + settings grouped -->
+      <div id="topbar-config">
+        <select id="persona-select" onchange="onPersonaChange()">
+          <option value="objective">Objective</option>
+        </select>
+        <div id="topbar-config-sep"></div>
+        <button id="settings-toggle" onclick="toggleSettings()" title="Settings">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
       <div class="divider"></div>
-      <select id="persona-select" class="topbar-persona" onchange="onPersonaChange()">
-        <option value="objective">Objective</option>
-      </select>
+      <!-- walk controls -->
+      <div id="topbar-walk">
+        <button id="topbar-start-btn" onclick="autoWalkStart()">▶ Start</button>
+        <button id="topbar-stop-btn"  onclick="autoWalkStop()">■ Stop</button>
+      </div>
+      <span id="topbar-progress"></span>
       <span id="status-msg">—</span>
       <div id="nav-dot" title="Maps API status"></div>
       <button id="log-toggle" onclick="toggleLog()">Log</button>
+    </div>
+
+    <!-- ── settings panel (slides down) ── -->
+    <div id="settings-panel">
+      <div id="settings-inner">
+        <!-- Start coords -->
+        <div class="set-group">
+          <div class="set-group-label">Start</div>
+          <div class="set-coord-row">
+            <label>Lat</label>
+            <input type="number" id="aw-start-lat" value="1.2835" step="0.0001">
+          </div>
+          <div class="set-coord-row">
+            <label>Lng</label>
+            <input type="number" id="aw-start-lng" value="103.858" step="0.0001">
+          </div>
+        </div>
+        <!-- Destination coords -->
+        <div class="set-group">
+          <div class="set-group-label">Destination</div>
+          <div class="set-coord-row">
+            <label>Lat</label>
+            <input type="number" id="aw-dest-lat" value="1.2900" step="0.0001">
+          </div>
+          <div class="set-coord-row">
+            <label>Lng</label>
+            <input type="number" id="aw-dest-lng" value="103.852" step="0.0001">
+          </div>
+        </div>
+        <!-- Max steps + Lookahead -->
+        <div class="set-group">
+          <div class="set-group-label">Options</div>
+          <div class="set-row">
+            <label>Max steps</label>
+            <input type="number" id="aw-max-steps" value="40" min="5" max="120" step="5">
+          </div>
+          <div class="set-row" style="margin-top:4px;">
+            <label>Lookahead</label>
+            <div style="display:flex;gap:4px;" id="aw-depth-btns">
+              <button onclick="setLookaheadDepth(1)" data-depth="1" class="depth-btn depth-btn-sm">1</button>
+              <button onclick="setLookaheadDepth(2)" data-depth="2" class="depth-btn depth-btn-sm">2</button>
+              <button onclick="setLookaheadDepth(3)" data-depth="3" class="depth-btn depth-btn-sm active-depth">3</button>
+              <button onclick="setLookaheadDepth(5)" data-depth="5" class="depth-btn depth-btn-sm">5</button>
+            </div>
+          </div>
+        </div>
+        <!-- Error -->
+        <div class="set-group" style="justify-content:flex-end;flex:1;">
+          <div id="aw-error"></div>
+        </div>
+      </div>
     </div>
 
     <!-- ── main (sv-pane | drag | map) ── -->
@@ -604,90 +762,40 @@
     <!-- ── bottom panel ── -->
     <div id="bottom-panel">
 
-      <!-- left column: mode-specific controls -->
-      <div id="bp-left">
+      <!-- hidden aw-progress for backward compat -->
+      <div id="aw-progress" style="display:none;">—</div>
 
-        <!-- ROUTE mode controls (hidden — temporarily disabled) -->
-        <!--
-        <div id="ctrl-route">
-          <div class="sec-label">Route</div>
-          <div class="route-btns">
-            <button id="rb-singapore" onclick="loadRoute('singapore')">Singapore</button>
-            <button id="rb-hongkong"  onclick="loadRoute('hongkong')">Hong Kong</button>
-          </div>
-          <div class="ctrl-row" style="margin-top:8px;">
-            <button id="run-btn"  onclick="toggleRun()">▶ Run</button>
-            <button id="step-btn" onclick="stepOnce()" disabled>Step</button>
-            <span id="wp-counter"></span>
-          </div>
-          <div id="wp-info"></div>
-        </div>
-        -->
-
-        <!-- EXPLORE mode controls (Auto Walk) -->
-        <div id="ctrl-explore">
-          <div class="sec-label">Start</div>
-          <div class="coord-row">
-            <label>Lat</label>
-            <input type="number" id="aw-start-lat" value="1.2835" step="0.0001">
-          </div>
-          <div class="coord-row" style="margin-top:4px;">
-            <label>Lng</label>
-            <input type="number" id="aw-start-lng" value="103.858" step="0.0001">
-          </div>
-          <div class="sec-label" style="margin-top:8px;">Destination</div>
-          <div class="coord-row">
-            <label>Lat</label>
-            <input type="number" id="aw-dest-lat" value="1.2900" step="0.0001">
-          </div>
-          <div class="coord-row" style="margin-top:4px;">
-            <label>Lng</label>
-            <input type="number" id="aw-dest-lng" value="103.852" step="0.0001">
-          </div>
-          <div class="coord-row" style="margin-top:6px;">
-            <label style="white-space:nowrap;">Max steps</label>
-            <input type="number" id="aw-max-steps" value="40" min="5" max="120" step="5" style="width:60px;">
-          </div>
-          <div style="margin-top:6px;">
-            <div style="font-size:10px;color:var(--text-3);margin-bottom:4px;">Lookahead depth</div>
-            <div class="ctrl-row" style="gap:4px;" id="aw-depth-btns">
-              <button onclick="setLookaheadDepth(1)" data-depth="1" class="depth-btn" style="flex:1;padding:3px 0;border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:11px;background:transparent;color:var(--text-2);">1</button>
-              <button onclick="setLookaheadDepth(2)" data-depth="2" class="depth-btn" style="flex:1;padding:3px 0;border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:11px;background:transparent;color:var(--text-2);">2</button>
-              <button onclick="setLookaheadDepth(3)" data-depth="3" class="depth-btn active-depth" style="flex:1;padding:3px 0;border:1px solid var(--accent);border-radius:10px;cursor:pointer;font-size:11px;background:var(--accent);color:#fff;">3</button>
-              <button onclick="setLookaheadDepth(5)" data-depth="5" class="depth-btn" style="flex:1;padding:3px 0;border:1px solid var(--border);border-radius:10px;cursor:pointer;font-size:11px;background:transparent;color:var(--text-2);">5</button>
-            </div>
-          </div>
-          <div class="ctrl-row" style="margin-top:8px;">
-            <button id="aw-start-btn" onclick="autoWalkStart()" style="flex:1;padding:5px 0;border:none;border-radius:16px;cursor:pointer;font-size:12px;font-weight:600;background:var(--accent);color:#fff;transition:opacity .15s;">▶ Start</button>
-            <button id="aw-stop-btn"  onclick="autoWalkStop()"  style="padding:5px 10px;border:1px solid var(--border);border-radius:16px;cursor:pointer;font-size:12px;font-weight:500;background:transparent;color:var(--text-2);display:none;">■ Stop</button>
-          </div>
-          <div id="aw-error"></div>
-          <div id="aw-progress" style="font-size:11px;color:var(--text-3);margin-top:6px;">—</div>
-        </div>
-
-      </div><!-- /bp-left -->
-
-      <!-- center: scores -->
-      <div id="bp-center">
+      <!-- scores -->
+      <div id="bp-center" style="width:200px;">
         <div class="sec-label" id="bp-center-label">Scores</div>
         <div id="scores-area"><div class="ph">—</div></div>
         <div id="meta-line"></div>
         <div id="branch-cards"></div>
+        <div id="walk-status">
+          <div class="ws-row"><span>Step</span><span class="ws-val" id="ws-step">—</span></div>
+          <div class="ws-row"><span>Distance</span><span class="ws-val" id="ws-dist">—</span></div>
+        </div>
       </div>
 
-      <!-- right: reasoning -->
-      <div id="bp-right">
+      <div class="bp-drag" data-target="bp-center"></div>
+
+      <!-- reasoning -->
+      <div id="bp-right" style="width:220px;flex:none;">
         <div class="sec-label">Reasoning</div>
         <div id="reasoning-area"><div class="ph">—</div></div>
       </div>
 
-      <!-- Score trend chart (explore mode only) -->
-      <div id="bp-chart" style="display:none; flex-direction:column; padding:12px 14px; border-left:1px solid var(--border); border-bottom:1px solid var(--border); min-height:0; flex-shrink:0;">
+      <div class="bp-drag" data-target="bp-right"></div>
+
+      <!-- score trend chart -->
+      <div id="bp-chart" style="display:none; flex-direction:column; padding:12px 14px; border-bottom:1px solid var(--border); min-height:0; flex-shrink:0; width:260px;">
         <div class="sec-label" style="margin-bottom:6px;">Score Trend</div>
         <canvas id="score-chart" height="110"></canvas>
       </div>
 
-      <!-- S2 reasoning feed (explore mode only) -->
+      <div class="bp-drag" id="bp-chart-drag" style="display:none;" data-target="bp-chart"></div>
+
+      <!-- S2 reasoning feed -->
       <div id="bp-s2">
         <div class="sec-label">Agent Reasoning</div>
         <div id="s2-feed"></div>
@@ -713,6 +821,13 @@
       logOpen = !logOpen;
       document.getElementById('log-drawer').classList.toggle('open', logOpen);
       document.getElementById('log-toggle').classList.toggle('active', logOpen);
+    }
+
+    let settingsOpen = false;
+    function toggleSettings() {
+      settingsOpen = !settingsOpen;
+      document.getElementById('settings-panel').classList.toggle('open', settingsOpen);
+      document.getElementById('settings-toggle').classList.toggle('active', settingsOpen);
     }
     function clearLog() { document.getElementById('log-body').innerHTML = ''; }
     function log(msg, level = 'info') {
@@ -914,6 +1029,34 @@
         };
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
+      });
+
+      // Resizable bottom-panel columns (horizontal)
+      document.querySelectorAll('.bp-drag').forEach(handle => {
+        handle.addEventListener('mousedown', e => {
+          e.preventDefault();
+          handle.classList.add('dragging');
+          document.body.style.cursor = 'col-resize';
+          document.body.style.userSelect = 'none';
+          const targetId = handle.dataset.target;
+          const targetEl = document.getElementById(targetId);
+          const startX = e.clientX;
+          const startW = targetEl.getBoundingClientRect().width;
+          const onMove = e => {
+            const newW = Math.max(120, startW + (e.clientX - startX));
+            targetEl.style.width = newW + 'px';
+            targetEl.style.flex = 'none';
+          };
+          const onUp = () => {
+            handle.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+          };
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        });
       });
 
       // Resizable sv-pane ↔ map-col
@@ -1304,11 +1447,7 @@
     function setLookaheadDepth(n) {
       currentLookaheadDepth = n;
       document.querySelectorAll('.depth-btn').forEach(btn => {
-        const active = parseInt(btn.dataset.depth) === n;
-        btn.classList.toggle('active-depth', active);
-        btn.style.background = active ? 'var(--accent)' : 'transparent';
-        btn.style.color = active ? '#fff' : 'var(--text-2)';
-        btn.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+        btn.classList.toggle('active-depth', parseInt(btn.dataset.depth) === n);
       });
     }
 
@@ -1326,19 +1465,23 @@
       // Reset map
       autoWalkReset(true);
       walkStepCount = 0;
-      document.getElementById('aw-progress').textContent = 'Starting…';
+      document.getElementById('topbar-progress').textContent = 'Starting…';
       document.getElementById('s2-feed').innerHTML = '';
       document.getElementById('bp-s2').style.display = 'flex';
       document.getElementById('bp-chart').style.display = 'flex';
+      document.getElementById('bp-chart-drag').style.display = '';
       initScoreChart();
+
+      // Close settings panel when walk starts
+      if (settingsOpen) toggleSettings();
 
       // Place destination marker
       destMarker = L.circleMarker([destLat, destLng], {
         radius: 8, color: '#ff453a', fillColor: '#ff453a', fillOpacity: 0.9, weight: 2
       }).bindTooltip('Destination').addTo(map);
 
-      document.getElementById('aw-start-btn').disabled = true;
-      document.getElementById('aw-stop-btn').style.display = '';
+      document.getElementById('topbar-start-btn').disabled = true;
+      document.getElementById('topbar-stop-btn').style.display = '';
 
       log(`Auto walk: (${startLat},${startLng}) → (${destLat},${destLng}) max=${maxSteps}`);
 
@@ -1666,9 +1809,12 @@
       }
 
       // Progress
-      document.getElementById('aw-progress').textContent =
-        `Step ${step.step} · ${Math.round(step.dist_to_dest_m)}m to dest`;
       setStatus(`Step ${step.step} · ${Math.round(step.dist_to_dest_m)}m remaining`);
+      // walk-status under scores
+      const wsEl = document.getElementById('walk-status');
+      wsEl.style.display = '';
+      document.getElementById('ws-step').textContent = step.step;
+      document.getElementById('ws-dist').textContent = Math.round(step.dist_to_dest_m) + 'm';
       log(`Step ${step.step}: ${step.lat.toFixed(5)},${step.lng.toFixed(5)} dist=${step.dist_to_dest_m}m${step.is_intersection?' [intersec]':''}`, 'info');
 
       // Branch visualization — resolve after exploration SSEs have populated the overlay
@@ -1736,8 +1882,9 @@
       const dist = result.final_distance_m != null ? `${Math.round(result.final_distance_m)}m from dest` : '';
       const mem = result.memory_debug;
       const ltmInfo = mem ? ` · ${mem.snapshot_count ?? 0} snapshots · ${mem.episode_count ?? 0} episodes` : '';
-      document.getElementById('aw-progress').textContent = `${arrived} · ${steps} steps · ${dist}${ltmInfo}`;
-      setStatus(`Walk complete — ${arrived}`);
+      setStatus(`Walk complete — ${arrived} · ${steps} steps · ${dist}`);
+      document.getElementById('ws-step').textContent = steps + ' (done)';
+      document.getElementById('ws-dist').textContent = dist || '—';
       log(`Walk complete: arrived=${result.arrived} steps=${steps} dist=${dist}`, 'ok');
       autoWalkReset(false);
     }
@@ -1755,8 +1902,9 @@
     function autoWalkReset(clearMap = false) {
       if (walkEventSource) { walkEventSource.close(); walkEventSource = null; }
       currentWalkId = null;
-      document.getElementById('aw-start-btn').disabled = false;
-      document.getElementById('aw-stop-btn').style.display = 'none';
+      document.getElementById('topbar-start-btn').disabled = false;
+      document.getElementById('topbar-stop-btn').style.display = 'none';
+      if (clearMap) document.getElementById('walk-status').style.display = 'none';
       clearBranchVisualization();
       _branchRejectedLines.forEach(s => map.removeLayer(s)); _branchRejectedLines = [];
       if (clearMap) {
