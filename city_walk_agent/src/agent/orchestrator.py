@@ -57,6 +57,75 @@ def _closest_link(links: List[Dict], target_heading: float) -> Dict:
     )
 
 
+def _angle_diff(a: float, b: float) -> float:
+    """Signed angular difference from a to b, range [-180, 180]."""
+    return ((b - a + 180) % 360) - 180
+
+
+def _get_urgency_tier(dist_m: float) -> str:
+    """Classify navigation urgency based on distance to destination."""
+    if dist_m <= 150:
+        return "converge"
+    elif dist_m <= 500:
+        return "navigate"
+    else:
+        return "explore"
+
+
+def _get_wp_bearing(
+    current_lat: float,
+    current_lng: float,
+    waypoints: List[Tuple[float, float]],
+    wp_index: int,
+) -> Tuple[float, int, float]:
+    """Find nearest remaining waypoint, return bearing to the next one.
+
+    Returns:
+        (bearing, updated_wp_index, nearest_wp_dist_m)
+    """
+    current = (current_lat, current_lng)
+    nearest_idx = wp_index
+    min_dist = float("inf")
+    for i in range(wp_index, len(waypoints)):
+        d = geodesic(current, waypoints[i]).meters
+        if d < min_dist:
+            min_dist = d
+            nearest_idx = i
+    target_idx = min(nearest_idx + 1, len(waypoints) - 1)
+    bearing = _calc_bearing(current_lat, current_lng, waypoints[target_idx][0], waypoints[target_idx][1])
+    return bearing, target_idx, min_dist
+
+
+async def _get_walking_route(
+    start: Tuple[float, float],
+    dest: Tuple[float, float],
+    api_key: str,
+) -> List[Tuple[float, float]]:
+    """Google Directions API walking route → decoded polyline waypoints.
+
+    Returns list of (lat, lng) tuples along the walking route.
+    Returns empty list on failure (caller falls back to dest_bearing).
+    """
+    import httpx as _httpx
+    import polyline as pl
+
+    url = (
+        f"https://maps.googleapis.com/maps/api/directions/json"
+        f"?origin={start[0]},{start[1]}"
+        f"&destination={dest[0]},{dest[1]}"
+        f"&mode=walking"
+        f"&key={api_key}"
+    )
+    async with _httpx.AsyncClient(timeout=10.0) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+    data = resp.json()
+    if data.get("status") != "OK" or not data.get("routes"):
+        return []
+    encoded = data["routes"][0]["overview_polyline"]["points"]
+    return pl.decode(encoded)  # [(lat, lng), ...]
+
+
 class CityWalkAgent(BaseAgent):
     """Walking route analysis agent with personality-driven decision making.
 
@@ -2166,6 +2235,7 @@ class CityWalkAgent(BaseAgent):
         output_dir: Optional[Path] = None,
         lookahead_depth: int = 1,
         progress_callback=None,
+        wp_bearing: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Evaluate candidate directions at a branch point and choose the best.
 
@@ -2373,6 +2443,14 @@ class CityWalkAgent(BaseAgent):
             )
         )
 
+        # Tag each candidate with angular deviation from wp_bearing
+        if wp_bearing is not None:
+            for c in candidates:
+                c["route_deviation"] = round(abs(_angle_diff(wp_bearing, c["heading"])), 1)
+        else:
+            for c in candidates:
+                c["route_deviation"] = None
+
         decision = self.persona_reasoner.decider.decide_branch(
             candidates=candidates,
             ltm_patterns=ltm_patterns,
@@ -2380,6 +2458,7 @@ class CityWalkAgent(BaseAgent):
             dimension_ids=self.persona_reasoner.dimension_ids,
             dimensions=self.persona_reasoner.dimensions,
             destination_context=destination_context,
+            wp_bearing=wp_bearing,
         )
 
         self.logger.info(
@@ -2493,6 +2572,21 @@ class CityWalkAgent(BaseAgent):
             f"autonomous_walk start | pano={pano_id[:12]} "
             f"dest=({dest_lat:.4f},{dest_lng:.4f}) max_steps={max_steps}"
         )
+
+        # Directions API — get walking route waypoints for bearing guidance
+        route_waypoints: List[Tuple[float, float]] = []
+        route_wp_index: int = 0
+        REROUTE_THRESHOLD_M = 80
+
+        try:
+            route_waypoints = await _get_walking_route(
+                (start_lat, start_lng), (dest_lat, dest_lng),
+                settings.google_maps_api_key,
+            )
+            self.logger.info(f"Directions API: {len(route_waypoints)} waypoints")
+        except Exception as e:
+            self.logger.warning(f"Directions API failed, falling back to dest_bearing: {e}")
+            route_waypoints = []
 
         for step in range(max_steps):
             # Hard stop: same pano visited 5+ times
@@ -2658,9 +2752,45 @@ class CityWalkAgent(BaseAgent):
             recommendation = None
             step_confidence: Optional[float] = None
             branch_result: Optional[Dict[str, Any]] = None
+            wp_bearing: Optional[float] = None
+            nearest_wp_dist: Optional[float] = None
+            urgency_tier: Optional[str] = None
 
             if (is_intersection or trigger_reason is not None) and analysis:
                 try:
+                    # Compute wp_bearing from Directions API route if available
+                    urgency_tier = _get_urgency_tier(dist_m)
+
+                    if route_waypoints:
+                        wp_bearing, route_wp_index, nearest_wp_dist = _get_wp_bearing(
+                            current_lat, current_lng, route_waypoints, route_wp_index,
+                        )
+                        # Re-route if too far from planned path
+                        if nearest_wp_dist >= REROUTE_THRESHOLD_M:
+                            self.logger.info(
+                                f"Step {step}: route deviation {nearest_wp_dist:.0f}m — re-routing"
+                            )
+                            try:
+                                route_waypoints = await _get_walking_route(
+                                    (current_lat, current_lng), (dest_lat, dest_lng),
+                                    settings.google_maps_api_key,
+                                )
+                                route_wp_index = 0
+                                if route_waypoints:
+                                    wp_bearing, route_wp_index, nearest_wp_dist = _get_wp_bearing(
+                                        current_lat, current_lng, route_waypoints, route_wp_index,
+                                    )
+                            except Exception as e:
+                                self.logger.warning(f"Step {step}: re-route failed: {e}")
+
+                        wp_cardinal = _bearing_to_cardinal(wp_bearing)
+                        dest_context = (
+                            f"Route direction: {wp_cardinal} ({wp_bearing:.0f}°) — "
+                            f"follow this bearing to stay on the walking route. "
+                            f"Destination: {cardinal} ({dest_bearing:.0f}°), {dist_m:.0f}m away. "
+                            f"Urgency: {urgency_tier}"
+                        )
+
                     # Notify frontend that branch exploration is starting
                     if step_callback:
                         await step_callback({
@@ -2690,6 +2820,7 @@ class CityWalkAgent(BaseAgent):
                         visit_counts=visit_counts,
                         lookahead_depth=lookahead_depth,
                         progress_callback=_branch_progress,
+                        wp_bearing=wp_bearing,
                     )
                     chosen_heading = branch_result["chosen_heading"]
                     current_intended_heading = chosen_heading
@@ -2809,6 +2940,9 @@ class CityWalkAgent(BaseAgent):
                 "visual_change": visual_change,
                 "image_path": str(saved_image_path) if saved_image_path else None,
                 "confidence": step_confidence,
+                "wp_bearing": round(wp_bearing, 1) if (route_waypoints and wp_bearing is not None) else None,
+                "urgency_tier": urgency_tier if route_waypoints else None,
+                "route_deviation_m": round(nearest_wp_dist, 1) if (route_waypoints and nearest_wp_dist is not None) else None,
                 "branch_candidates": [
                     {
                         "direction": c["direction"],

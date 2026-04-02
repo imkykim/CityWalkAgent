@@ -148,6 +148,7 @@ Respond ONLY with valid JSON matching this exact schema:
         dimension_ids: List[str],
         dimensions: Dict[str, str],
         destination_context: Optional[str] = None,
+        wp_bearing: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Choose the best direction at a branch point.
 
@@ -181,11 +182,15 @@ Respond ONLY with valid JSON matching this exact schema:
 
         ltm_text = _format_ltm_patterns(ltm_patterns)
 
-        dest_line = (
-            f"Destination: {destination_context}\n"
-            f"PRIORITY: You must make meaningful progress toward the destination. "
-            f"Only choose a direction that moves away from it if its quality score is dramatically higher (2+ points average difference)."
-        ) if destination_context else ""
+        if destination_context:
+            dest_line = (
+                f"Navigation: {destination_context}\n"
+                f"Each candidate shows its 'Route deviation' — the angular difference from the recommended walking path. "
+                f"Lower deviation means closer to the correct road. "
+                f"Consider route deviation alongside quality scores when making your decision."
+            )
+        else:
+            dest_line = ""
 
         candidate_lines = []
         for c in candidates:
@@ -223,10 +228,15 @@ Respond ONLY with valid JSON matching this exact schema:
                 f"\n    ⚠ Previously visited ({visit_count} times)"
                 if visit_count > 0 else ""
             )
+            route_dev = c.get("route_deviation")
+            route_str = (
+                f"\n    Route deviation: {route_dev:.0f}° from recommended path"
+                if route_dev is not None else ""
+            )
             candidate_lines.append(
                 f"[{c['direction']}] heading={c['heading']:.0f}°  {scores_str}\n"
                 f"    \"{c['interpretation'][:120]}\""
-                f"{trend_str}{concern_str}{visit_str}"
+                f"{trend_str}{concern_str}{visit_str}{route_str}"
             )
         candidates_text = "\n\n".join(candidate_lines)
 

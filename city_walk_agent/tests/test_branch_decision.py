@@ -38,6 +38,7 @@ def test_decide_branch_returns_valid_direction():
             personality=personality,
             dimension_ids=["safety", "lively"],
             dimensions={"safety": "Safety", "lively": "Lively"},
+            wp_bearing=None,
         )
 
     assert result["chosen_direction"] == "A"
@@ -66,6 +67,7 @@ def test_decide_branch_fallback_on_llm_failure():
             personality=personality,
             dimension_ids=["safety", "lively"],
             dimensions={"safety": "Safety", "lively": "Lively"},
+            wp_bearing=None,
         )
 
     # Fallback: highest avg score = B (7.5) over A (3.5)
