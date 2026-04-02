@@ -2060,6 +2060,7 @@ class CityWalkAgent(BaseAgent):
 
         Sequential because each step's pano_id depends on the previous step's metadata.
         Returns a list of dicts: [{"pano_id": ..., "heading": ..., "label": ...}, ...]
+        Each entry is a future pano (not start_pano_id itself), so chain[0] is the 1st step ahead.
         """
         import httpx
         from demo.server import MapTilesSession
@@ -2070,37 +2071,38 @@ class CityWalkAgent(BaseAgent):
         current_heading = initial_heading
 
         for depth in range(lookahead_depth):
+            # Advance first: follow the link closest to current_heading
+            try:
+                meta = await nav.get_metadata(current_pano)
+                links = meta.get("links", [])
+                if not links:
+                    break
+                next_link = min(
+                    links,
+                    key=lambda l: abs(
+                        ((l.get("heading") or l.get("yawDeg") or 0)
+                         - current_heading + 180) % 360 - 180
+                    ),
+                )
+                current_pano = next_link.get("panoId") or next_link.get("id")
+                current_heading = float(
+                    next_link.get("heading")
+                    or next_link.get("yawDeg")
+                    or current_heading
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"Pano chain advance failed at depth={depth} "
+                    f"direction={direction_label}: {e}"
+                )
+                break
+
             chain.append({
                 "pano_id": current_pano,
                 "heading": current_heading,
                 "direction_label": direction_label,
                 "depth": depth,
             })
-            if depth < lookahead_depth - 1:
-                try:
-                    meta = await nav.get_metadata(current_pano)
-                    links = meta.get("links", [])
-                    if not links:
-                        break
-                    next_link = min(
-                        links,
-                        key=lambda l: abs(
-                            ((l.get("heading") or l.get("yawDeg") or 0)
-                             - current_heading + 180) % 360 - 180
-                        ),
-                    )
-                    current_pano = next_link.get("panoId") or next_link.get("id")
-                    current_heading = float(
-                        next_link.get("heading")
-                        or next_link.get("yawDeg")
-                        or current_heading
-                    )
-                except Exception as e:
-                    self.logger.warning(
-                        f"Pano chain advance failed at depth={depth} "
-                        f"direction={direction_label}: {e}"
-                    )
-                    break
 
         return chain
 
@@ -2278,9 +2280,7 @@ class CityWalkAgent(BaseAgent):
         # ── Step 4: reassemble per-direction results
         idx = 0
         direction_results: List[Dict[str, Any]] = []
-        for chain in chains_per_dir:
-            label = chain[0]["direction_label"] if chain else "?"
-            heading = chain[0]["heading"] if chain else 0.0
+        for chain, (label, heading) in zip(chains_per_dir, zip(direction_labels, candidate_headings)):
             last_pano_id = chain[-1]["pano_id"] if chain else branch_pano_id
             waypoint_scores: List[Dict[str, float]] = []
             waypoint_summaries: List[str] = []
@@ -2766,8 +2766,13 @@ class CityWalkAgent(BaseAgent):
 
             if branch_last_pano and branch_last_pano != pano_id:
                 next_pano_id = branch_last_pano
-                self.logger.debug(f"Step {step}: jumping to lookahead end pano {next_pano_id[:12]}")
+                self.logger.info(f"Step {step}: jump to lookahead end pano {next_pano_id[:12]} (depth={lookahead_depth})")
             else:
+                if branch_result:
+                    self.logger.info(
+                        f"Step {step}: branch lookahead jump skipped "
+                        f"(last_pano={branch_last_pano!r}, current={pano_id[:12]}) → using link"
+                    )
                 unvisited_links = [
                     l for l in links
                     if visit_counts.get(l.get("panoId") or l.get("id"), 0) == 0
