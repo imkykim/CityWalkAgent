@@ -407,6 +407,16 @@ async def maps_key():
     return {"key": GOOGLE_API_KEY or ""}
 
 
+@app.get("/api/config")
+async def api_config():
+    """Return frontend config including LLM summarizer credentials."""
+    from src.core import settings as _s
+    return {
+        "llm_api_url": str(_s.qwen_vlm_api_url).rstrip("/"),
+        "llm_api_key": _s.qwen_vlm_api_key or "",
+    }
+
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _resolve_image_path(entry: dict, folder: Path) -> Optional[Path]:

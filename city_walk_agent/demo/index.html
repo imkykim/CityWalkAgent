@@ -636,6 +636,53 @@
       #scores-area .score-row { margin-bottom: 4px; }
       #scores-area .score-hdr { display:flex; justify-content:space-between; margin-bottom:2px; }
       #scores-area .bar-track { height: 3px; }
+
+      /* ── Headline area (above reasoning) ── */
+      #headline-area {
+        font-size: 12px; font-weight: 600;
+        color: var(--text-1); line-height: 1.45;
+        padding: 5px 8px; border-radius: 6px;
+        background: var(--surface);
+        opacity: 0; transition: opacity 0.4s ease;
+        display: none; margin-bottom: 8px;
+      }
+      #headline-area.visible { display: block; opacity: 1; }
+      #headline-area.loading { display: block; opacity: 0.4; }
+      #headline-area.loading::after {
+        content: '…'; color: var(--text-3);
+        animation: ellipsis 1.2s infinite;
+      }
+      @keyframes ellipsis {
+        0%,100% { opacity: 0.3; } 50% { opacity: 1; }
+      }
+
+      /* ── Speech bubbles ── */
+      .speech-bubble-icon { background: none; border: none; }
+      .speech-bubble-wrapper { position: relative; white-space: nowrap; }
+      .speech-bubble {
+        background: #fff; border: 1.5px solid var(--border);
+        border-radius: 10px; padding: 5px 9px;
+        font-size: 11px; font-weight: 500; color: var(--text-1);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+        max-width: 160px; white-space: normal; line-height: 1.4;
+        transition: opacity 0.5s ease;
+      }
+      .speech-bubble::after {
+        content: ''; position: absolute;
+        bottom: -7px; left: 14px;
+        width: 0; height: 0;
+        border-left: 6px solid transparent;
+        border-right: 6px solid transparent;
+        border-top: 7px solid var(--border);
+      }
+      .speech-bubble.positive { border-color: #10b981; }
+      .speech-bubble.positive::after { border-top-color: #10b981; }
+      .speech-bubble.negative { border-color: #ef4444; }
+      .speech-bubble.negative::after { border-top-color: #ef4444; }
+      .key-pin-icon {
+        font-size: 14px; cursor: pointer;
+        filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+      }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   </head>
@@ -788,6 +835,7 @@
       <!-- reasoning -->
       <div id="bp-right" style="width:220px;flex:none;">
         <div class="sec-label">Reasoning</div>
+        <div id="headline-area"></div>
         <div id="reasoning-area"><div class="ph">—</div></div>
       </div>
 
@@ -856,6 +904,17 @@
     // ═══════════════════════════════════════════════════════
     const API = '';
     let currentMode = 'explore';  // 'explore' only (route mode temporarily disabled)
+
+    // ── Summarizer (LLM headline + speech bubble) ──
+    // TODO: replace SUMMARIZER_API_KEY after /api/config fetch below
+    let SUMMARIZER_URL = 'https://llmapi.paratera.com/v1/chat/completions';
+    let SUMMARIZER_MODEL = 'Qwen3-30B-A3B-Instruct-2507';
+    let SUMMARIZER_API_KEY = '';  // filled in on init via /api/config
+
+    // Speech bubble / key moment state
+    let currentBubbleMarker = null;
+    let keyMomentPins = [];
+    let lastSummaryAbort = null;
 
     // Route state
     let map, waypoints = [], markers = [], polyline = null, trailLine = null, agentMarker = null;
@@ -1106,6 +1165,13 @@
           document.getElementById('aw-start-lng').value = e.latlng.lng.toFixed(6);
         }
       });
+
+      // Load summarizer config
+      try {
+        const cfg = await fetch('/api/config').then(r => r.json());
+        if (cfg.llm_api_key) SUMMARIZER_API_KEY = cfg.llm_api_key;
+        if (cfg.llm_api_url) SUMMARIZER_URL = cfg.llm_api_url + '/chat/completions';
+      } catch(e) { log(`config load failed: ${e.message}`, 'warn'); }
 
       initRadarChart();
       await loadPersonas();
@@ -1825,6 +1891,124 @@
       document.getElementById('bp-center-label').textContent = 'Branch Evaluation';
     }
 
+    // ═══════════════════════════════════════════════════════
+    // ASYNC HEADLINE + SPEECH BUBBLES
+    // ═══════════════════════════════════════════════════════
+
+    async function fetchStepSummary(step) {
+      if (lastSummaryAbort) lastSummaryAbort.abort();
+      lastSummaryAbort = new AbortController();
+
+      const reasoning = step.reasoning || {};
+      const reasoningText = Object.values(reasoning).join(' ').slice(0, 600);
+      const scores = step.scores || {};
+      const vals = Object.values(scores);
+      const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 5;
+      const prevAvg = step._prevAvg ?? null;
+
+      const scoresStr = Object.entries(scores).map(([k, v]) => `${k}:${v.toFixed(1)}`).join(', ');
+
+      const prompt = `You are summarizing a pedestrian agent's urban environment observation.
+
+Scores: ${scoresStr} (average: ${avg.toFixed(1)}/10)
+Observation: ${reasoningText}
+
+Respond ONLY with valid JSON (no markdown, no explanation):
+{
+  "headline": "<one sentence, max 20 words, third-person observation of the environment>",
+  "is_key_moment": <true if avg>=8.5 or avg<=4.0 or score changed dramatically or this is a decision point, else false>,
+  "bubble": "<max 15 chars, casual first-person, Korean or English matching the persona, e.g. '그늘 많아서 좋아!' or 'Lovely shade here!'>"
+}`;
+
+      try {
+        const resp = await fetch(SUMMARIZER_URL, {
+          method: 'POST',
+          signal: lastSummaryAbort.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${SUMMARIZER_API_KEY}`,
+          },
+          body: JSON.stringify({
+            model: SUMMARIZER_MODEL,
+            max_tokens: 120,
+            enable_thinking: false,
+            messages: [{ role: 'user', content: prompt }],
+          }),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const text = data.choices?.[0]?.message?.content || '';
+        // Strip <think>...</think> blocks (Qwen3 reasoning leak safety)
+        const clean = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+        // Extract JSON — find first { ... }
+        const jsonMatch = clean.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) throw new Error('No JSON in response');
+        return JSON.parse(jsonMatch[0]);
+      } catch(e) {
+        if (e.name === 'AbortError') return null;
+        log(`Summary fetch failed: ${e.message}`, 'warn');
+        return null;
+      }
+    }
+
+    function renderHeadline(result) {
+      const area = document.getElementById('headline-area');
+      if (!result || !result.headline) { area.style.display = 'none'; return; }
+      area.classList.remove('loading');
+      area.textContent = result.headline;
+      area.style.display = 'block';
+      area.style.opacity = '0';
+      requestAnimationFrame(() => { area.style.opacity = '1'; area.classList.add('visible'); });
+    }
+
+    function showSpeechBubble(step, result) {
+      if (!result.is_key_moment || !result.bubble) return;
+      if (!map) return;
+
+      const latlng = [step.lat, step.lng];
+      const vals = Object.values(step.scores || {});
+      const avgScore = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 5;
+      const sentiment = avgScore >= 6 ? 'positive' : 'negative';
+
+      if (currentBubbleMarker) { map.removeLayer(currentBubbleMarker); currentBubbleMarker = null; }
+
+      const bubbleHtml = `
+        <div class="speech-bubble-wrapper">
+          <div class="speech-bubble ${sentiment}">${escHtml(result.bubble)}</div>
+        </div>`;
+      const bubbleIcon = L.divIcon({
+        html: bubbleHtml, className: 'speech-bubble-icon', iconAnchor: [14, 42],
+      });
+      currentBubbleMarker = L.marker(latlng, {
+        icon: bubbleIcon, zIndexOffset: 800, interactive: false,
+      }).addTo(map);
+
+      // Fade out after 3s, then convert to persistent pin
+      setTimeout(() => {
+        if (currentBubbleMarker) {
+          const el = currentBubbleMarker.getElement();
+          if (el) el.style.opacity = '0';
+          setTimeout(() => {
+            if (currentBubbleMarker) { map.removeLayer(currentBubbleMarker); currentBubbleMarker = null; }
+            addKeyMomentPin(latlng, result, avgScore);
+          }, 500);
+        }
+      }, 3000);
+    }
+
+    function addKeyMomentPin(latlng, result, avgScore) {
+      const emoji = avgScore >= 6 ? '💬' : '⚠️';
+      const pinIcon = L.divIcon({
+        html: `<div class="key-pin-icon" title="${escHtml(result.headline || result.bubble)}">${emoji}</div>`,
+        className: '', iconAnchor: [8, 8],
+      });
+      const pin = L.marker(latlng, { icon: pinIcon, zIndexOffset: 600 }).addTo(map);
+      pin.bindTooltip(result.headline || result.bubble, {
+        permanent: false, direction: 'top',
+      });
+      keyMomentPins.push(pin);
+    }
+
     // ── Walk step handler ────────────────────────────────────────────────
 
     function handleWalkStep(step) {
@@ -1888,6 +2072,31 @@
       // Scoring reasoning (System 1 result)
       if (step.reasoning && Object.keys(step.reasoning).length) {
         renderReasoning(step.reasoning);
+      }
+
+      // Async headline + speech bubble (fire-and-forget, never blocks SSE processing)
+      {
+        const headlineArea = document.getElementById('headline-area');
+        headlineArea.textContent = '';
+        headlineArea.classList.remove('visible');
+        headlineArea.classList.add('loading');
+        headlineArea.style.display = 'block';
+
+        // Attach prevAvg from radarHistory (newest-first, index 1 = previous step)
+        step._prevAvg = (() => {
+          if (radarHistory.length >= 2) {
+            const prev = radarHistory[1];
+            const v = Object.values(prev);
+            return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+          }
+          return null;
+        })();
+
+        fetchStepSummary(step).then(result => {
+          if (!result) return;
+          renderHeadline(result);
+          showSpeechBubble(step, result);
+        });
       }
 
       // Progress
@@ -1992,6 +2201,19 @@
       initRadarChart();
       clearBranchVisualization();
       _branchRejectedLines.forEach(s => map.removeLayer(s)); _branchRejectedLines = [];
+
+      // Headline
+      const headlineArea = document.getElementById('headline-area');
+      if (headlineArea) { headlineArea.style.display = 'none'; headlineArea.classList.remove('loading', 'visible'); }
+      // Bubble
+      if (currentBubbleMarker) { map.removeLayer(currentBubbleMarker); currentBubbleMarker = null; }
+      // Abort in-flight summary
+      if (lastSummaryAbort) { lastSummaryAbort.abort(); lastSummaryAbort = null; }
+      // Key moment pins: keep on map after walk ends; only clear on explicit new walk
+      if (clearMap) {
+        keyMomentPins.forEach(p => map.removeLayer(p)); keyMomentPins = [];
+      }
+
       if (clearMap) {
         if (navMarker)   { map.removeLayer(navMarker);   navMarker   = null; }
         if (navPolyline) { map.removeLayer(navPolyline); navPolyline = null; }
