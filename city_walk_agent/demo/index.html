@@ -631,6 +631,11 @@
       }
       .ghost-pulse { animation: ghost-pulse 1.2s ease-in-out infinite; }
       #bp-chart { background: var(--bg); }
+
+      /* compact score rows below radar */
+      #scores-area .score-row { margin-bottom: 4px; }
+      #scores-area .score-hdr { display:flex; justify-content:space-between; margin-bottom:2px; }
+      #scores-area .bar-track { height: 3px; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   </head>
@@ -768,7 +773,8 @@
       <!-- scores -->
       <div id="bp-center" style="width:200px;">
         <div class="sec-label" id="bp-center-label">Scores</div>
-        <div id="scores-area"><div class="ph">—</div></div>
+        <canvas id="radar-chart" height="170" style="display:block;width:100%;"></canvas>
+        <div id="scores-area" style="margin-top:4px;"></div>
         <div id="meta-line"></div>
         <div id="branch-cards"></div>
         <div id="walk-status">
@@ -879,6 +885,9 @@
     let currentLookaheadDepth = 3;
     // Score trend chart state
     let scoreChart = null;
+    // Radar chart state
+    let radarChart = null;
+    let radarHistory = [];  // newest first, max 4
     let chartLabels = [];
     let chartDatasets = {};
     let chartBranchPoints = [];
@@ -1098,6 +1107,7 @@
         }
       });
 
+      initRadarChart();
       await loadPersonas();
       await initStreetViewAPI();
       await loadRoute('singapore');
@@ -1313,6 +1323,63 @@
     // ═══════════════════════════════════════════════════════
     // SCORE TREND CHART
     // ═══════════════════════════════════════════════════════
+    function initRadarChart() {
+      const canvas = document.getElementById('radar-chart');
+      if (radarChart) { radarChart.destroy(); radarChart = null; }
+      radarHistory = [];
+      radarChart = new Chart(canvas, {
+        type: 'radar',
+        data: { labels: [], datasets: [] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          animation: { duration: 200 },
+          plugins: { legend: { display: false } },
+          scales: {
+            r: {
+              min: 0, max: 10,
+              ticks: {
+                stepSize: 2,
+                font: { size: 8 },
+                color: '#aeaeb2',
+                backdropColor: 'transparent',
+              },
+              grid: { color: 'rgba(0,0,0,0.07)' },
+              pointLabels: { font: { size: 9, weight: '500' }, color: '#6e6e73' },
+              angleLines: { color: 'rgba(0,0,0,0.07)' },
+            }
+          }
+        }
+      });
+    }
+
+    function renderRadar(scores) {
+      if (!radarChart) return;
+      const dims = Object.keys(scores);
+      if (!dims.length) return;
+
+      radarHistory.unshift(scores);
+      if (radarHistory.length > 4) radarHistory.pop();
+
+      // [borderAlpha, fillAlpha] per layer (current → oldest)
+      const LAYERS = [[1.0, 0.18], [0.45, 0.07], [0.22, 0.04], [0.08, 0.01]];
+      const BASE = '0, 113, 227';
+
+      radarChart.data.labels = dims.map(d => d.charAt(0).toUpperCase() + d.slice(1));
+      radarChart.data.datasets = radarHistory.map((s, i) => {
+        const [bA, fA] = LAYERS[i] || [0.05, 0.01];
+        return {
+          data: dims.map(d => s[d] ?? 0),
+          borderColor: `rgba(${BASE}, ${bA})`,
+          backgroundColor: `rgba(${BASE}, ${fA})`,
+          borderWidth: i === 0 ? 1.8 : 1.2,
+          pointRadius: i === 0 ? 2.5 : 0,
+          pointHoverRadius: i === 0 ? 4 : 0,
+        };
+      });
+      radarChart.update();
+    }
+
     function initScoreChart() {
       const canvas = document.getElementById('score-chart');
       if (scoreChart) { scoreChart.destroy(); scoreChart = null; }
@@ -1471,6 +1538,7 @@
       document.getElementById('bp-chart').style.display = 'flex';
       document.getElementById('bp-chart-drag').style.display = '';
       initScoreChart();
+      initRadarChart();
 
       // Close settings panel when walk starts
       if (settingsOpen) toggleSettings();
@@ -1510,11 +1578,25 @@
             if (msg.type === 'complete')        handleWalkComplete(msg.data);
             if (msg.type === 'branch_start')    handleBranchStart(msg.data);
             if (msg.type === 'branch_progress') handleBranchProgress(msg.data);
-            if (msg.type === 'error')           { showAnalysisBadge(false); showAwError(msg.data.message || 'Walk error'); autoWalkReset(false); }
+            if (msg.type === 'error') {
+              const errMsg = msg.data?.message || 'Walk error';
+              showAnalysisBadge(false);
+              showAwError(errMsg);
+              setStatus(`Walk failed: ${errMsg}`);
+              log(`Walk error: ${errMsg}`, 'err');
+              autoWalkReset(false);
+            }
           } catch(err) { log(`SSE parse error: ${err.message}`, 'warn'); }
         };
         walkEventSource.onerror = () => {
-          if (currentWalkId) { log('SSE connection lost', 'warn'); autoWalkReset(false); }
+          if (currentWalkId) {
+            const msg = 'SSE connection lost';
+            showAnalysisBadge(false);
+            showAwError(msg);
+            setStatus(msg);
+            log(msg, 'warn');
+            autoWalkReset(false);
+          }
         };
       } catch(e) {
         showAwError(e.message); log(`autoWalkStart error: ${e.message}`, 'err');
@@ -1905,6 +1987,9 @@
       document.getElementById('topbar-start-btn').disabled = false;
       document.getElementById('topbar-stop-btn').style.display = 'none';
       if (clearMap) document.getElementById('walk-status').style.display = 'none';
+      radarHistory = [];
+      if (radarChart) { radarChart.destroy(); radarChart = null; }
+      initRadarChart();
       clearBranchVisualization();
       _branchRejectedLines.forEach(s => map.removeLayer(s)); _branchRejectedLines = [];
       if (clearMap) {
@@ -1978,6 +2063,7 @@
         const el = document.getElementById(`bar-${d}`);
         if (el) el.style.width = `${((scores[d]??0)/10)*100}%`;
       }));
+      renderRadar(scores);
     }
 
     function renderReasoning(reasoning) {

@@ -8,6 +8,7 @@ Also provides Street View navigation via Google Map Tiles API (merged from nav_s
 import asyncio
 import base64
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -65,6 +66,7 @@ async def lifespan(app_: FastAPI):
     yield
 
 app = FastAPI(title="CityWalk Demo API", lifespan=lifespan)
+logger = logging.getLogger("demo.server")
 
 app.add_middleware(
     CORSMiddleware,
@@ -682,6 +684,17 @@ async def nav_session_reset(body: dict):
 async def walk_start(body: WalkStartBody):
     """Start an autonomous walk and return a walk_id for SSE streaming."""
     walk_id = str(uuid.uuid4())[:8]
+    logger.info(
+        "walk_start requested | id=%s persona=%s start=(%.6f,%.6f) dest=(%.6f,%.6f) max_steps=%s lookahead=%s",
+        walk_id,
+        body.persona,
+        body.start_lat,
+        body.start_lng,
+        body.dest_lat,
+        body.dest_lng,
+        body.max_steps,
+        body.lookahead_depth,
+    )
     q: asyncio.Queue = asyncio.Queue()
     _walk_queues[walk_id] = q
 
@@ -721,9 +734,18 @@ async def walk_start(body: WalkStartBody):
                     "episode_count": len(mem.get("episodes") or []),
                 },
             }})
+            logger.info(
+                "walk completed | id=%s arrived=%s steps=%s final_distance_m=%s",
+                walk_id,
+                result.get("arrived"),
+                result.get("steps"),
+                result.get("final_distance_m"),
+            )
         except asyncio.CancelledError:
+            logger.warning("walk cancelled | id=%s", walk_id)
             await q.put({"type": "error", "data": {"message": "Walk cancelled"}})
         except Exception as e:
+            logger.exception("walk failed | id=%s", walk_id)
             await q.put({"type": "error", "data": {"message": str(e)}})
         finally:
             _walk_tasks.pop(walk_id, None)
