@@ -12,7 +12,6 @@ Analysis mode: run_with_memory() / run_with_memory_from_folder()
 
 import base64
 import json
-import math
 import time
 from datetime import datetime
 from pathlib import Path
@@ -34,20 +33,6 @@ from src.utils.data_models import Route, Waypoint
 from src.utils.logging import get_logger
 
 
-def _calc_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Compass bearing from point 1 to point 2 (degrees, 0=N clockwise)."""
-    lat1, lat2 = math.radians(lat1), math.radians(lat2)
-    dlon = math.radians(lon2 - lon1)
-    x = math.sin(dlon) * math.cos(lat2)
-    y = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
-    return (math.degrees(math.atan2(x, y)) + 360) % 360
-
-
-def _bearing_to_cardinal(b: float) -> str:
-    return ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][round(b / 45) % 8]
-
-
-
 def _closest_link(links: List[Dict], target_heading: float) -> Dict:
     return min(
         links,
@@ -60,70 +45,6 @@ def _closest_link(links: List[Dict], target_heading: float) -> Dict:
 def _angle_diff(a: float, b: float) -> float:
     """Signed angular difference from a to b, range [-180, 180]."""
     return ((b - a + 180) % 360) - 180
-
-
-def _get_urgency_tier(dist_m: float) -> str:
-    """Classify navigation urgency based on distance to destination."""
-    if dist_m <= 150:
-        return "converge"
-    elif dist_m <= 500:
-        return "navigate"
-    else:
-        return "explore"
-
-
-def _get_wp_bearing(
-    current_lat: float,
-    current_lng: float,
-    waypoints: List[Tuple[float, float]],
-    wp_index: int,
-) -> Tuple[float, int, float]:
-    """Find nearest remaining waypoint, return bearing to the next one.
-
-    Returns:
-        (bearing, updated_wp_index, nearest_wp_dist_m)
-    """
-    current = (current_lat, current_lng)
-    nearest_idx = wp_index
-    min_dist = float("inf")
-    for i in range(wp_index, len(waypoints)):
-        d = geodesic(current, waypoints[i]).meters
-        if d < min_dist:
-            min_dist = d
-            nearest_idx = i
-    target_idx = min(nearest_idx + 1, len(waypoints) - 1)
-    bearing = _calc_bearing(current_lat, current_lng, waypoints[target_idx][0], waypoints[target_idx][1])
-    return bearing, target_idx, min_dist
-
-
-async def _get_walking_route(
-    start: Tuple[float, float],
-    dest: Tuple[float, float],
-    api_key: str,
-) -> List[Tuple[float, float]]:
-    """Google Directions API walking route → decoded polyline waypoints.
-
-    Returns list of (lat, lng) tuples along the walking route.
-    Returns empty list on failure (caller falls back to dest_bearing).
-    """
-    import httpx as _httpx
-    import polyline as pl
-
-    url = (
-        f"https://maps.googleapis.com/maps/api/directions/json"
-        f"?origin={start[0]},{start[1]}"
-        f"&destination={dest[0]},{dest[1]}"
-        f"&mode=walking"
-        f"&key={api_key}"
-    )
-    async with _httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-    data = resp.json()
-    if data.get("status") != "OK" or not data.get("routes"):
-        return []
-    encoded = data["routes"][0]["overview_polyline"]["points"]
-    return pl.decode(encoded)  # [(lat, lng), ...]
 
 
 class CityWalkAgent(BaseAgent):
@@ -2574,19 +2495,11 @@ class CityWalkAgent(BaseAgent):
         )
 
         # Directions API — get walking route waypoints for bearing guidance
-        route_waypoints: List[Tuple[float, float]] = []
-        route_wp_index: int = 0
-        REROUTE_THRESHOLD_M = 80
-
-        try:
-            route_waypoints = await _get_walking_route(
-                (start_lat, start_lng), (dest_lat, dest_lng),
-                settings.google_maps_api_key,
-            )
-            self.logger.info(f"Directions API: {len(route_waypoints)} waypoints")
-        except Exception as e:
-            self.logger.warning(f"Directions API failed, falling back to dest_bearing: {e}")
-            route_waypoints = []
+        self.planner.reset()
+        await self.planner.init_route(
+            (start_lat, start_lng), (dest_lat, dest_lng),
+            settings.google_maps_api_key,
+        )
 
         # Gating state — track last analyzed position for 3-signal gating
         last_analyzed_lat: Optional[float] = None
@@ -2629,10 +2542,13 @@ class CityWalkAgent(BaseAgent):
                 self.logger.info(f"Step {step}: ARRIVED — dist={dist_m:.0f}m")
                 break
 
-            # 3. Destination context
-            dest_bearing = _calc_bearing(current_lat, current_lng, dest_lat, dest_lng)
-            cardinal = _bearing_to_cardinal(dest_bearing)
-            dest_context = f"{cardinal} ({dest_bearing:.0f}°), {dist_m:.0f}m away"
+            # 3. Navigation context
+            nav = self.planner.get_navigation_context(
+                current_lat, current_lng, dest_lat, dest_lng,
+            )
+            dest_bearing = nav["dest_bearing"]
+            cardinal = nav["dest_cardinal"]
+            dest_context = nav["dest_context"]
 
             # 4. Gating decision — should we analyze this pano?
             is_intersection = len(links) >= 3
@@ -2809,37 +2725,26 @@ class CityWalkAgent(BaseAgent):
 
             if (is_intersection or trigger_reason is not None) and analysis:
                 try:
-                    # Compute wp_bearing from Directions API route if available
-                    urgency_tier = _get_urgency_tier(dist_m)
+                    # Re-route if deviation exceeds threshold
+                    urgency_tier = nav["urgency_tier"]
+                    wp_bearing = nav["wp_bearing"]
+                    nearest_wp_dist = nav["nearest_wp_dist_m"]
 
-                    if route_waypoints:
-                        wp_bearing, route_wp_index, nearest_wp_dist = _get_wp_bearing(
-                            current_lat, current_lng, route_waypoints, route_wp_index,
+                    if nearest_wp_dist is not None and nearest_wp_dist >= self.planner.reroute_threshold_m:
+                        self.logger.info(
+                            f"Step {step}: route deviation {nearest_wp_dist:.0f}m — re-routing"
                         )
-                        if nearest_wp_dist >= REROUTE_THRESHOLD_M:
-                            self.logger.info(
-                                f"Step {step}: route deviation {nearest_wp_dist:.0f}m — re-routing"
+                        rerouted = await self.planner.check_and_reroute(
+                            current_lat, current_lng, dest_lat, dest_lng,
+                            settings.google_maps_api_key,
+                        )
+                        if rerouted:
+                            nav = self.planner.get_navigation_context(
+                                current_lat, current_lng, dest_lat, dest_lng,
                             )
-                            try:
-                                route_waypoints = await _get_walking_route(
-                                    (current_lat, current_lng), (dest_lat, dest_lng),
-                                    settings.google_maps_api_key,
-                                )
-                                route_wp_index = 0
-                                if route_waypoints:
-                                    wp_bearing, route_wp_index, nearest_wp_dist = _get_wp_bearing(
-                                        current_lat, current_lng, route_waypoints, route_wp_index,
-                                    )
-                            except Exception as e:
-                                self.logger.warning(f"Step {step}: re-route failed: {e}")
-
-                        wp_cardinal = _bearing_to_cardinal(wp_bearing)
-                        dest_context = (
-                            f"Route direction: {wp_cardinal} ({wp_bearing:.0f}°) — "
-                            f"follow this bearing to stay on the walking route. "
-                            f"Destination: {cardinal} ({dest_bearing:.0f}°), {dist_m:.0f}m away. "
-                            f"Urgency: {urgency_tier}"
-                        )
+                            wp_bearing = nav["wp_bearing"]
+                            nearest_wp_dist = nav["nearest_wp_dist_m"]
+                            dest_context = nav["dest_context"]
 
                     if step_callback:
                         await step_callback({
@@ -2996,9 +2901,9 @@ class CityWalkAgent(BaseAgent):
                 "visual_change": visual_change,
                 "image_path": str(saved_image_path) if saved_image_path else None,
                 "confidence": step_confidence,
-                "wp_bearing": round(wp_bearing, 1) if (route_waypoints and wp_bearing is not None) else None,
-                "urgency_tier": urgency_tier if route_waypoints else None,
-                "route_deviation_m": round(nearest_wp_dist, 1) if (route_waypoints and nearest_wp_dist is not None) else None,
+                "wp_bearing": round(wp_bearing, 1) if (self.planner.route_waypoints and wp_bearing is not None) else None,
+                "urgency_tier": urgency_tier if self.planner.route_waypoints else None,
+                "route_deviation_m": round(nearest_wp_dist, 1) if (self.planner.route_waypoints and nearest_wp_dist is not None) else None,
                 "branch_candidates": [
                     {
                         "direction": c["direction"],
@@ -3046,6 +2951,7 @@ class CityWalkAgent(BaseAgent):
             "analyzed_steps": analyzed_step_count,
             "total_steps": step + 1,
             "skip_rate": round(1 - analyzed_step_count / max(step + 1, 1), 2),
+            "planner_summary": self.planner.get_summary(),
             "memory_debug": {
                 "snapshots": memory_manager._route_snapshots,
                 "episodes": memory_manager._route_reasoning_log,
