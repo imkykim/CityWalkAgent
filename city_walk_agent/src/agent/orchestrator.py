@@ -2588,6 +2588,14 @@ class CityWalkAgent(BaseAgent):
             self.logger.warning(f"Directions API failed, falling back to dest_bearing: {e}")
             route_waypoints = []
 
+        # Gating state — track last analyzed position for 3-signal gating
+        last_analyzed_lat: Optional[float] = None
+        last_analyzed_lng: Optional[float] = None
+        last_analyzed_heading: Optional[float] = None
+        last_analysis_scores: Dict = {}
+        last_analysis_reasoning: Dict = {}
+        analyzed_step_count: int = 0
+
         for step in range(max_steps):
             # Hard stop: same pano visited 5+ times
             if visit_counts.get(pano_id, 0) >= 5:
@@ -2626,7 +2634,52 @@ class CityWalkAgent(BaseAgent):
             cardinal = _bearing_to_cardinal(dest_bearing)
             dest_context = f"{cardinal} ({dest_bearing:.0f}°), {dist_m:.0f}m away"
 
-            # 4. Analyze current pano (System 1)
+            # 4. Gating decision — should we analyze this pano?
+            is_intersection = len(links) >= 3
+            current_primary_heading = float(links[0].get("heading") or links[0].get("yawDeg") or 0)
+
+            should_analyze = False
+            heading_delta: float = 0.0
+            dist_from_last: float = 0.0
+
+            if step == 0 or is_intersection:
+                should_analyze = True
+            else:
+                if last_analyzed_heading is not None:
+                    heading_delta = abs(
+                        ((current_primary_heading - last_analyzed_heading) + 180) % 360 - 180
+                    )
+                    if heading_delta > 30:
+                        should_analyze = True
+                if not should_analyze and last_analyzed_lat is not None:
+                    dist_from_last = geodesic(
+                        (last_analyzed_lat, last_analyzed_lng), (current_lat, current_lng)
+                    ).meters
+                    if dist_from_last > 30:
+                        should_analyze = True
+
+            if not should_analyze:
+                self.logger.debug(
+                    f"Step {step}: SKIP (heading_Δ={heading_delta:.0f}°, dist={dist_from_last:.0f}m)"
+                )
+                # Skip: no image download, no VLM, no S2, no callback, no route_taken
+                # Simple navigation: follow dest_bearing closest link
+                visit_counts[pano_id] = visit_counts.get(pano_id, 0) + 1
+                ref = current_intended_heading if current_intended_heading is not None else dest_bearing
+                unvisited = [
+                    l for l in links
+                    if visit_counts.get(l.get("panoId") or l.get("id"), 0) == 0
+                ]
+                target = unvisited if unvisited else links
+                next_link = _closest_link(target, ref)
+                next_pano_id = next_link.get("panoId") or next_link.get("id")
+                if not next_pano_id:
+                    self.logger.warning(f"Step {step}: no next pano — stopping")
+                    break
+                pano_id = next_pano_id
+                continue
+
+            # 5. Analyze current pano (System 1)
             analysis = None
             image_path = None
             saved_image_path = None
@@ -2652,7 +2705,7 @@ class CityWalkAgent(BaseAgent):
                 image_path = Path(tmp.name)
 
                 try:
-                    # pHash 계산
+                    # pHash — only updated on analyzed steps
                     current_hash = imagehash.phash(Image.open(image_path))
                     phash_distance = (
                         float(current_hash - prev_image_hash)
@@ -2696,7 +2749,7 @@ class CityWalkAgent(BaseAgent):
                 phash_distance = None
                 visual_change = True
 
-            # 5. Update memory (S2 trigger logic)
+            # 6. Update memory (S2 trigger logic)
             trigger_reason = None
             if analysis:
                 current_avg = (
@@ -2707,12 +2760,12 @@ class CityWalkAgent(BaseAgent):
 
                 trigger_reason = self.persona_reasoner.should_trigger(
                     waypoint_id=step,
-                    visual_change=False,  # pHash 없음 — 교차로 트리거는 아래 별도 처리
+                    visual_change=False,
                     score_delta=score_delta,
                     distance_from_last=distance_from_last_trigger,
                 )
 
-                if len(links) >= 3:
+                if is_intersection:
                     if trigger_reason is None:
                         trigger_reason = TriggerReason.INTERSECTION
                     self.logger.debug(f"Step {step}: intersection trigger")
@@ -2728,7 +2781,7 @@ class CityWalkAgent(BaseAgent):
 
                 prev_avg_score = current_avg
 
-            # 6. All links as candidates — exclude the direction we came from
+            # 7. All links as candidates — exclude the direction we came from
             came_from_heading = (
                 (current_intended_heading + 180) % 360
                 if current_intended_heading is not None else None
@@ -2739,15 +2792,13 @@ class CityWalkAgent(BaseAgent):
                 if came_from_heading is None or
                    abs(((float(l.get("heading") or l.get("yawDeg") or 0)) - came_from_heading + 180) % 360 - 180) > 45
             ]
-            # Fallback: if all links were filtered (dead end after U-turn), use all
             if not candidate_headings:
                 candidate_headings = [
                     float(l.get("heading") or l.get("yawDeg") or 0)
                     for l in links
                 ]
 
-            # 7. Choose direction
-            is_intersection = len(links) >= 3
+            # 8. Choose direction
             chosen_heading = candidate_headings[0]
             recommendation = None
             step_confidence: Optional[float] = None
@@ -2765,7 +2816,6 @@ class CityWalkAgent(BaseAgent):
                         wp_bearing, route_wp_index, nearest_wp_dist = _get_wp_bearing(
                             current_lat, current_lng, route_waypoints, route_wp_index,
                         )
-                        # Re-route if too far from planned path
                         if nearest_wp_dist >= REROUTE_THRESHOLD_M:
                             self.logger.info(
                                 f"Step {step}: route deviation {nearest_wp_dist:.0f}m — re-routing"
@@ -2791,7 +2841,6 @@ class CityWalkAgent(BaseAgent):
                             f"Urgency: {urgency_tier}"
                         )
 
-                    # Notify frontend that branch exploration is starting
                     if step_callback:
                         await step_callback({
                             "__event__": "branch_start",
@@ -2856,7 +2905,6 @@ class CityWalkAgent(BaseAgent):
                         )
                 except Exception as e:
                     self.logger.warning(f"Step {step}: branch error — {e}")
-                    # fallback: 가던 방향 유지
                     ref = current_intended_heading if current_intended_heading is not None else dest_bearing
                     chosen_heading = float(
                         _closest_link(links, ref).get("heading")
@@ -2865,7 +2913,7 @@ class CityWalkAgent(BaseAgent):
                     )
 
             else:
-                # 직선 + S2 없음 → 가던 방향 유지
+                # Straight + no S2 — maintain heading
                 if current_intended_heading is not None:
                     chosen_heading = float(
                         _closest_link(links, current_intended_heading).get("heading")
@@ -2873,7 +2921,7 @@ class CityWalkAgent(BaseAgent):
                         or 0
                     )
                 else:
-                    # 첫 스텝: 목적지 방향으로 초기화
+                    # First analyzed step: initialise toward destination
                     chosen_heading = float(
                         _closest_link(links, dest_bearing).get("heading")
                         or _closest_link(links, dest_bearing).get("yawDeg")
@@ -2884,7 +2932,15 @@ class CityWalkAgent(BaseAgent):
                         f"Step {step}: initial heading → {chosen_heading:.0f}° (toward dest)"
                     )
 
-            # 8. Find next pano — if branch explored lookahead, jump to its last pano
+            # Update gating state after successful analysis
+            last_analyzed_lat = current_lat
+            last_analyzed_lng = current_lng
+            last_analyzed_heading = chosen_heading
+            last_analysis_scores = analysis.persona_scores if analysis else last_analysis_scores
+            last_analysis_reasoning = analysis.persona_reasoning if analysis else last_analysis_reasoning
+            analyzed_step_count += 1
+
+            # 9. Find next pano — if branch explored lookahead, jump to its last pano
             branch_last_pano: Optional[str] = None
             if branch_result:
                 chosen_candidate = next(
@@ -2916,7 +2972,7 @@ class CityWalkAgent(BaseAgent):
                 self.logger.warning(f"Step {step}: no next pano — stopping")
                 break
 
-            # 9. Record step
+            # 10. Record step
             step_result = {
                 "step": step,
                 "pano_id": pano_id,
@@ -2987,6 +3043,9 @@ class CityWalkAgent(BaseAgent):
             "final_distance_m": round(final_dist, 1),
             "route_taken": route_taken,
             "persona": getattr(self.personality, "name", "objective"),
+            "analyzed_steps": analyzed_step_count,
+            "total_steps": step + 1,
+            "skip_rate": round(1 - analyzed_step_count / max(step + 1, 1), 2),
             "memory_debug": {
                 "snapshots": memory_manager._route_snapshots,
                 "episodes": memory_manager._route_reasoning_log,
@@ -3022,6 +3081,7 @@ class CityWalkAgent(BaseAgent):
 
         self.logger.info(
             f"Walk complete | arrived={arrived} steps={len(route_taken)} "
+            f"analyzed={analyzed_step_count}/{step + 1} steps "
             f"final_dist={final_dist:.0f}m"
         )
         return result
