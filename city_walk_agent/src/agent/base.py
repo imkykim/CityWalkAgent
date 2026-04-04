@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
-from src.utils.logging import get_logger
+from src.agent.logger import get_agent_logger
 
 if TYPE_CHECKING:
     from src.agent.memory import LongTermMemory
@@ -93,7 +93,7 @@ class BaseAgent(ABC):
         """
         self.metadata = metadata
         self.state = initial_state or AgentState()
-        self.logger = get_logger(f"agent.{metadata.agent_id}")
+        self.logger = get_agent_logger(metadata.agent_id)
 
         # Lazy-loaded components (initialized on first access)
         self._pipeline = None
