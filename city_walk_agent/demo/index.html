@@ -1018,6 +1018,7 @@
     let walkStepCount = 0;
     let destMarker = null;
     let walkCircles = [];
+    let plannedRouteLine = null;
     // Branch visualization state
     let branchGhostMarkers = [];
     let branchLines = [];
@@ -1727,6 +1728,7 @@
             if (msg.type === 'branch_start')    handleBranchStart(msg.data);
             if (msg.type === 'branch_progress') handleBranchProgress(msg.data);
             if (msg.type === 'route_report')    handleRouteReport(msg.data);
+            if (msg.type === 'planned_route')   handlePlannedRoute(msg.data);
             if (msg.type === 'error') {
               const errMsg = msg.data?.message || 'Walk error';
               showAnalysisBadge(false);
@@ -1972,6 +1974,23 @@
       cards.classList.add('active');
       center.classList.add('branch-active');
       document.getElementById('bp-center-label').textContent = 'Branch Evaluation';
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // PLANNED ROUTE POLYLINE
+    // ═══════════════════════════════════════════════════════
+
+    function handlePlannedRoute(data) {
+      if (plannedRouteLine) { map.removeLayer(plannedRouteLine); plannedRouteLine = null; }
+      if (!data.waypoints || !data.waypoints.length) return;
+      plannedRouteLine = L.polyline(data.waypoints, {
+        color: '#6366f1',
+        weight: 2.5,
+        opacity: 0.3,
+        dashArray: '8, 6',
+      }).addTo(map);
+      plannedRouteLine.bringToBack();
+      log(`Planned route: ${data.waypoints.length} waypoints`, 'info');
     }
 
     // ═══════════════════════════════════════════════════════
@@ -2394,7 +2413,8 @@ Respond ONLY with valid JSON (no markdown, no explanation):
         if (navPolyline) { map.removeLayer(navPolyline); navPolyline = null; }
         walkSegments.forEach(s => map.removeLayer(s)); walkSegments = [];
         prevNavLatLng = null;
-        if (destMarker)  { map.removeLayer(destMarker);  destMarker  = null; }
+        if (destMarker)       { map.removeLayer(destMarker);       destMarker       = null; }
+        if (plannedRouteLine) { map.removeLayer(plannedRouteLine); plannedRouteLine = null; }
         walkCircles.forEach(c => map.removeLayer(c)); walkCircles = [];
         navPoints = [];
       }

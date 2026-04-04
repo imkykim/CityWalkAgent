@@ -501,6 +501,11 @@ class AutonomousWalkRunner:
             (start_lat, start_lng), (dest_lat, dest_lng),
             settings.google_maps_api_key,
         )
+        if step_callback and self.planner.route_waypoints:
+            await step_callback({
+                "__event__": "planned_route",
+                "waypoints": [[lat, lng] for lat, lng in self.planner.route_waypoints],
+            })
 
         # Gating state — track last analyzed position for 3-signal gating
         last_analyzed_lat: Optional[float] = None
@@ -749,6 +754,11 @@ class AutonomousWalkRunner:
                             wp_bearing = nav["wp_bearing"]
                             nearest_wp_dist = nav["nearest_wp_dist_m"]
                             dest_context = nav["dest_context"]
+                            if step_callback and self.planner.route_waypoints:
+                                await step_callback({
+                                    "__event__": "planned_route",
+                                    "waypoints": [[lat, lng] for lat, lng in self.planner.route_waypoints],
+                                })
 
                     if step_callback:
                         await step_callback({
