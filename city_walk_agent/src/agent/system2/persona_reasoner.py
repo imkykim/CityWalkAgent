@@ -132,6 +132,7 @@ class PersonaReasoner:
         # State tracking
         self.last_trigger_waypoint: Optional[int] = None
         self.reasoning_history: List[ReasoningResult] = []
+        self._last_snapshot_waypoint: int = 0
 
         # Sub-components
         self.interpreter = Interpreter(framework_id=framework_id)
@@ -229,6 +230,20 @@ class PersonaReasoner:
         """
         start = time.time()
 
+        # Phase 1: Reporter generates snapshot FIRST (no LLM)
+        snapshot = self.reporter.generate_snapshot(
+            stm_context=stm_context,
+            last_snapshot_waypoint=self._last_snapshot_waypoint,
+            current_waypoint_id=waypoint_id,
+        )
+        self._last_snapshot_waypoint = waypoint_id
+
+        # Inject current snapshot into ltm_patterns for Interpreter/Decider context
+        if ltm_patterns is None:
+            ltm_patterns = {"snapshots": [], "reasoning_episodes": []}
+        ltm_patterns = {**ltm_patterns}  # shallow copy
+        ltm_patterns["snapshots"] = list(ltm_patterns.get("snapshots", [])) + [snapshot]
+
         interpretation = self.interpreter.interpret_waypoint(
             waypoint_id=waypoint_id,
             system1_scores=system1_scores,
@@ -250,18 +265,23 @@ class PersonaReasoner:
             dimension_ids=self.dimension_ids,
             dimensions=self.dimensions,
         )
+
+        # Phase 2: Reporter generates episode (1 LLM call)
+        episode = self.reporter.generate_episode(
+            waypoint_id=waypoint_id,
+            interpretation=interpretation,
+            decision=decision,
+            system1_scores=system1_scores,
+            personality=personality,
+            trigger_reason=trigger_reason,
+            snapshot=snapshot,
+        )
+
         plan = self._plan(
             waypoint_id=waypoint_id,
             decision=decision,
             stm_context=stm_context,
             route_metadata=route_metadata,
-            personality=personality,
-        )
-        report = self.reporter.report_waypoint(
-            waypoint_id=waypoint_id,
-            interpretation=interpretation,
-            decision=decision,
-            plan=plan,
             personality=personality,
         )
 
@@ -277,8 +297,8 @@ class PersonaReasoner:
             decision_reason=decision.get("reason"),
             prediction=plan.get("prediction"),
             alternative_suggestion=plan.get("alternative"),
-            recommendation=report.get("message"),
-            confidence=report.get("confidence", 0.5),
+            recommendation=episode.get("narrative"),
+            confidence=float(decision.get("confidence", 0.5)),
             used_stm_context=bool(stm_context),
             used_ltm_patterns=bool(ltm_patterns),
             personality_factor=getattr(personality, "name", "unknown"),
@@ -293,6 +313,10 @@ class PersonaReasoner:
                 ),
             },
         )
+
+        # Attach Reporter artifacts for the caller (orchestrator) to store
+        result._snapshot = snapshot
+        result._episode = episode
 
         self.reasoning_history.append(result)
 

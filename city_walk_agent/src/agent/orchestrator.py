@@ -1083,14 +1083,16 @@ class CityWalkAgent(BaseAgent):
 
                     reasoning_results.append(reasoning_result)
 
-                    # Update STM with reasoning result for sequential context
+                    # Extract Reporter artifacts and update memory
+                    snapshot = getattr(reasoning_result, "_snapshot", None)
+                    episode = getattr(reasoning_result, "_episode", None)
+                    if snapshot:
+                        memory_manager._route_snapshots.append(snapshot)
                     memory_manager.update_with_system2_result(
                         waypoint_id=analysis.waypoint_id,
                         reasoning_result=reasoning_result,
+                        episode=episode or {},
                     )
-
-                    # TODO: Narrative will be handled by PersonaReasoner._report()
-                    # when System 2 is complete.
 
                     self.logger.info(
                         f"WP {analysis.waypoint_id:>3}   S2 {context['trigger_reason'].value:<20}"
@@ -1664,14 +1666,16 @@ class CityWalkAgent(BaseAgent):
 
                     reasoning_results.append(reasoning_result)
 
-                    # Update STM with reasoning result for sequential context
+                    # Extract Reporter artifacts and update memory
+                    snapshot = getattr(reasoning_result, "_snapshot", None)
+                    episode = getattr(reasoning_result, "_episode", None)
+                    if snapshot:
+                        memory_manager._route_snapshots.append(snapshot)
                     memory_manager.update_with_system2_result(
                         waypoint_id=analysis.waypoint_id,
                         reasoning_result=reasoning_result,
+                        episode=episode or {},
                     )
-
-                    # TODO: Narrative will be handled by PersonaReasoner._report()
-                    # when System 2 is complete.
 
                     self.logger.info(
                         f"WP {analysis.waypoint_id:>3}   S2 {context['trigger_reason'].value:<20}"
@@ -2802,7 +2806,9 @@ class CityWalkAgent(BaseAgent):
                             confidence=branch_result.get("confidence", 0.5),
                             system1_scores=analysis.persona_scores,
                         )
-                        memory_manager.update_with_system2_result(step, branch_reasoning_result)
+                        memory_manager.update_with_system2_result(
+                            step, branch_reasoning_result, episode=None,
+                        )
                         self.logger.debug(
                             f"Step {step}: branch result logged to LTM episodes"
                             f" | significance={'high' if is_intersection else 'medium'}"

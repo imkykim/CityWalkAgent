@@ -48,7 +48,6 @@ Usage::
 
 from __future__ import annotations
 
-import statistics
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -366,100 +365,6 @@ class MemoryManager:
         summary = ". ".join(parts[:2])
         return summary[:120] if summary else f"Waypoint {waypoint_analysis.waypoint_id}"
 
-    def _generate_snapshot(self, current_waypoint_id: int) -> Dict[str, Any]:
-        """Generate a route snapshot from STM data since last snapshot."""
-        stm_context = self.stm.get_context()
-        if not stm_context or not stm_context.get("recent_scores"):
-            return {
-                "span_start": self._last_snapshot_waypoint,
-                "span_end": current_waypoint_id,
-                "trend": "stable",
-                "avg": {},
-                "trajectory": 0.0,
-                "worst_dimension": None,
-                "barrier_segments": [],
-            }
-
-        waypoint_ids = stm_context.get("waypoint_ids", [])
-        recent_scores = stm_context["recent_scores"]
-
-        # Filter to items since last snapshot
-        span_items = [
-            (wid, scores)
-            for wid, scores in zip(waypoint_ids, recent_scores)
-            if wid >= self._last_snapshot_waypoint
-        ]
-
-        if not span_items:
-            span_items = list(zip(waypoint_ids, recent_scores))
-
-        span_ids = [wid for wid, _ in span_items]
-        all_scores = [scores for _, scores in span_items]
-        n = len(all_scores)
-
-        wp_avgs = [
-            sum(s.values()) / len(s) for s in all_scores if s
-        ]
-
-        # Trend
-        if len(wp_avgs) >= 2:
-            mid = max(1, n // 2)
-            first_half_avg = sum(wp_avgs[:mid]) / mid
-            second_half_avg = sum(wp_avgs[mid:]) / max(1, n - mid)
-            diff = second_half_avg - first_half_avg
-            if abs(diff) < 0.3:
-                trend = "stable"
-            elif diff > 0:
-                trend = "improving"
-            else:
-                trend = "declining"
-            try:
-                vol = statistics.stdev(wp_avgs)
-                if vol > 1.5:
-                    trend = "volatile"
-            except Exception:
-                pass
-            trajectory = round(wp_avgs[-1] - wp_avgs[0], 2)
-        else:
-            trend = "stable"
-            trajectory = 0.0
-
-        # Per-dimension averages
-        dimensions = list(all_scores[0].keys()) if all_scores else []
-        per_dim_avg: Dict[str, float] = {}
-        for dim in dimensions:
-            dim_scores = [s.get(dim, 0.0) for s in all_scores]
-            per_dim_avg[dim] = round(sum(dim_scores) / len(dim_scores), 2)
-
-        worst_dim = min(per_dim_avg, key=per_dim_avg.get) if per_dim_avg else None
-
-        # Barrier segments: consecutive waypoints with avg < 4.5
-        barrier_segments: List[Tuple[int, int]] = []
-        seg_start = None
-        for i, avg in enumerate(wp_avgs):
-            wp_id = span_ids[i]
-            if avg < 4.5:
-                if seg_start is None:
-                    seg_start = wp_id
-            else:
-                if seg_start is not None and i >= 1:
-                    end_id = span_ids[i - 1]
-                    if end_id != seg_start:
-                        barrier_segments.append((seg_start, end_id))
-                seg_start = None
-        if seg_start is not None:
-            barrier_segments.append((seg_start, span_ids[-1]))
-
-        return {
-            "span_start": span_ids[0] if span_ids else self._last_snapshot_waypoint,
-            "span_end": current_waypoint_id,
-            "trend": trend,
-            "avg": per_dim_avg,
-            "trajectory": trajectory,
-            "worst_dimension": worst_dim,
-            "barrier_segments": barrier_segments,
-        }
-
     # ========================================================================
     # Context Preparation for System 2
     # ========================================================================
@@ -531,20 +436,6 @@ class MemoryManager:
         )
         objective_reasoning = getattr(
             waypoint_analysis, "objective_reasoning", getattr(waypoint_analysis, "neutral_reasoning", {})
-        )
-
-        snapshot = self._generate_snapshot(waypoint_analysis.waypoint_id)
-        self._route_snapshots.append(snapshot)
-        self._last_snapshot_waypoint = waypoint_analysis.waypoint_id
-        self.logger.debug(
-            "Snapshot generated for S2 context",
-            span_start=snapshot.get("span_start"),
-            span_end=snapshot.get("span_end"),
-            trend=snapshot.get("trend"),
-            worst_dimension=snapshot.get("worst_dimension"),
-            trajectory=snapshot.get("trajectory"),
-            barrier_segments=snapshot.get("barrier_segments", []),
-            reasoning_episodes=len(self._route_reasoning_log),
         )
 
         context = {
@@ -686,21 +577,35 @@ class MemoryManager:
         return context
 
     def update_with_system2_result(
-        self, waypoint_id: int, reasoning_result: Any  # ReasoningResult
+        self,
+        waypoint_id: int,
+        reasoning_result: Any,  # ReasoningResult
+        episode: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Update memory state with System 2 reasoning output."""
+        """Update memory state with System 2 reasoning output.
+
+        Args:
+            waypoint_id: Waypoint that was reasoned about.
+            reasoning_result: ReasoningResult from PersonaReasoner.
+            episode: Pre-built episode dict from Reporter.generate_episode().
+                     If provided, appended directly to route_reasoning_log.
+                     If None, falls back to building episode from reasoning_result attributes.
+        """
         self._system2_results[waypoint_id] = reasoning_result
 
-        self._route_reasoning_log.append({
-            "waypoint_id": waypoint_id,
-            "significance": getattr(reasoning_result, "significance", "medium"),
-            "avoid": getattr(reasoning_result, "avoid_recommendation", False),
-            "interpretation": getattr(reasoning_result, "interpretation", ""),
-            "key_concern": getattr(reasoning_result, "key_concern", None),
-            "score_change_reason": getattr(reasoning_result, "score_change_reason", None),
-            "scores": getattr(reasoning_result, "system1_scores", {}),
-            "trigger_reason": getattr(reasoning_result, "trigger_reason", None),
-        })
+        if episode:
+            self._route_reasoning_log.append(episode)
+        else:
+            self._route_reasoning_log.append({
+                "waypoint_id": waypoint_id,
+                "significance": getattr(reasoning_result, "significance", "medium"),
+                "avoid": getattr(reasoning_result, "avoid_recommendation", False),
+                "interpretation": getattr(reasoning_result, "interpretation", ""),
+                "key_concern": getattr(reasoning_result, "key_concern", None),
+                "score_change_reason": getattr(reasoning_result, "score_change_reason", None),
+                "scores": getattr(reasoning_result, "system1_scores", {}),
+                "trigger_reason": getattr(reasoning_result, "trigger_reason", None),
+            })
 
         self.logger.debug(
             "Updated memory with System 2 result",
