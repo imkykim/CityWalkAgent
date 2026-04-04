@@ -2948,6 +2948,39 @@ class CityWalkAgent(BaseAgent):
             (current_lat, current_lng), (dest_lat, dest_lng)
         ).meters
 
+        # Generate route-level report
+        route_report = None
+        try:
+            all_scores = [s["scores"] for s in route_taken if s.get("scores")]
+            dim_avgs: Dict[str, float] = {}
+            if all_scores:
+                for dim in list(all_scores[0].keys()):
+                    vals = [s[dim] for s in all_scores if dim in s]
+                    dim_avgs[dim] = round(sum(vals) / len(vals), 2) if vals else 0.0
+
+            route_report = self.reporter.report_route(
+                snapshots=memory_manager._route_snapshots,
+                episodes=memory_manager._route_reasoning_log,
+                route_stats={
+                    "steps": len(route_taken),
+                    "analyzed_steps": analyzed_step_count,
+                    "skip_rate": round(1 - analyzed_step_count / max(step + 1, 1), 2),
+                    "arrived": arrived,
+                    "final_distance_m": round(final_dist, 1),
+                    "duration_seconds": round(time.time() - walk_start_ts, 1),
+                    "dimension_avgs": dim_avgs,
+                },
+                planner_summary=self.planner.get_summary(),
+                personality=self.personality,
+            )
+            self.logger.info(f"Route report generated: {route_report.get('recommendation', '?')}")
+        except Exception as e:
+            self.logger.warning(f"Route report generation failed: {e}")
+
+        # Send route_report via SSE before "complete"
+        if step_callback and route_report:
+            await step_callback({"__event__": "route_report", **route_report})
+
         result = {
             "arrived": arrived,
             "steps": len(route_taken),
@@ -2958,6 +2991,7 @@ class CityWalkAgent(BaseAgent):
             "total_steps": step + 1,
             "skip_rate": round(1 - analyzed_step_count / max(step + 1, 1), 2),
             "planner_summary": self.planner.get_summary(),
+            "route_report": route_report,
             "memory_debug": {
                 "snapshots": memory_manager._route_snapshots,
                 "episodes": memory_manager._route_reasoning_log,

@@ -739,6 +739,7 @@ async def walk_start(body: WalkStartBody):
                 "steps": result.get("steps"),
                 "final_distance_m": result.get("final_distance_m"),
                 "persona": result.get("persona"),
+                "route_report": result.get("route_report"),
                 "memory_debug": {
                     "snapshot_count": len(mem.get("snapshots") or []),
                     "episode_count": len(mem.get("episodes") or []),

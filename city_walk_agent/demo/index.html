@@ -683,6 +683,88 @@
         font-size: 14px; cursor: pointer;
         filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
       }
+
+      /* ── Route Report Panel ── */
+      #route-report-overlay {
+        display: none;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.5);
+        z-index: 9999;
+        justify-content: center;
+        align-items: center;
+      }
+      #route-report-overlay.active { display: flex; }
+      #route-report-panel {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 24px;
+        max-width: 520px;
+        width: 90vw;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+        position: relative;
+      }
+      #route-report-panel .rr-close {
+        position: absolute; top: 12px; right: 16px;
+        background: none; border: none; font-size: 18px;
+        color: var(--text-3); cursor: pointer;
+      }
+      #route-report-panel .rr-close:hover { color: var(--text-1); }
+      #route-report-panel .rr-title {
+        font-size: 16px; font-weight: 700; color: var(--text-1);
+        margin-bottom: 4px;
+      }
+      #route-report-panel .rr-persona {
+        font-size: 11px; color: var(--text-3); margin-bottom: 16px;
+      }
+      #route-report-panel .rr-badge {
+        display: inline-block; padding: 3px 10px; border-radius: 12px;
+        font-size: 11px; font-weight: 600; margin-bottom: 12px;
+      }
+      .rr-badge.recommended { background: #d1fae5; color: #065f46; }
+      .rr-badge.acceptable  { background: #fef3c7; color: #92400e; }
+      .rr-badge.avoid        { background: #fee2e2; color: #991b1b; }
+      #route-report-panel .rr-section { margin-bottom: 14px; }
+      #route-report-panel .rr-section-title {
+        font-size: 11px; font-weight: 600; color: var(--text-3);
+        text-transform: uppercase; letter-spacing: 0.5px;
+        margin-bottom: 4px;
+      }
+      #route-report-panel .rr-text {
+        font-size: 13px; color: var(--text-1); line-height: 1.5;
+      }
+      #route-report-panel .rr-dim-grid {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+      }
+      #route-report-panel .rr-dim-item {
+        background: var(--surface); border-radius: 8px; padding: 8px 10px;
+      }
+      #route-report-panel .rr-dim-label {
+        font-size: 10px; font-weight: 600; color: var(--text-3);
+        text-transform: uppercase; margin-bottom: 2px;
+      }
+      #route-report-panel .rr-dim-verdict {
+        font-size: 12px; color: var(--text-1); line-height: 1.4;
+      }
+      #route-report-panel .rr-highlights {
+        list-style: none; padding: 0; margin: 0;
+      }
+      #route-report-panel .rr-highlights li {
+        font-size: 12px; color: var(--text-1); padding: 4px 0;
+        border-bottom: 1px solid var(--border);
+      }
+      #route-report-panel .rr-highlights li:last-child { border-bottom: none; }
+      .rr-hl-tag {
+        display: inline-block; font-size: 9px; font-weight: 600;
+        padding: 1px 5px; border-radius: 4px; margin-right: 4px;
+      }
+      .rr-hl-tag.highlight  { background: #d1fae5; color: #065f46; }
+      .rr-hl-tag.barrier    { background: #fee2e2; color: #991b1b; }
+      .rr-hl-tag.transition { background: #dbeafe; color: #1e40af; }
+      .rr-hl-tag.routine    { background: #f3f4f6; color: #6b7280; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   </head>
@@ -1644,6 +1726,7 @@
             if (msg.type === 'complete')        handleWalkComplete(msg.data);
             if (msg.type === 'branch_start')    handleBranchStart(msg.data);
             if (msg.type === 'branch_progress') handleBranchProgress(msg.data);
+            if (msg.type === 'route_report')    handleRouteReport(msg.data);
             if (msg.type === 'error') {
               const errMsg = msg.data?.message || 'Walk error';
               showAnalysisBadge(false);
@@ -2168,6 +2251,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
 
     function handleWalkComplete(result) {
       showAnalysisBadge(false);
+      if (result.route_report) handleRouteReport(result.route_report);
       const arrived = result.arrived ? '✓ Arrived' : '— Did not arrive';
       const steps = result.steps ?? walkStepCount;
       const dist = result.final_distance_m != null ? `${Math.round(result.final_distance_m)}m from dest` : '';
@@ -2190,7 +2274,98 @@ Respond ONLY with valid JSON (no markdown, no explanation):
       } catch(e) { /* ignore */ }
     }
 
+    // ═══════════════════════════════════════════════════════
+    // ROUTE REPORT
+    // ═══════════════════════════════════════════════════════
+
+    function handleRouteReport(data) {
+      log('Route report received: ' + (data.recommendation || '?'), 'ok');
+      renderRouteReport(data);
+    }
+
+    function renderRouteReport(r) {
+      const overlay  = document.getElementById('route-report-overlay');
+      const persona  = document.getElementById('rr-persona');
+      const badgeArea = document.getElementById('rr-badge-area');
+      const body     = document.getElementById('rr-body');
+
+      persona.textContent = currentPersona;
+
+      const rec = r.recommendation || 'acceptable';
+      const recLabel = rec === 'recommended' ? '✓ Recommended' : rec === 'avoid' ? '✗ Avoid' : '— Acceptable';
+      badgeArea.innerHTML = `<span class="rr-badge ${rec}">${recLabel}</span>`;
+
+      let html = '';
+
+      if (r.executive_summary) {
+        html += `<div class="rr-section">
+          <div class="rr-section-title">Summary</div>
+          <div class="rr-text">${escHtml(r.executive_summary)}</div>
+        </div>`;
+      }
+
+      if (r.score_narrative) {
+        html += `<div class="rr-section">
+          <div class="rr-section-title">Experience</div>
+          <div class="rr-text">${escHtml(r.score_narrative)}</div>
+        </div>`;
+      }
+
+      if (r.dimension_verdicts && Object.keys(r.dimension_verdicts).length) {
+        let dimHtml = '<div class="rr-dim-grid">';
+        for (const [dim, verdict] of Object.entries(r.dimension_verdicts)) {
+          dimHtml += `<div class="rr-dim-item">
+            <div class="rr-dim-label">${escHtml(dim)}</div>
+            <div class="rr-dim-verdict">${escHtml(verdict)}</div>
+          </div>`;
+        }
+        dimHtml += '</div>';
+        html += `<div class="rr-section">
+          <div class="rr-section-title">Dimensions</div>
+          ${dimHtml}
+        </div>`;
+      }
+
+      if (r.segment_highlights && r.segment_highlights.length) {
+        let hlHtml = '<ul class="rr-highlights">';
+        for (const hl of r.segment_highlights) {
+          const tag = hl.type || 'routine';
+          hlHtml += `<li>
+            <span class="rr-hl-tag ${tag}">${tag}</span>
+            WP${hl.waypoint_id}: ${escHtml(hl.description || '')}
+          </li>`;
+        }
+        hlHtml += '</ul>';
+        html += `<div class="rr-section">
+          <div class="rr-section-title">Key Moments</div>
+          ${hlHtml}
+        </div>`;
+      }
+
+      if (r.recommendation_reason || r.persona_suitability) {
+        html += `<div class="rr-section">
+          <div class="rr-section-title">Verdict</div>
+          <div class="rr-text">${escHtml(r.recommendation_reason || '')}${r.persona_suitability ? ' ' + escHtml(r.persona_suitability) : ''}</div>
+        </div>`;
+      }
+
+      if (r.navigation_note) {
+        html += `<div class="rr-section">
+          <div class="rr-section-title">Navigation</div>
+          <div class="rr-text">${escHtml(r.navigation_note)}</div>
+        </div>`;
+      }
+
+      body.innerHTML = html;
+      overlay.classList.add('active');
+    }
+
+    function closeRouteReport() {
+      document.getElementById('route-report-overlay').classList.remove('active');
+    }
+
     function autoWalkReset(clearMap = false) {
+      document.getElementById('route-report-overlay').classList.remove('active');
       if (walkEventSource) { walkEventSource.close(); walkEventSource = null; }
       currentWalkId = null;
       document.getElementById('topbar-start-btn').disabled = false;
@@ -2381,6 +2556,17 @@ Respond ONLY with valid JSON (no markdown, no explanation):
     <button id="vlm-lightbox-close" onclick="closeVlmLightbox()">✕</button>
     <img id="vlm-lightbox-img" src="" alt="Agent view" onclick="event.stopPropagation()" />
     <div id="vlm-lightbox-label"></div>
+  </div>
+
+  <!-- Route Report overlay -->
+  <div id="route-report-overlay">
+    <div id="route-report-panel">
+      <button class="rr-close" onclick="closeRouteReport()">&times;</button>
+      <div class="rr-title">Route Report</div>
+      <div class="rr-persona" id="rr-persona"></div>
+      <div id="rr-badge-area"></div>
+      <div id="rr-body"></div>
+    </div>
   </div>
   </body>
 </html>
