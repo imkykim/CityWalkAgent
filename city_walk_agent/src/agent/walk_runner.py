@@ -51,7 +51,6 @@ class AutonomousWalkRunner:
         Returns a list of dicts: [{"pano_id": ..., "heading": ..., "label": ...}, ...]
         Each entry is a future pano (not start_pano_id itself), so chain[0] is the 1st step ahead.
         """
-        import httpx
         from demo.server import MapTilesSession
 
         nav = MapTilesSession(settings.google_maps_api_key)
@@ -79,6 +78,10 @@ class AutonomousWalkRunner:
                     or next_link.get("yawDeg")
                     or current_heading
                 )
+                # Fetch metadata of the new pano to get its coordinates
+                next_meta = await nav.get_metadata(current_pano)
+                current_lat_c = next_meta.get("lat")
+                current_lng_c = next_meta.get("lng")
             except Exception as e:
                 self.logger.warning(
                     f"Pano chain advance failed at depth={depth} "
@@ -91,6 +94,8 @@ class AutonomousWalkRunner:
                 "heading": current_heading,
                 "direction_label": direction_label,
                 "depth": depth,
+                "lat": current_lat_c,
+                "lng": current_lng_c,
             })
 
         return chain
@@ -274,15 +279,30 @@ class AutonomousWalkRunner:
             last_pano_id = chain[-1]["pano_id"] if chain else branch_pano_id
             waypoint_scores: List[Dict[str, float]] = []
             waypoint_summaries: List[str] = []
+            chain_waypoints: List[Dict[str, Any]] = []  # per-pano detail for route recording
 
-            for _ in chain:
+            for slot in chain:
                 analysis = analyses[idx]
+                img_bytes = image_bytes_list[idx]
                 idx += 1
+                wp_entry: Dict[str, Any] = {
+                    "pano_id": slot["pano_id"],
+                    "heading": slot["heading"],
+                    "depth": slot["depth"],
+                    "lat": slot.get("lat"),
+                    "lng": slot.get("lng"),
+                    "scores": {},
+                    "reasoning": {},
+                    "image_base64": base64.b64encode(img_bytes).decode("utf-8") if img_bytes else None,
+                }
                 if analysis is not None:
+                    wp_entry["scores"] = dict(analysis.persona_scores)
+                    wp_entry["reasoning"] = analysis.persona_reasoning or {}
                     waypoint_scores.append(dict(analysis.persona_scores))
                     reasoning = analysis.persona_reasoning or {}
                     summary = next(iter(reasoning.values()), "").split(".")[0][:80]
                     waypoint_summaries.append(summary)
+                chain_waypoints.append(wp_entry)
 
             if not waypoint_scores:
                 direction_results.append({
@@ -297,6 +317,7 @@ class AutonomousWalkRunner:
                     "score_trend": "unknown",
                     "avg_scores": {},
                     "visit_count": (visit_counts or {}).get(branch_pano_id, 0),
+                    "chain_waypoints": chain_waypoints,
                 })
                 continue
 
@@ -326,6 +347,7 @@ class AutonomousWalkRunner:
                 "score_trend": trend,
                 "avg_scores": avg_scores,
                 "visit_count": (visit_counts or {}).get(branch_pano_id, 0),
+                "chain_waypoints": chain_waypoints,
             })
 
         direction_results.sort(key=lambda x: direction_labels.index(x["direction"]))
@@ -450,11 +472,11 @@ class AutonomousWalkRunner:
         from PIL import Image
 
         from src.agent.memory.memory_manager import MemoryManager
-        from src.agent.system2.persona_reasoner import TriggerReason, ReasoningResult
+        from src.agent.system2.persona_reasoner import TriggerReason
         from demo.server import MapTilesSession
 
         loop = asyncio.get_event_loop()
-        nav = MapTilesSession(settings.google_maps_api_key)
+        nav_session = MapTilesSession(settings.google_maps_api_key)
 
         memory_manager = MemoryManager(agent_id=f"walk_{int(time.time())}")
         if self.personality:
@@ -484,7 +506,7 @@ class AutonomousWalkRunner:
             images_dir.mkdir(parents=True, exist_ok=True)
             self.logger.image_saving_enabled(images_dir)
 
-        pano_id = await nav.coord_to_pano_id(start_lat, start_lng)
+        pano_id = await nav_session.coord_to_pano_id(start_lat, start_lng)
         if not pano_id:
             raise ValueError(f"No Street View pano at ({start_lat}, {start_lng})")
 
@@ -511,9 +533,19 @@ class AutonomousWalkRunner:
         last_analyzed_lat: Optional[float] = None
         last_analyzed_lng: Optional[float] = None
         last_analyzed_heading: Optional[float] = None
-        last_analysis_scores: Dict = {}
-        last_analysis_reasoning: Dict = {}
         analyzed_step_count: int = 0
+        skipped_step_count: int = 0
+        gating_signal_counts: Dict[str, int] = {
+            "heading": 0,
+            "distance": 0,
+            "phash": 0,
+            "intersection": 0,
+        }
+        urgency_tier_counts: Dict[str, int] = {
+            "explore": 0,
+            "navigate": 0,
+            "converge": 0,
+        }
 
         for step in range(max_steps):
             # Hard stop: same pano visited 5+ times
@@ -523,7 +555,7 @@ class AutonomousWalkRunner:
 
             # 1. Metadata
             try:
-                metadata = await nav.get_metadata(pano_id)
+                metadata = await nav_session.get_metadata(pano_id)
             except Exception as e:
                 self.logger.step_metadata_error(step=step, error=e)
                 break
@@ -547,12 +579,12 @@ class AutonomousWalkRunner:
                 break
 
             # 3. Navigation context
-            nav = self.planner.get_navigation_context(
+            nav_context = self.planner.get_navigation_context(
                 current_lat, current_lng, dest_lat, dest_lng,
             )
-            dest_bearing = nav["dest_bearing"]
-            cardinal = nav["dest_cardinal"]
-            dest_context = nav["dest_context"]
+            dest_bearing = nav_context["dest_bearing"]
+            cardinal = nav_context["dest_cardinal"]
+            dest_context = nav_context["dest_context"]
 
             # 4. Gating decision — should we analyze this pano?
             is_intersection = len(links) >= 3
@@ -561,9 +593,14 @@ class AutonomousWalkRunner:
             should_analyze = False
             heading_delta: float = 0.0
             dist_from_last: float = 0.0
+            gating_signals: List[str] = []
 
             if step == 0 or is_intersection:
                 should_analyze = True
+                if step == 0:
+                    gating_signals.append("first_step")
+                if is_intersection:
+                    gating_signals.append("intersection")
             else:
                 if last_analyzed_heading is not None:
                     heading_delta = abs(
@@ -571,12 +608,19 @@ class AutonomousWalkRunner:
                     )
                     if heading_delta > 30:
                         should_analyze = True
+                        gating_signals.append("heading")
                 if not should_analyze and last_analyzed_lat is not None:
                     dist_from_last = geodesic(
                         (last_analyzed_lat, last_analyzed_lng), (current_lat, current_lng)
                     ).meters
                     if dist_from_last > 30:
                         should_analyze = True
+                        gating_signals.append("distance")
+
+            if should_analyze:
+                for signal in gating_signals:
+                    if signal in gating_signal_counts:
+                        gating_signal_counts[signal] += 1
 
             if not should_analyze:
                 self.logger.step_skip(
@@ -586,6 +630,7 @@ class AutonomousWalkRunner:
                 )
                 # Skip: no image download, no VLM, no S2, no callback, no route_taken
                 # Simple navigation: follow dest_bearing closest link
+                skipped_step_count += 1
                 visit_counts[pano_id] = visit_counts.get(pano_id, 0) + 1
                 ref = current_intended_heading if current_intended_heading is not None else dest_bearing
                 unvisited = [
@@ -636,6 +681,10 @@ class AutonomousWalkRunner:
                     )
                     prev_image_hash = current_hash
                     visual_change = phash_distance is None or phash_distance > 30
+                    if phash_distance is not None and visual_change:
+                        gating_signal_counts["phash"] += 1
+                        if "phash" not in gating_signals:
+                            gating_signals.append("phash")
                     self.logger.step_phash(
                         step=step,
                         phash_distance=phash_distance,
@@ -676,6 +725,8 @@ class AutonomousWalkRunner:
 
             # 6. Update memory (S2 trigger logic)
             trigger_reason = None
+            reasoning_context: Optional[Dict[str, Any]] = None
+            reasoning_result = None
             if analysis:
                 current_avg = (
                     sum(analysis.persona_scores.values()) / len(analysis.persona_scores)
@@ -695,7 +746,7 @@ class AutonomousWalkRunner:
                         trigger_reason = TriggerReason.INTERSECTION
                     self.logger.step_intersection_trigger(step=step)
 
-                memory_manager.process_waypoint(
+                reasoning_context = memory_manager.process_waypoint(
                     analysis,
                     triggered=trigger_reason is not None,
                     trigger_reason=trigger_reason,
@@ -705,6 +756,51 @@ class AutonomousWalkRunner:
                     distance_from_last_trigger = 0.0
 
                 prev_avg_score = current_avg
+
+                # Run full System 2 reasoning on trigger (same pattern as orchestrator)
+                if reasoning_context is not None:
+                    route_meta = dict(reasoning_context.get("route_metadata", {}) or {})
+                    route_meta.setdefault("route_id", f"walk_{int(walk_start_ts)}")
+                    route_meta.setdefault("start", (start_lat, start_lng))
+                    route_meta.setdefault("end", (dest_lat, dest_lng))
+
+                    try:
+                        reasoning_result = await loop.run_in_executor(
+                            None,
+                            lambda: self.persona_reasoner.reason(
+                                waypoint_id=analysis.waypoint_id,
+                                trigger_reason=reasoning_context["trigger_reason"],
+                                current_image_path=reasoning_context["image_path"],
+                                system1_scores=analysis.persona_scores,
+                                system1_reasoning=analysis.persona_reasoning,
+                                stm_context=reasoning_context["stm_context"],
+                                ltm_patterns=reasoning_context.get("ltm_patterns"),
+                                personality=self.personality,
+                                route_metadata=route_meta,
+                                waypoints_since_trigger=reasoning_context.get(
+                                    "waypoints_since_trigger", 0
+                                ),
+                            ),
+                        )
+
+                        snapshot = getattr(reasoning_result, "_snapshot", None)
+                        episode = getattr(reasoning_result, "_episode", None)
+                        if snapshot:
+                            memory_manager._route_snapshots.append(snapshot)
+                        memory_manager.update_with_system2_result(
+                            waypoint_id=analysis.waypoint_id,
+                            reasoning_result=reasoning_result,
+                            episode=episode or {},
+                        )
+                        self.logger.system2_waypoint(
+                            waypoint_id=analysis.waypoint_id,
+                            trigger_reason=reasoning_context["trigger_reason"],
+                            result=reasoning_result,
+                        )
+                    except Exception as e:
+                        self.logger.warning(
+                            f"System 2 reasoning failed at step {step}: {e}"
+                        )
 
             # 7. All links as candidates — exclude the direction we came from
             came_from_heading = (
@@ -725,19 +821,31 @@ class AutonomousWalkRunner:
 
             # 8. Choose direction
             chosen_heading = candidate_headings[0]
-            recommendation = None
-            step_confidence: Optional[float] = None
+            recommendation = (
+                reasoning_result.recommendation
+                if reasoning_result is not None
+                else None
+            )
+            step_confidence: Optional[float] = (
+                float(reasoning_result.confidence)
+                if reasoning_result is not None
+                else None
+            )
             branch_result: Optional[Dict[str, Any]] = None
-            wp_bearing: Optional[float] = None
-            nearest_wp_dist: Optional[float] = None
-            urgency_tier: Optional[str] = None
+            wp_bearing: Optional[float] = nav_context.get("wp_bearing")
+            nearest_wp_dist: Optional[float] = nav_context.get("nearest_wp_dist_m")
+            urgency_tier: Optional[str] = nav_context.get("urgency_tier")
 
-            if (is_intersection or trigger_reason is not None) and analysis:
+            if (
+                (is_intersection or trigger_reason is not None)
+                and analysis
+                and len(candidate_headings) >= 2
+            ):
                 try:
                     # Re-route if deviation exceeds threshold
-                    urgency_tier = nav["urgency_tier"]
-                    wp_bearing = nav["wp_bearing"]
-                    nearest_wp_dist = nav["nearest_wp_dist_m"]
+                    urgency_tier = nav_context["urgency_tier"]
+                    wp_bearing = nav_context["wp_bearing"]
+                    nearest_wp_dist = nav_context["nearest_wp_dist_m"]
 
                     if nearest_wp_dist is not None and nearest_wp_dist >= self.planner.reroute_threshold_m:
                         self.logger.step_rerouting(
@@ -748,12 +856,12 @@ class AutonomousWalkRunner:
                             settings.google_maps_api_key,
                         )
                         if rerouted:
-                            nav = self.planner.get_navigation_context(
+                            nav_context = self.planner.get_navigation_context(
                                 current_lat, current_lng, dest_lat, dest_lng,
                             )
-                            wp_bearing = nav["wp_bearing"]
-                            nearest_wp_dist = nav["nearest_wp_dist_m"]
-                            dest_context = nav["dest_context"]
+                            wp_bearing = nav_context["wp_bearing"]
+                            nearest_wp_dist = nav_context["nearest_wp_dist_m"]
+                            dest_context = nav_context["dest_context"]
                             if step_callback and self.planner.route_waypoints:
                                 await step_callback({
                                     "__event__": "planned_route",
@@ -792,8 +900,10 @@ class AutonomousWalkRunner:
                     )
                     chosen_heading = branch_result["chosen_heading"]
                     current_intended_heading = chosen_heading
-                    recommendation = branch_result.get("reason")
-                    step_confidence = branch_result.get("confidence", 0.5)
+                    if recommendation is None:
+                        recommendation = branch_result.get("reason")
+                    if step_confidence is None:
+                        step_confidence = branch_result.get("confidence", 0.5)
                     self.logger.step_branch_choice(
                         step=step,
                         is_intersection=is_intersection,
@@ -801,31 +911,6 @@ class AutonomousWalkRunner:
                         chosen_heading=chosen_heading,
                         confidence=float(step_confidence),
                     )
-                    if analysis:
-                        branch_reasoning_result = ReasoningResult(
-                            waypoint_id=step,
-                            trigger_reason=trigger_reason or TriggerReason.VISUAL_CHANGE,
-                            interpretation=branch_result.get("reason", ""),
-                            score_change_reason=None,
-                            persona_divergence=None,
-                            key_concern=None,
-                            significance="high" if is_intersection else "medium",
-                            avoid_recommendation=False,
-                            decision_reason=branch_result.get("reason"),
-                            prediction=None,
-                            alternative_suggestion=None,
-                            recommendation=branch_result.get("reason"),
-                            confidence=branch_result.get("confidence", 0.5),
-                            system1_scores=analysis.persona_scores,
-                        )
-                        memory_manager.update_with_system2_result(
-                            step, branch_reasoning_result, episode=None,
-                        )
-                        self.logger.step_branch_logged(
-                            step=step,
-                            is_intersection=is_intersection,
-                            episodes=len(memory_manager._route_reasoning_log),
-                        )
                 except Exception as e:
                     self.logger.step_branch_error(step=step, error=e)
                     ref = current_intended_heading if current_intended_heading is not None else dest_bearing
@@ -853,22 +938,32 @@ class AutonomousWalkRunner:
                     current_intended_heading = chosen_heading
                     self.logger.step_initial_heading(step=step, chosen_heading=chosen_heading)
 
-            # Update gating state after successful analysis
-            last_analyzed_lat = current_lat
-            last_analyzed_lng = current_lng
-            last_analyzed_heading = chosen_heading
-            last_analysis_scores = analysis.persona_scores if analysis else last_analysis_scores
-            last_analysis_reasoning = analysis.persona_reasoning if analysis else last_analysis_reasoning
-            analyzed_step_count += 1
+            # Update gating state only after a successful analysis
+            analyzed_successfully = analysis is not None
+            if analyzed_successfully:
+                last_analyzed_lat = current_lat
+                last_analyzed_lng = current_lng
+                last_analyzed_heading = chosen_heading
+                analyzed_step_count += 1
 
-            # 9. Find next pano — if branch explored lookahead, jump to its last pano
+            # 9. Find next pano
+            # If branch decision explored lookahead, jump to its last pano (intended behaviour).
+            # Otherwise (single path, no branch) move exactly one pano.
             branch_last_pano: Optional[str] = None
+            chosen_candidate: Optional[Dict[str, Any]] = None
             if branch_result:
                 chosen_candidate = next(
                     (c for c in branch_result.get("candidates", [])
                      if c["direction"] == branch_result["chosen_direction"]),
                     None,
                 )
+                if chosen_candidate is None:
+                    chosen_heading_value = float(branch_result.get("chosen_heading", 0))
+                    chosen_candidate = min(
+                        branch_result.get("candidates", []),
+                        key=lambda c: abs(_angle_diff(float(c.get("heading", 0)), chosen_heading_value)),
+                        default=None,
+                    )
                 if chosen_candidate:
                     branch_last_pano = chosen_candidate.get("last_pano_id")
 
@@ -880,12 +975,6 @@ class AutonomousWalkRunner:
                     lookahead_depth=lookahead_depth,
                 )
             else:
-                if branch_result:
-                    self.logger.step_lookahead_jump_skipped(
-                        step=step,
-                        branch_last_pano=branch_last_pano,
-                        current_pano_id=pano_id,
-                    )
                 unvisited_links = [
                     l for l in links
                     if visit_counts.get(l.get("panoId") or l.get("id"), 0) == 0
@@ -914,6 +1003,9 @@ class AutonomousWalkRunner:
                 "recommendation": recommendation,
                 "is_intersection": is_intersection,
                 "branch_triggered": is_intersection or trigger_reason is not None,
+                "s2_triggered": trigger_reason is not None,
+                "analyzed": analyzed_successfully,
+                "gating_signals": gating_signals,
                 "intended_heading": round(current_intended_heading or chosen_heading, 1),
                 "candidate_count": len(candidate_headings),
                 "visit_count": visit_counts.get(pano_id, 0),
@@ -923,7 +1015,7 @@ class AutonomousWalkRunner:
                 "image_path": str(saved_image_path) if saved_image_path else None,
                 "confidence": step_confidence,
                 "wp_bearing": round(wp_bearing, 1) if (self.planner.route_waypoints and wp_bearing is not None) else None,
-                "urgency_tier": urgency_tier if self.planner.route_waypoints else None,
+                "urgency_tier": urgency_tier,
                 "route_deviation_m": round(nearest_wp_dist, 1) if (self.planner.route_waypoints and nearest_wp_dist is not None) else None,
                 "branch_candidates": [
                     {
@@ -945,6 +1037,8 @@ class AutonomousWalkRunner:
                     for c in ((branch_result or {}).get("candidates") or [])
                 ],
             }
+            if urgency_tier in urgency_tier_counts:
+                urgency_tier_counts[urgency_tier] += 1
             route_taken.append(step_result)
             visit_counts[pano_id] = visit_counts.get(pano_id, 0) + 1
             distance_from_last_trigger += 20.0
@@ -961,12 +1055,55 @@ class AutonomousWalkRunner:
             if step_callback:
                 await step_callback(step_result)
 
+            # If branch decision jumped through lookahead, emit intermediate waypoints
+            # so they appear in the route and on the map without delay.
+            if branch_last_pano and branch_last_pano != pano_id and chosen_candidate:
+                chain_wps = chosen_candidate.get("chain_waypoints", [])
+                for wp in chain_wps:
+                    lookahead_step_result = {
+                        "step": step,
+                        "pano_id": wp["pano_id"],
+                        "lat": wp.get("lat"),
+                        "lng": wp.get("lng"),
+                        "heading": round(wp["heading"], 1),
+                        "dist_to_dest_m": None,
+                        "dest_bearing": round(dest_bearing, 1),
+                        "dest_cardinal": cardinal,
+                        "scores": wp.get("scores", {}),
+                        "reasoning": wp.get("reasoning", {}),
+                        "image_base64": wp.get("image_base64"),
+                        "recommendation": None,
+                        "is_intersection": False,
+                        "branch_triggered": False,
+                        "s2_triggered": False,
+                        "analyzed": bool(wp.get("scores")),
+                        "gating_signals": {},
+                        "intended_heading": round(wp["heading"], 1),
+                        "candidate_count": 1,
+                        "visit_count": 0,
+                        "trigger_reason": None,
+                        "phash_distance": None,
+                        "visual_change": True,
+                        "image_path": None,
+                        "confidence": step_confidence,
+                        "wp_bearing": None,
+                        "urgency_tier": None,
+                        "route_deviation_m": None,
+                        "branch_candidates": [],
+                        "lookahead_intermediate": True,
+                        "lookahead_depth_index": wp["depth"],
+                    }
+                    route_taken.append(lookahead_step_result)
+                    if step_callback:
+                        await step_callback(lookahead_step_result)
+
             pano_id = next_pano_id
 
         final_dist = geodesic(
             (current_lat, current_lng), (dest_lat, dest_lng)
         ).meters
 
+        planner_summary = self.planner.get_summary()
         # Generate route-level report
         route_report = None
         try:
@@ -983,13 +1120,16 @@ class AutonomousWalkRunner:
                 route_stats={
                     "steps": len(route_taken),
                     "analyzed_steps": analyzed_step_count,
+                    "skipped_steps": skipped_step_count,
                     "skip_rate": round(1 - analyzed_step_count / max(step + 1, 1), 2),
                     "arrived": arrived,
                     "final_distance_m": round(final_dist, 1),
                     "duration_seconds": round(time.time() - walk_start_ts, 1),
                     "dimension_avgs": dim_avgs,
+                    "gating_signal_counts": gating_signal_counts,
+                    "urgency_tier_counts": urgency_tier_counts,
                 },
-                planner_summary=self.planner.get_summary(),
+                planner_summary=planner_summary,
                 personality=self.personality,
             )
             self.logger.route_report_generated(
@@ -1008,10 +1148,17 @@ class AutonomousWalkRunner:
             "final_distance_m": round(final_dist, 1),
             "route_taken": route_taken,
             "persona": getattr(self.personality, "name", "objective"),
+            "planner_waypoints": [
+                [lat, lng] for lat, lng in self.planner.route_waypoints
+            ],
             "analyzed_steps": analyzed_step_count,
+            "skipped_steps": skipped_step_count,
             "total_steps": step + 1,
             "skip_rate": round(1 - analyzed_step_count / max(step + 1, 1), 2),
-            "planner_summary": self.planner.get_summary(),
+            "planner_summary": planner_summary,
+            "reroute_count": planner_summary.get("reroute_count", 0),
+            "urgency_tier_counts": urgency_tier_counts,
+            "gating_signal_counts": gating_signal_counts,
             "route_report": route_report,
             "memory_debug": {
                 "snapshots": memory_manager._route_snapshots,

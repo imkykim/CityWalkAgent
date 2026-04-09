@@ -267,8 +267,18 @@ Respond ONLY with valid JSON:
         result = call_llm(prompt, max_tokens=256)
 
         if result and "chosen_direction" in result:
-            chosen_dir = result["chosen_direction"]
-            chosen = next((c for c in candidates if c["direction"] == chosen_dir), candidates[0])
+            raw_chosen_dir = str(result.get("chosen_direction", "")).strip()
+
+            # Normalize LLM output to an actual candidate label.
+            chosen = next((c for c in candidates if c["direction"] == raw_chosen_dir), None)
+            if chosen is None:
+                upper_dir = raw_chosen_dir.upper()
+                chosen = next((c for c in candidates if c["direction"].upper() == upper_dir), None)
+            if chosen is None:
+                # Last-resort fallback keeps decision robust even with malformed labels.
+                chosen = candidates[0]
+            chosen_dir = chosen["direction"]
+
             self.logger.debug(
                 f"[Decider.branch] chosen={chosen_dir} confidence={result.get('confidence')}"
             )

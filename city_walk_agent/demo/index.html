@@ -2280,7 +2280,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
       document.getElementById('ws-step').textContent = steps + ' (done)';
       document.getElementById('ws-dist').textContent = dist || '—';
       log(`Walk complete: arrived=${result.arrived} steps=${steps} dist=${dist}`, 'ok');
-      autoWalkReset(false);
+      autoWalkReset(false, !!result.route_report);
     }
 
     async function autoWalkStop() {
@@ -2383,8 +2383,10 @@ Respond ONLY with valid JSON (no markdown, no explanation):
       document.getElementById('route-report-overlay').classList.remove('active');
     }
 
-    function autoWalkReset(clearMap = false) {
-      document.getElementById('route-report-overlay').classList.remove('active');
+    function autoWalkReset(clearMap = false, preserveRouteReport = false) {
+      if (!preserveRouteReport) {
+        document.getElementById('route-report-overlay').classList.remove('active');
+      }
       if (walkEventSource) { walkEventSource.close(); walkEventSource = null; }
       currentWalkId = null;
       document.getElementById('topbar-start-btn').disabled = false;

@@ -338,16 +338,35 @@ class WalkOutputWriter:
     # ── 6. route_map.html (Folium) ───────────────────────────────────────
 
     def _write_route_map(self) -> Path:
-        """Interactive Folium map: route path colored by avg score, branch markers."""
+        """Interactive Folium map: planner route + scored walked route + branch markers."""
         import folium
-        from folium.plugins import AntPath
 
         steps = self.route_taken
-        if not steps:
-            raise ValueError("No steps to map")
 
-        center_lat = np.mean([s["lat"] for s in steps])
-        center_lng = np.mean([s["lng"] for s in steps])
+        def _valid_point(lat: Any, lng: Any) -> bool:
+            return isinstance(lat, (int, float)) and isinstance(lng, (int, float))
+
+        planned_route_raw = self.result.get("planner_waypoints", []) or []
+        planned_points: List[List[float]] = []
+        for pt in planned_route_raw:
+            if isinstance(pt, (list, tuple)) and len(pt) >= 2 and _valid_point(pt[0], pt[1]):
+                planned_points.append([float(pt[0]), float(pt[1])])
+
+        step_points = [
+            [float(s["lat"]), float(s["lng"])]
+            for s in steps
+            if isinstance(s, dict) and _valid_point(s.get("lat"), s.get("lng"))
+        ]
+        anchor_points = step_points + planned_points
+        if not anchor_points and _valid_point(self.params.get("start_lat"), self.params.get("start_lng")):
+            anchor_points.append([float(self.params["start_lat"]), float(self.params["start_lng"])])
+        if not anchor_points and _valid_point(self.params.get("dest_lat"), self.params.get("dest_lng")):
+            anchor_points.append([float(self.params["dest_lat"]), float(self.params["dest_lng"])])
+        if not anchor_points:
+            raise ValueError("No coordinates to map")
+
+        center_lat = np.mean([p[0] for p in anchor_points])
+        center_lng = np.mean([p[1] for p in anchor_points])
         m = folium.Map(location=[center_lat, center_lng], zoom_start=16, tiles="cartodbpositron")
 
         # Color helper
@@ -363,10 +382,23 @@ class WalkOutputWriter:
             else:
                 return "#ef4444"  # red
 
+        # Planner route (Directions waypoints): light overlay
+        if len(planned_points) >= 2:
+            folium.PolyLine(
+                planned_points,
+                color="#94a3b8",
+                weight=4,
+                opacity=0.45,
+                dash_array="6,8",
+                tooltip="Planner navigation route",
+            ).add_to(m)
+
         # Route segments colored by score
         for i in range(1, len(steps)):
             prev = steps[i - 1]
             curr = steps[i]
+            if not (_valid_point(prev.get("lat"), prev.get("lng")) and _valid_point(curr.get("lat"), curr.get("lng"))):
+                continue
             scores = curr.get("scores", {})
             vals = [v for v in scores.values() if isinstance(v, (int, float))]
             avg = sum(vals) / len(vals) if vals else 5.0
@@ -378,14 +410,19 @@ class WalkOutputWriter:
             ).add_to(m)
 
         # Start marker
-        folium.Marker(
-            [steps[0]["lat"], steps[0]["lng"]],
-            icon=folium.Icon(color="blue", icon="play", prefix="fa"),
-            popup="Start",
-        ).add_to(m)
+        start_lat = self.params.get("start_lat")
+        start_lng = self.params.get("start_lng")
+        if not _valid_point(start_lat, start_lng) and step_points:
+            start_lat, start_lng = step_points[0]
+        if _valid_point(start_lat, start_lng):
+            folium.Marker(
+                [start_lat, start_lng],
+                icon=folium.Icon(color="blue", icon="play", prefix="fa"),
+                popup="Start",
+            ).add_to(m)
 
         # End / destination marker
-        if self.params.get("dest_lat") and self.params.get("dest_lng"):
+        if _valid_point(self.params.get("dest_lat"), self.params.get("dest_lng")):
             folium.Marker(
                 [self.params["dest_lat"], self.params["dest_lng"]],
                 icon=folium.Icon(color="red", icon="flag", prefix="fa"),
@@ -393,16 +430,18 @@ class WalkOutputWriter:
             ).add_to(m)
 
         # Last actual position
-        last = steps[-1]
-        folium.Marker(
-            [last["lat"], last["lng"]],
-            icon=folium.Icon(
-                color="green" if self.result.get("arrived") else "orange",
-                icon="stop" if self.result.get("arrived") else "pause",
-                prefix="fa",
-            ),
-            popup=f"Final (dist={last.get('dist_to_dest_m', '?')}m)",
-        ).add_to(m)
+        if step_points:
+            last = steps[-1]
+            if _valid_point(last.get("lat"), last.get("lng")):
+                folium.Marker(
+                    [last["lat"], last["lng"]],
+                    icon=folium.Icon(
+                        color="green" if self.result.get("arrived") else "orange",
+                        icon="stop" if self.result.get("arrived") else "pause",
+                        prefix="fa",
+                    ),
+                    popup=f"Final (dist={last.get('dist_to_dest_m', '?')}m)",
+                ).add_to(m)
 
         # Branch decision points
         for step in steps:
@@ -460,6 +499,7 @@ class WalkOutputWriter:
             <span style="color:#eab308">●</span> 5–6 Average<br>
             <span style="color:#f97316">●</span> 4–5 Below avg<br>
             <span style="color:#ef4444">●</span> &lt;4 Poor<br>
+            <span style="color:#94a3b8">●</span> Planner navigation<br>
             <span style="color:#7c3aed">●</span> Branch decision
         </div>
         """

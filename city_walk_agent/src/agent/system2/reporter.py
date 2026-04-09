@@ -44,8 +44,16 @@ class Reporter:
                 "trajectory": float,
                 "worst_dimension": str|None,
                 "barrier_segments": [(start_wp, end_wp), ...],
+                "gating_signal_counts": {signal: int},
+                "urgency_tier_counts": {tier: int},
+                "reroute_count": int,
             }
         """
+        telemetry = stm_context.get("telemetry", {}) if isinstance(stm_context, dict) else {}
+        gating_signal_counts = telemetry.get("gating_signal_counts", {}) if isinstance(telemetry, dict) else {}
+        urgency_tier_counts = telemetry.get("urgency_tier_counts", {}) if isinstance(telemetry, dict) else {}
+        reroute_count = telemetry.get("reroute_count", 0) if isinstance(telemetry, dict) else 0
+
         if not stm_context or not stm_context.get("recent_scores"):
             return {
                 "span_start": last_snapshot_waypoint,
@@ -55,6 +63,9 @@ class Reporter:
                 "trajectory": 0.0,
                 "worst_dimension": None,
                 "barrier_segments": [],
+                "gating_signal_counts": gating_signal_counts,
+                "urgency_tier_counts": urgency_tier_counts,
+                "reroute_count": reroute_count,
             }
 
         waypoint_ids = stm_context.get("waypoint_ids", [])
@@ -129,6 +140,9 @@ class Reporter:
             "trajectory": trajectory,
             "worst_dimension": worst_dim,
             "barrier_segments": barrier_segments,
+            "gating_signal_counts": gating_signal_counts,
+            "urgency_tier_counts": urgency_tier_counts,
+            "reroute_count": reroute_count,
         }
 
     # ================================================================
