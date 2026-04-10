@@ -92,6 +92,69 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _compute_path_divergence(route_results: List[Any]) -> Dict[str, Any]:
+    """Compute path-level divergence across personas on the same route.
+
+    Extracts each persona's visited (lat, lng) cells (rounded to 4 dp for grid
+    matching) and computes pairwise Jaccard similarity.  Lower similarity =
+    more divergent paths.
+    """
+    if len(route_results) < 2:
+        return {"note": "need ≥2 personas to compute path divergence"}
+
+    persona_cells: Dict[str, set] = {}
+    for r in route_results:
+        cells: set = set()
+        # route_taken is not stored on ExperimentResult directly.
+        # Read from the saved walk_log.json in the experiment output dir.
+        try:
+            walk_log_path = Path(r.output_dir) / "walk_log.json"
+            if walk_log_path.exists():
+                with open(walk_log_path) as f:
+                    walk_log = json.load(f)
+                steps = walk_log.get("route_taken") or walk_log.get("steps") or []
+                for step in steps:
+                    if not isinstance(step, dict):
+                        continue
+                    lat = step.get("lat") or step.get("latitude")
+                    lng = step.get("lng") or step.get("lon") or step.get("longitude")
+                    if lat is not None and lng is not None:
+                        cells.add((round(float(lat), 4), round(float(lng), 4)))
+        except Exception:
+            pass
+        persona_cells[r.spec.persona] = cells
+
+    personas = list(persona_cells.keys())
+    pair_similarities: List[float] = []
+    unique_path_pairs = 0
+
+    for i in range(len(personas)):
+        for j in range(i + 1, len(personas)):
+            a = persona_cells[personas[i]]
+            b = persona_cells[personas[j]]
+            if not a and not b:
+                continue
+            intersection = len(a & b)
+            union = len(a | b)
+            jaccard = round(intersection / union, 3) if union > 0 else 1.0
+            pair_similarities.append(jaccard)
+            if jaccard < 0.5:
+                unique_path_pairs += 1
+
+    return {
+        "persona_pairs_compared": len(pair_similarities),
+        "avg_path_overlap_jaccard": (
+            round(sum(pair_similarities) / len(pair_similarities), 3)
+            if pair_similarities else None
+        ),
+        "unique_path_pairs": unique_path_pairs,
+        "note": (
+            "Jaccard similarity of visited (lat,lng) grid cells. "
+            "Lower = more divergent paths. <0.5 counted as unique_path_pair."
+        ),
+    }
+
+
 # ============================================================================
 # Test Routes — curated start/dest pairs for different urban environments
 # ============================================================================
@@ -162,10 +225,26 @@ TEST_ROUTES: Dict[str, Dict[str, Any]] = {
     },
     "hk_causeway_bay": {
         "name": "HK Causeway Bay Luxury District",
-        "start": (22.2785, 114.1840),    # Pak Sha Road, Stussy 근처
-        "dest": (22.2800, 114.1855),     # Hysan Place (Apple Store) 근처
-        "description": "Lee Gardens luxury district × Hysan Place, ~200m",
+        "start": (22.2780, 114.1825),    # Times Square 남쪽, Hennessy Rd (coordinates need manual verification)
+        "dest": (22.2802, 114.1850),     # Lee Gardens / Hysan Place 명품가 (coordinates need manual verification)
+        "description": "Times Sq → Lee Gardens luxury district, ~350m, multiple parallel walkable paths",
         "expected_character": "high_wealthy_commercial",
+    },
+    "venice_sanmarco_rialto": {
+        "name": "Venice San Marco → Rialto",
+        "start": (45.4340, 12.3380),    # San Marco Square 북쪽 끝 (coordinates need manual verification)
+        "dest": (45.4380, 12.3360),     # Rialto Bridge 남쪽 (coordinates need manual verification)
+        "description": "San Marco → Rialto via calle/campo network, ~500m, fully pedestrian, trekker coverage. "
+                       "Parallel paths: Mercerie (lively/commercial), mid-calle (quiet), Riva del Carbon (waterfront beauty).",
+        "expected_character": "historic_pedestrian_dense",
+    },
+    "stanford_quad_memchurch": {
+        "name": "Stanford Quad → Memorial Church",
+        "start": (37.4275, -122.1697),    # Main Quad 남쪽 입구 (coordinates need manual verification)
+        "dest": (37.4280, -122.1704),     # Memorial Church 앞 (coordinates need manual verification)
+        "description": "Stanford campus footpath network, ~200m, pedestrian-only, trekker coverage. "
+                       "Parallel paths via Palm Drive / Arboretum available.",
+        "expected_character": "campus_pedestrian_open",
     },
     "hk_sheung_wan": {
         "name": "HK Sheung Wan Heritage",
@@ -215,11 +294,24 @@ MATRICES = {
         "save_images": True,
     },
     "persona_compare": {
-        "routes": ["sg_toa_payoh_hdb", "hk_mong_kok"],
+        "routes": ["hk_causeway_bay", "venice_sanmarco_rialto"],
         "personas": [
             "homebuyer",
             "parent_with_kids",
             "photographer",
+            "runner",
+        ],
+        "max_steps": 25,
+        "lookahead_depth": 1,
+        "save_images": True,
+    },
+    "persona_path_compare": {
+        "routes": ["venice_sanmarco_rialto", "stanford_quad_memchurch"],
+        "personas": [
+            "homebuyer",
+            "parent_with_kids",
+            "photographer",
+            "tourist",
             "runner",
         ],
         "max_steps": 30,
@@ -271,6 +363,7 @@ class ExperimentSpec:
     max_steps: int
     lookahead_depth: int
     save_images: bool = False
+    urgency_mode: Optional[str] = "explore"
 
 
 @dataclass
@@ -327,6 +420,7 @@ class TestRunner:
         max_steps = matrix_config.get("max_steps", 40)
         lookahead = matrix_config.get("lookahead_depth", 1)
         save_images = matrix_config.get("save_images", False)
+        urgency_mode = matrix_config.get("urgency_mode", "explore")
 
         for route_id in routes:
             if route_id not in TEST_ROUTES:
@@ -344,6 +438,7 @@ class TestRunner:
                         max_steps=max_steps,
                         lookahead_depth=lookahead,
                         save_images=save_images,
+                        urgency_mode=urgency_mode,
                     )
                 )
         return specs
@@ -440,6 +535,7 @@ class TestRunner:
                 output_dir=experiment_dir,
                 save_images=spec.save_images,
                 lookahead_depth=spec.lookahead_depth,
+                urgency_mode=spec.urgency_mode,
             )
 
             duration = time.time() - start_time
@@ -835,6 +931,7 @@ class TestRunner:
                         else 0.0
                     ),
                 },
+                "persona_path_divergence": _compute_path_divergence(route_results),
             }
         report["by_route"] = route_comparison
 
@@ -905,6 +1002,8 @@ class TestRunner:
                 {
                     "route": r.spec.route_id,
                     "persona": r.spec.persona,
+                    "urgency_mode": r.spec.urgency_mode,
+                    "lookahead_depth": r.spec.lookahead_depth,
                     "arrived": r.arrived,
                     "analyzed_steps": r.analyzed_steps,
                     "total_steps": r.total_steps,
@@ -978,10 +1077,15 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Predefined matrices:
-  quick           1 route × 1 persona × 10 steps (~1-2 min)
-  persona_compare 2 routes × 4 personas × 30 steps
-  route_compare   6 routes × 1 persona × 20 steps
-  full            3 routes × 4 personas × 20 steps
+  quick                1 route × 1 persona × 10 steps (~1-2 min)
+  persona_compare      2 routes × 4 personas × 25 steps  (score divergence)
+  persona_path_compare Venice + Stanford × 5 personas × 30 steps
+                       핵심 검증: 같은 start/dest에서 persona별로 실제 다른 경로
+                       선택이 발생하는지 path_overlap_jaccard로 측정
+  route_compare        6 routes × 1 persona × 20 steps
+  full                 3 routes × 4 personas × 20 steps
+  causeway_bay         1 route × 5 personas × 30 steps
+  mong_kok             1 route × 5 personas × 30 steps
         """,
     )
     parser.add_argument(
@@ -1003,6 +1107,12 @@ Predefined matrices:
         "--persona", default="homebuyer", help="Persona for single mode"
     )
     parser.add_argument("--max-steps", type=int, default=40)
+    parser.add_argument(
+        "--urgency-mode",
+        choices=["auto", "explore", "navigate", "converge"],
+        default="explore",
+        help="Force a specific urgency tier for ALL experiments (overrides matrix and auto-calculation).",
+    )
     parser.add_argument("--lookahead-depth", type=int, default=1)
     parser.add_argument("--save-images", action="store_true")
     parser.add_argument(
@@ -1019,6 +1129,8 @@ Predefined matrices:
     )
 
     args = parser.parse_args()
+    if args.urgency_mode == "auto":
+        args.urgency_mode = None
     runner = TestRunner(
         output_base=args.output_base,
         log_level=args.log_level,
@@ -1038,6 +1150,7 @@ Predefined matrices:
                 max_steps=args.max_steps,
                 lookahead_depth=args.lookahead_depth,
                 save_images=args.save_images,
+                urgency_mode=args.urgency_mode,
             )
         ]
     elif args.matrix == "custom":
@@ -1049,6 +1162,8 @@ Predefined matrices:
         # Allow custom routes in config
         if "routes_def" in custom_config:
             TEST_ROUTES.update(custom_config["routes_def"])
+        if args.urgency_mode:
+            custom_config["urgency_mode"] = args.urgency_mode
         specs = runner.build_matrix(custom_config)
     else:
         # Predefined matrix
@@ -1057,6 +1172,8 @@ Predefined matrices:
             matrix_config["max_steps"] = args.max_steps
         matrix_config["lookahead_depth"] = args.lookahead_depth
         matrix_config["save_images"] = args.save_images
+        if args.urgency_mode:
+            matrix_config["urgency_mode"] = args.urgency_mode
         specs = runner.build_matrix(matrix_config)
 
     if not specs:

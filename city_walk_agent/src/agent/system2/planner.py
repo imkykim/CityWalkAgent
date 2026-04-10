@@ -40,6 +40,7 @@ class Planner:
         self.reroute_threshold_m: float = 80.0
         self.reroute_count: int = 0
         self.total_route_distance_m: float = 0.0
+        self.urgency_override: Optional[str] = None  # None | "explore" | "navigate" | "converge"
         self.logger = get_logger(self.__class__.__name__)
 
     def reset(self) -> None:
@@ -48,6 +49,24 @@ class Planner:
         self.wp_index = 0
         self.reroute_count = 0
         self.total_route_distance_m = 0.0
+        self.urgency_override = None
+
+    def set_urgency_override(self, mode: Optional[str]) -> None:
+        """Force a specific urgency tier for the entire walk.
+
+        Args:
+            mode: One of "explore", "navigate", "converge", or None for auto.
+
+        Raises:
+            ValueError: If mode is not in the allowed set.
+        """
+        if mode is not None and mode not in ("explore", "navigate", "converge"):
+            raise ValueError(
+                f"urgency_override must be one of 'explore', 'navigate', 'converge', or None; got {mode!r}"
+            )
+        self.urgency_override = mode
+        if mode:
+            self.logger.info(f"Urgency override active: {mode}")
 
     async def init_route(
         self,
@@ -89,7 +108,7 @@ class Planner:
         dest_bearing = _calc_bearing(current_lat, current_lng, dest_lat, dest_lng)
         dest_cardinal = _bearing_to_cardinal(dest_bearing)
         dist_to_dest_m = geodesic((current_lat, current_lng), (dest_lat, dest_lng)).meters
-        urgency_tier = self._get_urgency_tier(dist_to_dest_m)
+        urgency_tier = self.urgency_override or self._get_urgency_tier(dist_to_dest_m)
 
         wp_bearing: Optional[float] = None
         nearest_wp_dist_m: Optional[float] = None
@@ -104,8 +123,7 @@ class Planner:
             )
             wp_cardinal = _bearing_to_cardinal(wp_bearing)
             dest_context = (
-                f"Route direction: {wp_cardinal} ({wp_bearing:.0f}°) — "
-                f"follow this bearing to stay on the walking route. "
+                f"Reference walking route bearing: {wp_cardinal} ({wp_bearing:.0f}°). "
                 f"Destination: {dest_cardinal} ({dest_bearing:.0f}°), {dist_to_dest_m:.0f}m away. "
                 f"Urgency: {urgency_tier}"
             )

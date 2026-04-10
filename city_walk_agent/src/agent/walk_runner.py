@@ -13,6 +13,22 @@ from geopy.distance import geodesic
 
 from src.core import settings
 
+_shared_nav_session: Optional[Any] = None
+
+
+def _get_shared_nav_session() -> Any:
+    """Return a process-level MapTilesSession singleton.
+
+    Reusing one instance across experiments avoids repeated createSession API
+    calls; the token is cached inside MapTilesSession and refreshed only when
+    it expires.
+    """
+    global _shared_nav_session
+    if _shared_nav_session is None:
+        from demo.server import MapTilesSession
+        _shared_nav_session = MapTilesSession(settings.google_maps_api_key)
+    return _shared_nav_session
+
 
 def _closest_link(links: List[Dict], target_heading: float) -> Dict:
     return min(
@@ -453,6 +469,7 @@ class AutonomousWalkRunner:
         step_callback=None,
         save_images: bool = False,
         lookahead_depth: int = 1,
+        urgency_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Walk autonomously from start to destination.
 
@@ -473,10 +490,11 @@ class AutonomousWalkRunner:
 
         from src.agent.memory.memory_manager import MemoryManager
         from src.agent.system2.persona_reasoner import TriggerReason
-        from demo.server import MapTilesSession
 
         loop = asyncio.get_event_loop()
-        nav_session = MapTilesSession(settings.google_maps_api_key)
+        # Reuse a module-level singleton to avoid repeated createSession API calls
+        # across consecutive experiments (token is cached inside MapTilesSession).
+        nav_session = _get_shared_nav_session()
 
         memory_manager = MemoryManager(agent_id=f"walk_{int(time.time())}")
         if self.personality:
@@ -519,6 +537,7 @@ class AutonomousWalkRunner:
 
         # Directions API — get walking route waypoints for bearing guidance
         self.planner.reset()
+        self.planner.set_urgency_override(urgency_mode)
         await self.planner.init_route(
             (start_lat, start_lng), (dest_lat, dest_lng),
             settings.google_maps_api_key,
