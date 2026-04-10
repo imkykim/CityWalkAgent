@@ -841,6 +841,15 @@
               <button onclick="setLookaheadDepth(5)" data-depth="5" class="depth-btn depth-btn-sm">5</button>
             </div>
           </div>
+          <div class="set-row" style="margin-top:4px;">
+            <label>Urgency</label>
+            <select id="aw-urgency-mode" style="font-size:11px;padding:2px 4px;border-radius:4px;border:1px solid var(--border);background:var(--bg-2);color:var(--text);">
+              <option value="">Auto</option>
+              <option value="explore">Explore</option>
+              <option value="navigate">Navigate</option>
+              <option value="converge">Converge</option>
+            </select>
+          </div>
         </div>
         <!-- Error -->
         <div class="set-group" style="justify-content:flex-end;flex:1;">
@@ -1710,6 +1719,7 @@
             dest_lat: destLat, dest_lng: destLng,
             persona: currentPersona, max_steps: maxSteps,
             lookahead_depth: currentLookaheadDepth,
+            urgency_mode: document.getElementById('aw-urgency-mode').value || null,
           }),
         });
         if (!res.ok) { const e = await res.json(); throw new Error(e.detail||res.statusText); }

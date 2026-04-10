@@ -184,10 +184,12 @@ Respond ONLY with valid JSON matching this exact schema:
 
         if destination_context:
             dest_line = (
-                f"Navigation: {destination_context}\n"
-                f"Each candidate shows its 'Route deviation' — the angular difference from the recommended walking path. "
-                f"Lower deviation means closer to the correct road. "
-                f"Consider route deviation alongside quality scores when making your decision."
+                f"Navigation context: {destination_context}\n"
+                f"Each candidate shows its 'Route deviation' — the angular difference between that direction "
+                f"and the reference walking route bearing. This is informational only: a lower deviation "
+                f"means the option roughly aligns with one possible route to the destination, but it does "
+                f"NOT mean that option is better. The reference route is just one of many ways to reach "
+                f"the destination."
             )
         else:
             dest_line = ""
@@ -230,7 +232,7 @@ Respond ONLY with valid JSON matching this exact schema:
             )
             route_dev = c.get("route_deviation")
             route_str = (
-                f"\n    Route deviation: {route_dev:.0f}° from recommended path"
+                f"\n    Route deviation: {route_dev:.0f}° from reference bearing"
                 if route_dev is not None else ""
             )
             candidate_lines.append(
@@ -243,7 +245,7 @@ Respond ONLY with valid JSON matching this exact schema:
         direction_labels = [c["direction"] for c in candidates]
         directions_str = " | ".join(direction_labels)
 
-        prompt = f"""You are {persona_name} navigating a city.
+        prompt = f"""You are {persona_name} exploring a city on foot.
 {persona_desc}
 
 {dest_line}
@@ -254,11 +256,23 @@ Route context:
 Your options:
 {candidates_text}
 
-Choose the direction that best balances quality AND progress toward the destination.
+Decision guidance:
+- You are walking as {persona_name}, NOT following turn-by-turn directions.
+- Choose the direction that offers the best experience for YOUR priorities as {persona_name}.
+- You are FREE to deviate from the reference route at any intersection if another direction
+  offers a better experience for your specific needs. Wandering off the suggested path is
+  encouraged when the alternative is more aligned with what you care about.
+- Route deviation is just spatial information — high deviation does NOT disqualify an option.
+- Only weigh progress toward the destination heavily when urgency is "converge"
+  (you are very close and need to arrive). In "explore" or "navigate" mode, prioritize
+  experiential quality over efficiency.
+- Different personas should genuinely make different choices in the same intersection.
+  Trust your persona's preferences.
+
 Respond ONLY with valid JSON:
 {{
   "chosen_direction": "(one of: {directions_str})",
-  "reason": "one sentence from {persona_name}'s perspective",
+  "reason": "one sentence from {persona_name}'s perspective explaining the choice",
   "confidence": 0.0 to 1.0,
   "ranking": ["best", "second", ...] using direction labels
 }}"""

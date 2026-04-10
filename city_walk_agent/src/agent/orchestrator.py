@@ -2043,6 +2043,7 @@ class CityWalkAgent(BaseAgent):
         step_callback=None,
         save_images: bool = False,
         lookahead_depth: int = 1,
+        urgency_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Delegate autonomous walk execution to AutonomousWalkRunner."""
         return await self.walk_runner.autonomous_walk(
@@ -2056,4 +2057,5 @@ class CityWalkAgent(BaseAgent):
             step_callback=step_callback,
             save_images=save_images,
             lookahead_depth=lookahead_depth,
+            urgency_mode=urgency_mode,
         )

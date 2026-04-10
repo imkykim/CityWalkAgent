@@ -212,6 +212,7 @@ class WalkStartBody(BaseModel):
     persona: str = "parent_with_kids"
     max_steps: int = 40
     lookahead_depth: int = 3
+    urgency_mode: Optional[str] = None  # "explore" | "navigate" | "converge" | None (auto)
 
 
 # ── session store ─────────────────────────────────────────────────────────────
@@ -732,6 +733,7 @@ async def walk_start(body: WalkStartBody):
                 max_steps=body.max_steps,
                 step_callback=step_callback,
                 lookahead_depth=body.lookahead_depth,
+                urgency_mode=body.urgency_mode,
             )
             mem = result.get("memory_debug") or {}
             await q.put({"type": "complete", "data": {
