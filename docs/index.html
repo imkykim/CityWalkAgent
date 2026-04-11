@@ -50,20 +50,28 @@ html,body{background:var(--bg);color:var(--ink);font-family:'Inter',-apple-syste
 .bar.s .bar-fill{background-color:var(--safety)}.bar.l .bar-fill{background-color:var(--lively)}.bar.b .bar-fill{background-color:var(--beauty)}.bar.w .bar-fill{background-color:var(--wealth)}
 
 /* Demo video — softer */
-.video-frame{border:1.5px solid var(--pixel-ink);border-radius:3px;background:#1f1d18;aspect-ratio:16/9;position:relative;overflow:hidden;margin-top:8px}
-.video-frame .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;color:#f0ede5;font-family:'JetBrains Mono',monospace;background:repeating-linear-gradient(45deg,#1f1d18,#1f1d18 14px,#26231c 14px,#26231c 28px)}
-.video-frame .play{width:72px;height:72px;border:2px solid #f0ede5;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:26px;margin-bottom:14px;cursor:pointer;transition:.15s}
-.video-frame .play:hover{background:#f0ede5;color:#1f1d18}
-.video-frame .stamp{font-family:'Space Mono';font-size:10px;letter-spacing:2px;text-transform:uppercase;opacity:.65}
+.video-frame{border:1.5px solid var(--pixel-ink);border-radius:3px;background:#1f1d18;aspect-ratio:1280/758;position:relative;overflow:hidden;margin:0}
+.video-frame video{width:100%;height:100%;display:block;object-fit:contain;background:#1f1d18;margin:0;padding:0}
 .demo-meta{display:grid;grid-template-columns:repeat(4,1fr);border:1.5px solid var(--pixel-ink);border-top:none;background:#fbfaf6;font-family:'Space Mono';font-size:10px;border-radius:0 0 3px 3px}
 .demo-meta div{padding:10px 14px;border-right:1px solid rgba(0,0,0,.12);color:#777}
 .demo-meta div:last-child{border-right:none}
 .demo-meta b{display:block;font-size:15px;color:var(--pixel-ink);margin-bottom:2px;font-family:'VT323';font-weight:400}
 
-/* Architecture placeholder slot — same island feel */
-.arch-slot{border:1.5px solid var(--pixel-ink);border-radius:3px;background:var(--paper);aspect-ratio:11/5;margin-top:8px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:#999;background-image:linear-gradient(rgba(0,0,0,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,0,0,.025) 1px,transparent 1px);background-size:24px 24px}
-.arch-slot .ph{font-family:'VT323',monospace;font-size:28px;color:#b8b2a0;letter-spacing:1px}
-.arch-slot .phm{font-family:'Space Mono',monospace;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#bbb}
+/* Architecture figure */
+.arch-slot{border:1.5px solid var(--pixel-ink);border-radius:3px;background:var(--paper);margin-top:8px;overflow:hidden}
+.arch-slot img{width:100%;height:auto;display:block}
+
+/* Concept / result figures */
+.fig-slot{border:none;border-radius:0;background:transparent;overflow:hidden;margin-top:8px}
+.fig-slot img{width:100%;height:auto;display:block;background:transparent}
+.fig-caption{font-family:'JetBrains Mono',monospace;font-size:10px;color:#888;padding:8px 12px;border-top:none}
+
+/* Hero cover — full-bleed background with overlay */
+.hero-bg{position:absolute;inset:0;z-index:0}
+.hero-bg img{width:100%;height:100%;object-fit:cover;object-position:center;opacity:0.22;display:block}
+.hero-content{position:relative;z-index:1;min-height:clamp(400px,68vh,640px);display:flex;flex-direction:column;justify-content:space-between}
+.hero-top{max-width:64rem}
+.hero-bottom{max-width:48rem}
 </style></head><body class="antialiased">
 
 <!-- NAV -->
@@ -86,27 +94,36 @@ html,body{background:var(--bg);color:var(--ink);font-family:'Inter',-apple-syste
 
 <!-- HERO -->
 <header class="relative overflow-hidden border-b hairline">
-  <div class="absolute inset-0 grain opacity-60"></div>
-  <div class="relative max-w-6xl mx-auto px-6 pt-20 pb-24">
-    <div class="mono text-xs text-neutral-500 mb-6 tracking-wider">THESIS PROJECT · 2026 · TSINGHUA UNIVERSITY</div>
-    <h1 class="text-5xl md:text-7xl font-extrabold tracking-tighter leading-[0.95] max-w-4xl">
-      Reading cities <br/>like a <span class="italic font-serif" style="font-family:'Noto Serif',serif">pedestrian</span>.
-    </h1>
-    <p class="mt-8 text-lg md:text-xl text-neutral-700 max-w-2xl leading-relaxed">
-      <strong>CityWalkAgent</strong> is an autonomous urban walking agent that evaluates pedestrian environments through Vision-Language Models, treating walks as <em>continuous narratives</em> rather than aggregated point assessments.
-    </p>
-    <div class="mt-10 flex flex-wrap gap-3">
-      <a href="#demo" class="inline-flex items-center gap-2 bg-black text-white px-5 py-3 rounded-full text-sm font-medium hover:bg-neutral-800 transition">▶ Watch the demo</a>
-      <a href="#anthology" class="inline-flex items-center gap-2 border hairline px-5 py-3 rounded-full text-sm font-medium hover:bg-black hover:text-white transition">Anthology</a>
-      <a href="https://github.com/imkykim/CityWalkAgent" class="inline-flex items-center gap-2 border hairline px-5 py-3 rounded-full text-sm font-medium hover:bg-black hover:text-white transition">Code</a>
-      <a href="#" class="inline-flex items-center gap-2 border hairline px-5 py-3 rounded-full text-sm font-medium hover:bg-black hover:text-white transition">Paper (PDF)</a>
-      <a href="#" class="inline-flex items-center gap-2 border hairline px-5 py-3 rounded-full text-sm font-medium hover:bg-black hover:text-white transition">BibTeX</a>
+  <div class="hero-bg">
+    <img src="./assets/cover.png" alt="" aria-hidden="true"/>
+  </div>
+  <div class="absolute inset-0 grain opacity-60 z-0"></div>
+  <div class="hero-content max-w-6xl mx-auto px-6 pt-8 pb-8">
+    <div class="hero-top">
+      <div class="mono text-xs text-neutral-600 mb-2 tracking-wider">THESIS PROJECT · 2026 · TSINGHUA UNIVERSITY</div>
+      <h1 class="text-5xl md:text-7xl font-extrabold tracking-tighter leading-[0.95] max-w-4xl text-[#0a0a0a]">
+        Reading cities <br/>like a <span class="italic font-serif" style="font-family:'Noto Serif',serif">pedestrian</span>.
+      </h1>
+      <!--
+      <div class="mt-10 flex flex-wrap gap-3">
+        <a href="#demo" class="inline-flex items-center gap-2 bg-black text-white px-5 py-3 rounded-full text-sm font-medium hover:bg-neutral-800 transition">▶ Watch the demo</a>
+        <a href="#anthology" class="inline-flex items-center gap-2 border hairline px-5 py-3 rounded-full text-sm font-medium hover:bg-black hover:text-white transition">Anthology</a>
+        <a href="https://github.com/imkykim/CityWalkAgent" class="inline-flex items-center gap-2 border hairline px-5 py-3 rounded-full text-sm font-medium hover:bg-black hover:text-white transition">Code</a>
+        <a href="#" class="inline-flex items-center gap-2 border hairline px-5 py-3 rounded-full text-sm font-medium hover:bg-black hover:text-white transition">Paper (PDF)</a>
+        <a href="#" class="inline-flex items-center gap-2 border hairline px-5 py-3 rounded-full text-sm font-medium hover:bg-black hover:text-white transition">BibTeX</a>
+      </div>
+      -->
     </div>
-    <div class="mt-16 grid grid-cols-2 md:grid-cols-4 gap-6 max-w-3xl">
-      <div><div class="text-3xl font-bold tracking-tight">0.85</div><div class="text-xs text-neutral-500 mt-1">Spearman ρ vs Place Pulse</div></div>
-      <div><div class="text-3xl font-bold tracking-tight">1.1M+</div><div class="text-xs text-neutral-500 mt-1">Human judgments validated</div></div>
-      <div><div class="text-3xl font-bold tracking-tight">5</div><div class="text-xs text-neutral-500 mt-1">Pedestrian personas</div></div>
-      <div><div class="text-3xl font-bold tracking-tight">~12s</div><div class="text-xs text-neutral-500 mt-1">Per-intersection inference</div></div>
+    <div class="hero-bottom">
+      <p class="text-base md:text-lg text-neutral-800 max-w-2xl leading-relaxed mb-4">
+        <strong>CityWalkAgent</strong> is an autonomous urban walking agent that evaluates pedestrian environments through Vision-Language Models, treating walks as <em>continuous narratives</em> rather than aggregated point assessments.
+      </p>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+      <div><div class="text-3xl font-bold tracking-tight text-[#0a0a0a]">0.85</div><div class="text-xs text-neutral-600 mt-1">Spearman ρ vs Place Pulse</div></div>
+      <div><div class="text-3xl font-bold tracking-tight text-[#0a0a0a]">1.1M+</div><div class="text-xs text-neutral-600 mt-1">Human judgments validated</div></div>
+      <div><div class="text-3xl font-bold tracking-tight text-[#0a0a0a]">5</div><div class="text-xs text-neutral-600 mt-1">Pedestrian personas</div></div>
+      <div><div class="text-3xl font-bold tracking-tight text-[#0a0a0a]">~12s</div><div class="text-xs text-neutral-600 mt-1">Per-intersection inference</div></div>
+      </div>
     </div>
   </div>
 </header>
@@ -116,6 +133,10 @@ html,body{background:var(--bg);color:var(--ink);font-family:'Inter',-apple-syste
   <div class="max-w-6xl mx-auto px-6 py-20 grid md:grid-cols-12 gap-10">
     <div class="md:col-span-3"><div class="mono text-xs text-neutral-500 tracking-wider">01 · ABSTRACT</div></div>
     <div class="md:col-span-9 space-y-5 text-neutral-800 leading-relaxed text-[17px]">
+      <div class="fig-slot mb-8">
+        <img src="./assets/concept_diagram.png" alt="Concept diagram: Street View + Persona → MLLM → Visual Understanding" loading="lazy"/>
+        <div class="fig-caption">Fig. 0 · Core research question — can an MLLM evaluate built environments on behalf of a human persona?</div>
+      </div>
       <p>Urban perception studies have long aggregated street-level imagery into single-point scores, losing the temporal structure of how pedestrians actually <em>experience</em> a city. CityWalkAgent reframes urban walking as a <strong>sequential cognitive process</strong>: a dual-system VLM agent walks panorama-by-panorama through Google Street View, building short-term memory of recent observations and generating episodic snapshots when narrative shifts occur.</p>
       <p>Drawing on Kahneman's dual-process theory, Cullen's Serial Vision, and Lynch's Image of the City, the system separates fast per-waypoint perception (System 1) from slower reflective interpretation, planning, and decision-making (System 2). Five personas — homebuyer, parent, photographer, runner, tourist — perceive identical environments differently through prompt-conditioned evaluation across the four Place Pulse dimensions.</p>
       <p>We validate against Place Pulse 2.0's 1.1M human judgments via CLIP+K-NN, achieving Spearman correlations of ρ = 0.57–0.85 across dimensions. The framework reveals <strong>within-route variance and hidden barriers</strong> that aggregate scoring methods systematically miss.</p>
@@ -138,11 +159,28 @@ html,body{background:var(--bg);color:var(--ink);font-family:'Inter',-apple-syste
       <h3>DUAL-PROCESS PIPELINE<span class="red">.</span></h3>
       <p class="lede">Input panoramas flow through a fast System 1 (per-waypoint VLM evaluation with 3-signal gating and short-term memory) in parallel with a slower System 2 (Reporter → Interpreter → Planner → Decider → Episode).</p>
       <div class="arch-slot">
-        <div class="ph">◇ ARCHITECTURE DIAGRAM ◇</div>
-        <div class="phm">FIGURE TO BE INSERTED</div>
+        <img src="./assets/architecture.png" alt="CityWalkAgent dual-process architecture diagram" loading="lazy"/>
       </div>
       <p class="mono text-[10px] text-neutral-500 mt-4">↳ Inspired by Kahneman (dual-process) · Cullen (serial vision) · Lynch (image of the city) &nbsp;·&nbsp; Soft-priority navigation via Google Directions wp_bearing &nbsp;·&nbsp; Async parallel inference with Semaphore + retry</p>
     </div>
+    <!--
+    <div class="island mt-8">
+      <span class="tag">▌ FIGURE 1B · AGENT ARCHITECTURE</span>
+      <h3>PERCEPTION PIPELINE<span class="red">.</span></h3>
+      <p class="lede">Waypoint images enter System 1 (Text-Context + Multi-Image VLM) gated by a Cognitive Controller, producing scores that feed System 2 (LLM Reasoning + VLM Subjective Evaluation). Memory Manager bridges short-term and long-term memory across the loop.</p>
+      <div class="arch-slot">
+        <img src="./assets/agent_architecture.png" alt="CityWalkAgent agent architecture — System 1 / System 2 pipeline with memory manager" loading="lazy"/>
+      </div>
+    </div>
+    <div class="island mt-8">
+      <span class="tag">▌ FIGURE 1C · AGENT LOOP</span>
+      <h3>STEP-BY-STEP LOOP<span class="red">.</span></h3>
+      <p class="lede">From start coordinates: collect street-view links → fetch panoramas → System 1 evaluation + STM write → check S2 trigger conditions (intersection / score delta / 150 m milestone / pHash change) → System 2 reasoning → advance to next waypoint.</p>
+      <div class="arch-slot">
+        <img src="./assets/agent_loop.png" alt="CityWalkAgent agent loop flowchart — STM, LTM, S2 trigger conditions" loading="lazy"/>
+      </div>
+    </div>
+    -->
     <div class="grid md:grid-cols-3 gap-4 mt-8">
       <div class="border hairline rounded-lg p-6 lift bg-white"><div class="mono text-xs text-neutral-400 mb-2">PRINCIPLE 01</div><div class="font-semibold mb-2">Sequential, not aggregate.</div><p class="text-sm text-neutral-600">A walk is a story. Per-point averaging discards the narrative arc that makes pedestrian experience legible.</p></div>
       <div class="border hairline rounded-lg p-6 lift bg-white"><div class="mono text-xs text-neutral-400 mb-2">PRINCIPLE 02</div><div class="font-semibold mb-2">Persona shapes perception.</div><p class="text-sm text-neutral-600">A parent and a photographer walk the same street and see different cities. Personas live in the prompt, not in post-hoc transforms.</p></div>
@@ -188,10 +226,10 @@ html,body{background:var(--bg);color:var(--ink);font-family:'Inter',-apple-syste
       <h3>TST WATERFRONT<span class="red">.</span> 24 WAYPOINTS<span class="red">.</span></h3>
       <p class="lede">Pre-recorded SSE stream replayed at native cadence. Map · Score Trend · Radar · Headline narration all update synchronously with the agent's actual inference timeline.</p>
       <div class="video-frame">
-        <div class="overlay">
-          <div class="play">▶</div>
-          <div class="stamp">CLICK TO PLAY · 04:32 · 1080P</div>
-        </div>
+        <video controls playsinline preload="metadata">
+          <source src="./assets/demo-compressed.mp4" type="video/mp4"/>
+          Your browser does not support the video tag.
+        </video>
       </div>
       <div class="demo-meta">
         <div><b>~12S</b>Per intersection</div>
@@ -214,10 +252,26 @@ html,body{background:var(--bg);color:var(--ink);font-family:'Inter',-apple-syste
       </div>
     </div>
     <div class="grid md:grid-cols-4 gap-4">
-      <div class="border hairline rounded-lg p-6 bg-white"><div class="mono text-xs text-neutral-400 mb-2">SAFETY</div><div class="text-4xl font-bold">0.72</div><div class="text-xs text-neutral-500 mt-1">Spearman ρ</div></div>
-      <div class="border hairline rounded-lg p-6 bg-white"><div class="mono text-xs text-neutral-400 mb-2">LIVELY</div><div class="text-4xl font-bold">0.79</div><div class="text-xs text-neutral-500 mt-1">Spearman ρ</div></div>
-      <div class="border hairline rounded-lg p-6 bg-white"><div class="mono text-xs text-neutral-400 mb-2">BEAUTIFUL</div><div class="text-4xl font-bold">0.85</div><div class="text-xs text-neutral-500 mt-1">Spearman ρ</div></div>
-      <div class="border hairline rounded-lg p-6 bg-white"><div class="mono text-xs text-neutral-400 mb-2">WEALTHY</div><div class="text-4xl font-bold">0.57</div><div class="text-xs text-neutral-500 mt-1">Spearman ρ</div></div>
+      <div class="border hairline rounded-lg p-6 bg-white"><div class="mono text-xs text-neutral-400 mb-2">SAFETY</div><div class="text-4xl font-bold">0.57</div><div class="text-xs text-neutral-500 mt-1">Spearman ρ</div></div>
+      <div class="border hairline rounded-lg p-6 bg-white"><div class="mono text-xs text-neutral-400 mb-2">LIVELY</div><div class="text-4xl font-bold">0.67</div><div class="text-xs text-neutral-500 mt-1">Spearman ρ</div></div>
+      <div class="border hairline rounded-lg p-6 bg-white"><div class="mono text-xs text-neutral-400 mb-2">BEAUTIFUL</div><div class="text-4xl font-bold">0.80</div><div class="text-xs text-neutral-500 mt-1">Spearman ρ</div></div>
+      <div class="border hairline rounded-lg p-6 bg-white"><div class="mono text-xs text-neutral-400 mb-2">WEALTHY</div><div class="text-4xl font-bold">0.82</div><div class="text-xs text-neutral-500 mt-1">Spearman ρ</div></div>
+    </div>
+    <div class="island mt-10">
+      <span class="tag">▌ FIGURE 4 · VALIDATION</span>
+      <h3>VLM VS. HUMAN JUDGMENT<span class="red">.</span></h3>
+      <p class="lede">Spearman correlations and K-NN regression metrics across four Place Pulse dimensions. Average ρ = 0.712, p &lt; 0.001 across all dimensions. Distribution plots compare VLM (blue) vs. KNN baseline (orange) Z-scores.</p>
+      <div class="arch-slot">
+        <img src="./assets/validation.png" alt="Validation scatter plots and distribution comparison — VLM vs KNN vs Place Pulse 2.0" loading="lazy"/>
+      </div>
+    </div>
+    <div class="island mt-8">
+      <span class="tag">▌ FIGURE 5 · ROUTE RESULTS</span>
+      <h3>PERSONA-CONDITIONED ROUTES<span class="red">.</span></h3>
+      <p class="lede">Generated routes for three personas (homebuyer, parent, photographer) across Singapore Toa Payoh (20 steps / 30 steps) and Hong Kong Mong Kok (30 steps). Each persona produces meaningfully different path geometry from identical start coordinates.</p>
+      <div class="arch-slot">
+        <img src="./assets/test_result_1.png" alt="Route maps — homebuyer, parent, photographer across Singapore and Hong Kong" loading="lazy"/>
+      </div>
     </div>
   </div>
 </section>
