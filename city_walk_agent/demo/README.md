@@ -11,7 +11,7 @@ cd city_walk_agent
 pip install fastapi uvicorn httpx python-dotenv
 ```
 
-`.env` already contains `GOOGLE_MAPS_API_KEY`. If absent, only local images (singapore/hongkong routes) are used.
+This demo reads `GOOGLE_MAPS_API_KEY`, `QWEN_VLM_API_URL`, and `QWEN_VLM_API_KEY` from `city_walk_agent/.env`. See the root [README](../../README.md#quickstart) for setup. If `GOOGLE_MAPS_API_KEY` is missing, only local pre-collected routes (Singapore, Hong Kong) will work — live Street View fetching will be disabled.
 
 ## Run
 
