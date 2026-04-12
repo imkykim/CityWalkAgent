@@ -32,8 +32,8 @@ env/
 city_walk_agent/.claude/settings.local.json
 city_walk_agent/cache/
 
-#Temporary gitignore
-/VIRL
-/ZenSVI
+# Logs
+*.log
+
 /PoC_guide.md
 /city_walk_agent/API_SETUP_GUIDE.md
