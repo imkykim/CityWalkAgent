@@ -111,7 +111,6 @@ class BaseAgent(ABC):
         """
         Lazy-load persistent memory system.
 
-        Inspired by VIRL's pattern of initializing heavy components on demand.
         The LongTermMemory provides JSONL-based persistent storage for experiences,
         replacing the simple in-memory list.
 
@@ -168,8 +167,7 @@ class BaseAgent(ABC):
         """Persist experience to disk, update counters, and learn from feedback.
 
         Uses the persistent LongTermMemory system to store experiences in JSONL format,
-        similar to VIRL's Memory.add() but with append-only file storage instead of
-        in-memory dict + pickle checkpoint.
+        with append-only file storage.
 
         Args:
             experience: Collected data spanning perception, decision, result, and

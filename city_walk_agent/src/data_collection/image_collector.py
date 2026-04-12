@@ -1,10 +1,7 @@
 import json
 import math
-import os
-import sys
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -175,31 +172,13 @@ def get_walking_direction(waypoints: List[Tuple[float, float]], current_index: i
 
 
 class ImageCollector:
-    """Collect street view images using ZenSVI library."""
+    """Collect street view images via the Google Street View Static API."""
 
     def __init__(self, api_key: Optional[str] = None, max_workers: int = 4) -> None:
         """Initialize the collector with API credentials and worker limits."""
         self.logger = get_logger(f"{__name__}.{self.__class__.__name__}")
         self.api_key = api_key or settings.mapillary_api_key
         self.max_workers = max_workers
-        self.zensvi_path = settings.zensvi_root
-        self.virl_path = settings.virl_root
-
-        # Disable ZenSVI proxy usage by default to avoid slow, unreliable proxy hops
-        os.environ.setdefault("ZENSVI_DISABLE_PROXIES", "1")
-
-        zensvi_src = self.zensvi_path / "src"
-        if str(zensvi_src) not in sys.path:
-            sys.path.insert(0, str(zensvi_src))
-            self.logger.debug("ZenSVI path appended", path=str(zensvi_src))
-
-        virl_pkg_root = self.virl_path
-        if virl_pkg_root.exists() and str(virl_pkg_root) not in sys.path:
-            sys.path.insert(0, str(virl_pkg_root))
-            self.logger.debug("VIRL path appended", path=str(virl_pkg_root))
-
-        self._kv_downloader_cls = None
-        self._virl_google_api = None
 
     def collect_route_images(
         self,
@@ -711,50 +690,6 @@ class ImageCollector:
                 if chunk:
                     image_file.write(chunk)
 
-    def _get_kv_downloader_cls(self):
-        """Lazily import the KartaView downloader to avoid heavy dependencies when unused."""
-
-        if self._kv_downloader_cls is not None:
-            return self._kv_downloader_cls
-
-        try:
-            from importlib import import_module
-
-            kv_module = import_module("zensvi.download.kv")
-            self._kv_downloader_cls = getattr(kv_module, "KVDownloader")
-            return self._kv_downloader_cls
-        except ImportError as error:
-            self.logger.error(
-                "Failed to import ZenSVI KartaView downloader",
-                zensvi_path=str(self.zensvi_path),
-                error=str(error)
-            )
-            raise ImportError(
-                f"Could not import ZenSVI KVDownloader from {self.zensvi_path}. Error: {error}"
-            ) from error
-
-    def _get_gsv_downloader_cls(self):
-        """Lazily import the GSV downloader to avoid geopandas dependency unless required."""
-
-        if self._gsv_downloader_cls is not None:
-            return self._gsv_downloader_cls
-
-        try:
-            from importlib import import_module
-
-            gsv_module = import_module("zensvi.download.gsv")
-            self._gsv_downloader_cls = getattr(gsv_module, "GSVDownloader")
-            return self._gsv_downloader_cls
-        except ImportError as error:
-            self.logger.error(
-                "Failed to import ZenSVI GSV downloader",
-                zensvi_path=str(self.zensvi_path),
-                error=str(error)
-            )
-            raise ImportError(
-                f"Could not import ZenSVI GSVDownloader from {self.zensvi_path}. Error: {error}"
-            ) from error
-
     @staticmethod
     def _compose_panorama_image(images: List[Image.Image]) -> Image.Image:
         """Create a simple panorama by stitching images horizontally."""
@@ -772,49 +707,6 @@ class ImageCollector:
             offset += img.width
 
         return panorama
-
-    def _get_virl_google_api(self):
-        """Instantiate VIRL's Google Maps helper for Static Street View downloads."""
-
-        if self._virl_google_api is not None:
-            return self._virl_google_api
-
-        virl_root = self.virl_path
-        if not virl_root.exists():
-            raise FileNotFoundError(
-                f"VIRL root directory not found at {virl_root}. Cannot use VIRL Street View utilities."
-            )
-
-        try:
-            from virl.platform.google_map_apis import GoogleMapAPI
-        except ImportError as error:
-            self.logger.error(
-                "Failed to import VIRL GoogleMapAPI",
-                virl_path=str(virl_root),
-                error=str(error)
-            )
-            raise ImportError(
-                f"Could not import VIRL from {virl_root}. Error: {error}"
-            ) from error
-
-        offline_cfg = SimpleNamespace(
-            ENABLED=False,
-            PANORAMA_DIR="None",
-            GPS_TO_PANO_PATH="None",
-        )
-
-        if settings.google_maps_api_key and not os.environ.get("GOOGLE_MAP_API_KEY"):
-            os.environ["GOOGLE_MAP_API_KEY"] = settings.google_maps_api_key
-
-        api = GoogleMapAPI(offline_cfg=offline_cfg)
-        if not api.key:
-            raise ValueError(
-                "VIRL GoogleMapAPI did not receive a Google Maps API key. "
-                "Ensure GOOGLE_MAPS_API_KEY is configured."
-            )
-
-        self._virl_google_api = api
-        return api
 
     def _get_streetview_metadata(
         self,
@@ -859,112 +751,6 @@ class ImageCollector:
 
         return metadata
 
-    def collect_kartaview_images(
-        self,
-        route: Route,
-        output_dir: Optional[str] = None,
-        buffer: int = 50,
-        metadata_only: bool = False,
-    ) -> List[Dict[str, Any]]:
-        """
-        Collect KartaView images for all waypoints in a route
-        Args:
-            route: Route object containing waypoints
-            output_dir: Directory to save images (default: data/images/route_id)
-            buffer: Search radius from waypoint in meters
-            metadata_only: If True, only download metadata without images
-        Returns:
-            List of download results with metadata
-        """
-        # Set up output directory
-        if not output_dir:
-            output_dir = settings.images_dir / route.route_id
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Initialize KartaView downloader lazily
-        downloader_cls = self._get_kv_downloader_cls()
-        downloader = downloader_cls(max_workers=self.max_workers)
-
-        results = []
-
-        # Collect images for each waypoint
-        for waypoint in route.waypoints:
-            try:
-                self.logger.info(
-                    "Collecting KartaView images",
-                    route_id=route.route_id,
-                    waypoint_id=waypoint.sequence_id,
-                    latitude=waypoint.lat,
-                    longitude=waypoint.lon
-                )
-
-                # Create waypoint-specific directory
-                waypoint_dir = output_dir / f"waypoint_{waypoint.sequence_id:03d}"
-                waypoint_dir.mkdir(exist_ok=True)
-
-                # Download images near this waypoint
-                downloader.download_svi(
-                    str(waypoint_dir),
-                    lat=waypoint.lat,
-                    lon=waypoint.lon,
-                    buffer=buffer,
-                    metadata_only=metadata_only,
-                )
-
-                # Update waypoint with image path if images were downloaded
-                image_files = list(waypoint_dir.glob("*.jpg"))
-                if image_files:
-                    # Use the first (closest) image
-                    waypoint.image_path = str(image_files[0])
-
-                result = {
-                    "waypoint_id": waypoint.sequence_id,
-                    "lat": waypoint.lat,
-                    "lon": waypoint.lon,
-                    "images_downloaded": len(image_files),
-                    "image_path": str(image_files[0]) if image_files else None,
-                    "metadata_only": metadata_only,
-                    "timestamp": datetime.now().isoformat(),
-                }
-                results.append(result)
-
-            except Exception as e:
-                self.logger.error(
-                    "Error collecting KartaView images",
-                    route_id=route.route_id,
-                    waypoint_id=waypoint.sequence_id,
-                    error=str(e)
-                )
-                result = {
-                    "waypoint_id": waypoint.sequence_id,
-                    "lat": waypoint.lat,
-                    "lon": waypoint.lon,
-                    "images_downloaded": 0,
-                    "image_path": None,
-                    "error": str(e),
-                    "timestamp": datetime.now().isoformat(),
-                }
-                results.append(result)
-
-        # Save collection metadata
-        metadata_file = output_dir / "collection_metadata.json"
-        with open(metadata_file, "w") as f:
-            json.dump(
-                {
-                    "route_id": route.route_id,
-                    "collection_timestamp": datetime.now().isoformat(),
-                    "total_waypoints": len(route.waypoints),
-                    "metadata_only": metadata_only,
-                    "results": results,
-                },
-                f,
-                indent=2,
-            )
-
-        return results
-
-
     def collect_google_street_view_images_static(
         self,
         route: Route,
@@ -983,7 +769,7 @@ class ImageCollector:
         corner_threshold: float = 30.0,
     ) -> List[Dict[str, Any]]:
         """
-        Collect Street View images using VIRL's GoogleMapAPI helper with the static API.
+        Collect Street View images via the Google Street View Static API.
 
         Args:
             route: Route containing waypoints.
@@ -1026,11 +812,40 @@ class ImageCollector:
                         error=str(cleanup_error)
                     )
 
-        api = self._get_virl_google_api()
         results: List[Dict[str, Any]] = []
 
         fov = max(10, min(120, int(fov)))
         heading_step = max(1, fov)
+        width, height = size
+
+        def _fetch_image(lat: float, lon: float, hdg: int) -> Optional[bytes]:
+            """Fetch a single Street View Static image; returns raw bytes or None."""
+            params = {
+                "size": f"{width}x{height}",
+                "location": f"{lat},{lon}",
+                "heading": str(hdg),
+                "fov": str(fov),
+                "pitch": str(pitch),
+                "source": source,
+                "key": settings.google_maps_api_key,
+            }
+            try:
+                resp = requests.get(
+                    "https://maps.googleapis.com/maps/api/streetview",
+                    params=params,
+                    timeout=20,
+                )
+                if resp.status_code == 200:
+                    return resp.content
+                self.logger.warning(
+                    "Street View Static API returned non-200",
+                    status=resp.status_code,
+                    lat=lat,
+                    lon=lon,
+                )
+            except requests.RequestException as err:
+                self.logger.warning("Street View Static API request failed", error=str(err))
+            return None
 
         for waypoint in route.waypoints:
             heading_plan: List[int]
@@ -1040,14 +855,12 @@ class ImageCollector:
                 heading_plan = list(range(0, 360, heading_step))
             else:
                 if use_route_direction:
-                    # Calculate walking direction from route geometry
                     waypoint_coords = [(w.lat, w.lon) for w in route.waypoints]
                     waypoint_index = next(
                         (i for i, w in enumerate(route.waypoints) if w.sequence_id == waypoint.sequence_id),
                         None
                     )
                     if waypoint_index is not None:
-                        # Use lookahead if configured
                         if lookahead_distance > 1:
                             heading_value = get_walking_direction_with_lookahead(
                                 waypoint_coords,
@@ -1073,7 +886,6 @@ class ImageCollector:
                     None
                 )
                 if waypoint_index is not None and 0 < waypoint_index < len(waypoint_coords) - 1:
-                    # Calculate angle change
                     prev_heading = calculate_bearing(
                         waypoint_coords[waypoint_index - 1][0],
                         waypoint_coords[waypoint_index - 1][1],
@@ -1112,16 +924,11 @@ class ImageCollector:
                 heading_entries: List[Dict[str, Any]] = []
 
                 for heading in heading_plan:
-                    street_view_image = api.get_streetview_from_geocode(
-                        (waypoint.lat, waypoint.lon),
-                        size=size,
-                        heading=heading,
-                        pitch=pitch,
-                        fov=fov,
-                        source=source,
-                        idx=heading,
-                    )
-                    pil_image = street_view_image.image.copy()
+                    raw = _fetch_image(waypoint.lat, waypoint.lon, heading)
+                    if raw is None:
+                        continue
+                    import io
+                    pil_image = Image.open(io.BytesIO(raw)).convert("RGB")
                     heading_path = output_dir / f"waypoint_{waypoint.sequence_id:03d}_heading_{heading:03d}.jpg"
                     pil_image.save(heading_path)
                     heading_images.append(pil_image)

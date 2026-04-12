@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # Required API Keys
     google_maps_api_key: str = Field(env="GOOGLE_MAPS_API_KEY")
     qwen_vlm_api_key: str = Field(env="QWEN_VLM_API_KEY")
-    mapillary_api_key: Optional[str] = Field(default=None, env="MAPILLARY_API_KEY")
+    mapillary_api_key: Optional[str] = Field(default=None, env="MAPILLARY_API_KEY")  # reserved for future use
 
     # Qwen VLM Configuration
     qwen_vlm_api_url: str = Field(env="QWEN_VLM_API_URL")
@@ -67,16 +67,6 @@ class Settings(BaseSettings):
     )
     results_dir: Path = Field(
         default_factory=lambda: Path(__file__).parent.parent.parent / "data" / "results"
-    )
-
-    # ZenSVI Integration
-    zensvi_root: Path = Field(
-        default_factory=lambda: Path(__file__).parent.parent.parent.parent / "ZenSVI"
-    )
-
-    # VIRL Integration
-    virl_root: Path = Field(
-        default_factory=lambda: Path(__file__).parent.parent.parent.parent / "VIRL"
     )
 
     # Place Pulse 2.0 Dataset (for validation)
