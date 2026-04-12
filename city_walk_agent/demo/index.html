@@ -997,10 +997,10 @@
     let currentMode = 'explore';  // 'explore' only (route mode temporarily disabled)
 
     // ── Summarizer (LLM headline + speech bubble) ──
-    // TODO: replace SUMMARIZER_API_KEY after /api/config fetch below
-    let SUMMARIZER_URL = 'https://llmapi.paratera.com/v1/chat/completions';
-    let SUMMARIZER_MODEL = 'Qwen3-30B-A3B-Instruct-2507';
-    let SUMMARIZER_API_KEY = '';  // filled in on init via /api/config
+    // All values are populated on init via /api/config — no vendor info in source.
+    let SUMMARIZER_URL = '';
+    let SUMMARIZER_MODEL = '';
+    let SUMMARIZER_API_KEY = '';
 
     // Speech bubble / key moment state
     let currentBubbleMarker = null;
@@ -1258,11 +1258,12 @@
         }
       });
 
-      // Load summarizer config
+      // Load summarizer config from server (no vendor info hardcoded here)
       try {
         const cfg = await fetch('/api/config').then(r => r.json());
         if (cfg.llm_api_key) SUMMARIZER_API_KEY = cfg.llm_api_key;
         if (cfg.llm_api_url) SUMMARIZER_URL = cfg.llm_api_url + '/chat/completions';
+        if (cfg.llm_model) SUMMARIZER_MODEL = cfg.llm_model;
       } catch(e) { log(`config load failed: ${e.message}`, 'warn'); }
 
       initRadarChart();

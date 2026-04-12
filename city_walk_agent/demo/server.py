@@ -415,6 +415,7 @@ async def api_config():
     return {
         "llm_api_url": str(_s.qwen_vlm_api_url).rstrip("/"),
         "llm_api_key": _s.qwen_vlm_api_key or "",
+        "llm_model": _s.qwen_vlm_model,
     }
 
 
