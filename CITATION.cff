@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "CityWalkAgent: Sequential Pedestrian Experience Analysis with a Dual-Process Cognitive Architecture"
+authors:
+  - family-names: Kim
+    given-names: Kyungdeok
+    affiliation: "School of Architecture, Tsinghua University"
+type: software
+repository-code: "https://github.com/imkykim/CityWalkAgent"
+license: MIT
+year: 2026
+preferred-citation:
+  type: thesis
+  title: "CityWalkAgent: Sequential Pedestrian Experience Analysis with a Dual-Process Cognitive Architecture"
+  authors:
+    - family-names: Kim
+      given-names: Kyungdeok
+  thesis-type: "Master's thesis"
+  institution:
+    name: "Tsinghua University, School of Architecture"
+  year: 2026
+  address: "Beijing, China"
