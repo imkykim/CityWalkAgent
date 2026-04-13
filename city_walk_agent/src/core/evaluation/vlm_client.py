@@ -1,7 +1,7 @@
 """
-VLM API client for Qwen VLM
+VLM API client
 
-Handles communication with Qwen Vision Language Model API
+Handles communication with any OpenAI-compatible vision language model API.
 """
 
 import asyncio
@@ -18,7 +18,7 @@ from src.utils.logging import get_logger
 
 @dataclass
 class VLMConfig:
-    """Configuration for Qwen VLM"""
+    """Configuration for VLM API"""
 
     api_key: str
     model: str
@@ -52,7 +52,7 @@ class VLMStats:
 
 class VLMClient:
     """
-    Qwen VLM client
+    OpenAI-compatible VLM client
 
     Features:
     - Automatic rate limiting
@@ -109,7 +109,7 @@ class VLMClient:
         for attempt in range(self.config.max_retries):
             try:
                 start_time = time.time()
-                response = await self._call_qwen(prompt, image_path, **kwargs)
+                response = await self._call_vlm(prompt, image_path, **kwargs)
 
                 elapsed = time.time() - start_time
                 self.stats.last_call_time = time.time()
@@ -157,10 +157,10 @@ class VLMClient:
         """
         return asyncio.run(self.call_vlm_async(prompt, image_path, **kwargs))
 
-    async def _call_qwen(
+    async def _call_vlm(
         self, prompt: str, image_path: str, **kwargs
     ) -> Dict[str, Any]:
-        """Call Qwen VLM API"""
+        """Call VLM API with a single image"""
         image_base64 = self.encode_image(image_path)
 
         headers = {
@@ -241,7 +241,7 @@ class VLMClient:
         for attempt in range(self.config.max_retries):
             try:
                 start_time = time.time()
-                response = await self._call_qwen_multi_image(
+                response = await self._call_vlm_multi_image(
                     prompt, image_paths, **kwargs
                 )
 
@@ -293,10 +293,10 @@ class VLMClient:
             self.call_vlm_multi_image_async(prompt, image_paths, **kwargs)
         )
 
-    async def _call_qwen_multi_image(
+    async def _call_vlm_multi_image(
         self, prompt: str, image_paths: List[str], **kwargs
     ) -> Dict[str, Any]:
-        """Call Qwen VLM API with multiple images"""
+        """Call VLM API with multiple images"""
         # Encode all images
         images_b64 = []
         for img_path in image_paths:
@@ -307,7 +307,7 @@ class VLMClient:
                 self.logger.error(f"Failed to encode {img_path}: {e}")
                 raise
 
-        # Build multi-image payload for Qwen
+        # Build multi-image payload
         content = [{"type": "text", "text": prompt}]
         for img_b64 in images_b64:
             content.append(

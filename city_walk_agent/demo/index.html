@@ -2051,7 +2051,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
         const text = data.choices?.[0]?.message?.content || '';
-        // Strip <think>...</think> blocks (Qwen3 reasoning leak safety)
+        // Strip <think>...</think> blocks (reasoning model leak safety)
         const clean = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
         // Extract JSON — find first { ... }
         const jsonMatch = clean.match(/\{[\s\S]*\}/);

@@ -113,7 +113,7 @@ class PersonaReasoner:
 
         Args:
             framework_id: Evaluation framework to use.
-            llm_api_url: API URL for LLM calls (defaults to settings.qwen_vlm_api_url).
+            llm_api_url: API URL for LLM calls (defaults to settings.vlm_api_url).
             llm_api_key: API key for LLM.
             distance_trigger_meters: Distance threshold for milestone triggers.
             score_delta_threshold: Score change threshold for volatility triggers.

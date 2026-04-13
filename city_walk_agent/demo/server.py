@@ -278,9 +278,9 @@ def _get_session(session_id: str) -> NavSession:
 def _build_evaluator() -> Evaluator:
     framework = load_framework("place_pulse_2.0")
     vlm_config = VLMConfig(
-        api_key=settings.qwen_vlm_api_key,
-        model=settings.qwen_vlm_model,
-        api_url=settings.qwen_vlm_api_url,
+        api_key=settings.vlm_api_key,
+        model=settings.vlm_model,
+        api_url=settings.vlm_api_url,
     )
     return Evaluator(vlm_config, framework, max_concurrent=4)
 
@@ -413,9 +413,9 @@ async def api_config():
     """Return frontend config including LLM summarizer credentials."""
     from src.core import settings as _s
     return {
-        "llm_api_url": str(_s.qwen_vlm_api_url).rstrip("/"),
-        "llm_api_key": _s.qwen_vlm_api_key or "",
-        "llm_model": _s.qwen_vlm_model,
+        "llm_api_url": str(_s.vlm_api_url).rstrip("/"),
+        "llm_api_key": _s.vlm_api_key or "",
+        "llm_model": _s.vlm_model,
     }
 
 

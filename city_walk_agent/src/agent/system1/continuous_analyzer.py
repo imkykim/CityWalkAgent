@@ -98,9 +98,9 @@ class ContinuousAnalyzer:
         # Initialize Evaluator (reuse existing VLM evaluation logic)
         framework = load_framework(framework_id)
         vlm_config = VLMConfig(
-            api_key=settings.qwen_vlm_api_key,
-            model=settings.qwen_vlm_model,
-            api_url=settings.qwen_vlm_api_url,
+            api_key=settings.vlm_api_key,
+            model=settings.vlm_model,
+            api_url=settings.vlm_api_url,
         )
         self.evaluator = Evaluator(vlm_config, framework, max_concurrent=5)
 

@@ -51,9 +51,9 @@ class Evaluator:
         ```python
         # Initialize evaluator
         config = VLMConfig(
-            api_key="your-qwen-key",
+            api_key="your-vlm-api-key",
             model="Qwen3-VL-30B-A3B-Instruct-FP8",
-            api_url="your-qwen-api-url"
+            api_url="your-vlm-api-url"
         )
         evaluator = Evaluator(config, framework)
 

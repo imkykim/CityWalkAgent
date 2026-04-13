@@ -30,9 +30,9 @@ def call_llm(
     Returns:
         파싱된 JSON dict, 실패 시 None
     """
-    url = api_url or getattr(settings, "qwen_vlm_api_url", None)
-    key = api_key or getattr(settings, "qwen_vlm_api_key", None)
-    mdl = model or getattr(settings, "qwen_vlm_model", None)
+    url = api_url or getattr(settings, "vlm_api_url", None)
+    key = api_key or getattr(settings, "vlm_api_key", None)
+    mdl = model or getattr(settings, "vlm_model", None)
 
     if not url or not key:
         logger.warning("LLM credentials not found in settings")
