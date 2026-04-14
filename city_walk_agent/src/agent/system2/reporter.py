@@ -234,6 +234,8 @@ Generate a concise episode record. Respond ONLY with valid JSON:
         route_stats: Dict[str, Any],
         planner_summary: Dict[str, Any],
         personality: Any,
+        waypoints_index: Optional[Dict[int, Dict[str, Any]]] = None,
+        walk_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Generate comprehensive route report from accumulated data.
 
@@ -335,12 +337,63 @@ Write a comprehensive evaluation. Respond ONLY with valid JSON:
         self.logger.info("Generating route-level report via LLM")
         result = call_llm(prompt, max_tokens=800)
 
-        if result and "executive_summary" in result:
+        if not (result and "executive_summary" in result):
+            self.logger.warning("Route report LLM failed — using fallback")
+            result = self._report_route_fallback(route_stats, dim_avgs, snapshots, episodes)
+        else:
             self.logger.info(f"Route report generated: recommendation={result.get('recommendation')}")
-            return result
 
-        self.logger.warning("Route report LLM failed — using fallback")
-        return self._report_route_fallback(route_stats, dim_avgs, snapshots, episodes)
+        # Build snapshots (frontend shape)
+        snapshots_out = [
+            {
+                "span_start": s.get("span_start"),
+                "span_end": s.get("span_end"),
+                "trend": s.get("trend", "stable"),
+                "trajectory": s.get("trajectory", 0.0),
+                "barrier_segments": [list(b) for b in s.get("barrier_segments", [])],
+            }
+            for s in snapshots
+        ]
+
+        # Build key_moments by joining segment_highlights ↔ episodes ↔ waypoints_index
+        key_moments = []
+        for highlight in result.get("segment_highlights", []):
+            try:
+                wp_id = int(highlight.get("waypoint_id"))
+            except (TypeError, ValueError):
+                continue
+            ep = next((e for e in episodes if e.get("waypoint_id") == wp_id), {})
+            wp = (waypoints_index or {}).get(wp_id, {})
+            image_url = None
+            if walk_id and wp.get("image_filename"):
+                image_url = f"/api/walk/{walk_id}/image/{wp['image_filename']}"
+            key_moments.append({
+                "waypoint_id": wp_id,
+                "type": highlight.get("type", "routine"),
+                "description": highlight.get("description", ""),
+                "narrative": ep.get("narrative", ""),
+                "persona_reaction": ep.get("persona_reaction", ""),
+                "image_url": image_url,
+                "gps": wp.get("gps"),
+                "scores": wp.get("scores", {}),
+            })
+
+        # Build efficiency block
+        efficiency = {
+            "steps_total": route_stats.get("steps", 0),
+            "steps_analyzed": route_stats.get("analyzed_steps", 0),
+            "skip_rate": route_stats.get("skip_rate", 0.0),
+            "reroute_count": planner_summary.get("reroute_count", 0),
+            "duration_seconds": route_stats.get("duration_seconds", 0),
+            "distance_m": route_stats.get("distance_m", 0),
+        }
+
+        # Remove segment_highlights (folded into key_moments) and merge new fields
+        result.pop("segment_highlights", None)
+        result["snapshots"] = snapshots_out
+        result["key_moments"] = key_moments
+        result["efficiency"] = efficiency
+        return result
 
     def _report_route_fallback(
         self,

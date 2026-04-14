@@ -700,42 +700,140 @@
         border: 1px solid var(--border);
         border-radius: 16px;
         padding: 24px;
-        max-width: 520px;
-        width: 90vw;
-        max-height: 80vh;
+        max-width: 680px;
+        width: 92vw;
+        max-height: 85vh;
         overflow-y: auto;
         box-shadow: 0 8px 32px rgba(0,0,0,0.2);
         position: relative;
       }
+      /* Header row: title + persona + badge + download buttons + close */
+      .rr-header {
+        display: flex; align-items: flex-start; gap: 8px;
+        margin-bottom: 14px; flex-wrap: wrap;
+      }
+      .rr-header-left { flex: 1; min-width: 0; }
+      .rr-header-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
       #route-report-panel .rr-close {
-        position: absolute; top: 12px; right: 16px;
         background: none; border: none; font-size: 18px;
-        color: var(--text-3); cursor: pointer;
+        color: var(--text-3); cursor: pointer; line-height: 1; padding: 0;
       }
       #route-report-panel .rr-close:hover { color: var(--text-1); }
+      .rr-dl-btn {
+        font-size: 11px; font-weight: 500; padding: 3px 8px;
+        border-radius: 6px; border: 1px solid var(--border);
+        background: var(--surface); color: var(--text-2);
+        cursor: pointer; white-space: nowrap;
+      }
+      .rr-dl-btn:hover { background: var(--border); color: var(--text-1); }
       #route-report-panel .rr-title {
         font-size: 16px; font-weight: 700; color: var(--text-1);
-        margin-bottom: 4px;
+        margin-bottom: 2px;
       }
       #route-report-panel .rr-persona {
-        font-size: 11px; color: var(--text-3); margin-bottom: 16px;
+        font-size: 11px; color: var(--text-3); margin-bottom: 6px;
       }
       #route-report-panel .rr-badge {
         display: inline-block; padding: 3px 10px; border-radius: 12px;
-        font-size: 11px; font-weight: 600; margin-bottom: 12px;
+        font-size: 11px; font-weight: 600;
       }
       .rr-badge.recommended { background: #d1fae5; color: #065f46; }
       .rr-badge.acceptable  { background: #fef3c7; color: #92400e; }
       .rr-badge.avoid        { background: #fee2e2; color: #991b1b; }
-      #route-report-panel .rr-section { margin-bottom: 14px; }
+      #route-report-panel .rr-section { margin-bottom: 18px; }
       #route-report-panel .rr-section-title {
         font-size: 11px; font-weight: 600; color: var(--text-3);
         text-transform: uppercase; letter-spacing: 0.5px;
-        margin-bottom: 4px;
+        margin-bottom: 8px;
       }
       #route-report-panel .rr-text {
         font-size: 13px; color: var(--text-1); line-height: 1.5;
       }
+      /* Efficiency cards */
+      .rr-eff-row {
+        display: flex; gap: 8px;
+      }
+      .rr-eff-card {
+        flex: 1; border: 1px solid var(--border); border-radius: 10px;
+        padding: 10px 8px; text-align: center; background: var(--surface);
+      }
+      .rr-eff-value {
+        font-size: 20px; font-weight: 700; color: var(--text-1);
+        line-height: 1.1;
+      }
+      .rr-eff-label {
+        font-size: 10px; color: var(--text-3); margin-top: 3px;
+        text-transform: uppercase; letter-spacing: 0.4px;
+      }
+      .rr-eff-sub {
+        font-size: 9px; color: var(--text-3); margin-top: 1px;
+      }
+      /* Snapshot trend row */
+      .rr-snap-row {
+        position: relative; height: 22px; margin-bottom: 4px;
+      }
+      .rr-snap-icon {
+        position: absolute; top: 0; height: 22px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 13px; cursor: default; border-radius: 4px;
+        transition: background 0.15s;
+      }
+      .rr-snap-icon:hover { background: rgba(0,0,0,0.06); }
+      /* Score trend chart in report */
+      .rr-chart-wrap { position: relative; height: 160px; }
+      /* Key moments */
+      .rr-km-scroll {
+        display: flex; gap: 10px;
+        overflow-x: auto; padding-bottom: 6px;
+      }
+      .rr-km-scroll::-webkit-scrollbar { height: 4px; }
+      .rr-km-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+      .rr-km-card {
+        flex: 0 0 260px; border: 1px solid var(--border); border-radius: 10px;
+        overflow: hidden; background: var(--surface); cursor: pointer;
+        transition: box-shadow 0.15s, transform 0.15s;
+      }
+      .rr-km-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.12); transform: translateY(-1px); }
+      .rr-km-card.rr-card-active { box-shadow: 0 0 0 2px #0071e3; }
+      .rr-km-thumb {
+        width: 100%; aspect-ratio: 16/9; object-fit: cover;
+        display: block; background: #e5e7eb;
+      }
+      .rr-km-thumb-placeholder {
+        width: 100%; aspect-ratio: 16/9;
+        background: linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%);
+        display: flex; align-items: center; justify-content: center;
+        color: #9ca3af; font-size: 22px;
+      }
+      .rr-km-body { padding: 10px 12px; }
+      .rr-km-meta {
+        display: flex; align-items: center; gap: 6px;
+        margin-bottom: 7px;
+      }
+      .rr-km-type {
+        font-size: 9px; font-weight: 700; padding: 2px 7px;
+        border-radius: 10px; letter-spacing: 0.3px;
+      }
+      .rr-km-type.highlight  { background: #d1fae5; color: #065f46; }
+      .rr-km-type.barrier    { background: #fee2e2; color: #991b1b; }
+      .rr-km-type.transition { background: #fef3c7; color: #92400e; }
+      .rr-km-type.routine    { background: #f3f4f6; color: #6b7280; }
+      .rr-km-wp { font-size: 10px; color: var(--text-3); }
+      .rr-km-reaction {
+        font-size: 16px; font-style: italic; color: var(--text-1);
+        line-height: 1.3; margin-bottom: 6px;
+      }
+      .rr-km-narrative {
+        font-size: 12px; color: var(--text-3); line-height: 1.45;
+        display: -webkit-box; -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical; overflow: hidden;
+        margin-bottom: 8px;
+      }
+      .rr-km-scores {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 2px 6px;
+      }
+      .rr-km-score-item { font-size: 11px; color: var(--text-2); }
+      /* Dimensions */
       #route-report-panel .rr-dim-grid {
         display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
       }
@@ -1250,6 +1348,24 @@
         attribution: '© OpenStreetMap', maxZoom: 19
       }).addTo(map);
 
+      // Score color legend
+      const scoreLegend = L.control({ position: 'bottomright' });
+      scoreLegend.onAdd = function() {
+        const div = L.DomUtil.create('div');
+        div.style.cssText = 'background:rgba(255,255,255,0.88);padding:5px 8px;border-radius:7px;font-size:10px;line-height:1.4;box-shadow:0 1px 5px rgba(0,0,0,0.18);pointer-events:none;';
+        div.innerHTML =
+          '<div style="display:flex;align-items:center;gap:5px;">' +
+            '<span style="color:#6e6e73">Poor</span>' +
+            '<div style="width:72px;height:8px;border-radius:4px;background:linear-gradient(to right,rgb(215,25,28),rgb(255,255,191),rgb(26,150,65));"></div>' +
+            '<span style="color:#6e6e73">Great</span>' +
+          '</div>' +
+          '<div style="display:flex;justify-content:space-between;color:#aeaeb2;padding:0 2px;">'+
+            '<span>1</span><span>10</span>' +
+          '</div>';
+        return div;
+      };
+      scoreLegend.addTo(map);
+
       // Map click in explore mode → set start coords
       map.on('click', e => {
         if (currentMode === 'explore') {
@@ -1619,7 +1735,8 @@
       const scores = step.scores;
       if (!scores || !Object.keys(scores).length) return;
 
-      chartLabels.push(String(step.step));
+      const label = step.waypoint_id !== undefined ? step.waypoint_id : step.step;
+      chartLabels.push(String(label));
       scoreChart.data.labels = chartLabels;
 
       const dims = Object.keys(scores);
@@ -1662,7 +1779,7 @@
       const vals = dims.map(d => scores[d]);
       chartDatasets['__avg__'].push(vals.reduce((a, b) => a + b, 0) / vals.length);
 
-      if (step.branch_triggered) chartBranchPoints.push(step.step);
+      if (step.branch_triggered) chartBranchPoints.push(step.waypoint_id !== undefined ? step.waypoint_id : step.step);
 
       scoreChart.update();
     }
@@ -1735,6 +1852,7 @@
           try {
             const msg = JSON.parse(e.data);
             if (msg.type === 'step')            handleWalkStep(msg.data);
+            if (msg.type === 'lookahead')       handleLookahead(msg.data);
             if (msg.type === 'complete')        handleWalkComplete(msg.data);
             if (msg.type === 'branch_start')    handleBranchStart(msg.data);
             if (msg.type === 'branch_progress') handleBranchProgress(msg.data);
@@ -1766,11 +1884,20 @@
       }
     }
 
-    function scoreToColor(avg) {
-      if (avg >= 8) return '#10b981';
-      if (avg >= 6) return '#84cc16';
-      if (avg >= 4) return '#f59e0b';
-      return '#ef4444';
+    function scoreToColor(score) {
+      if (score == null || Object.is(score, NaN)) return '#888888';
+      const t = Math.max(0, Math.min(1, (score - 1) / 9));
+      let r, g, b;
+      if (t < 0.5) {
+        r = 215 + (255 - 215) * (t * 2);
+        g =  25 + (255 -  25) * (t * 2);
+        b =  28 + (191 -  28) * (t * 2);
+      } else {
+        r = 255 + ( 26 - 255) * ((t - 0.5) * 2);
+        g = 255 + (150 - 255) * ((t - 0.5) * 2);
+        b = 191 + ( 65 - 191) * ((t - 0.5) * 2);
+      }
+      return `rgb(${r|0},${g|0},${b|0})`;
     }
 
     // ── Branch visualization ─────────────────────────────────────────────
@@ -2124,6 +2251,28 @@ Respond ONLY with valid JSON (no markdown, no explanation):
 
     // ── Walk step handler ────────────────────────────────────────────────
 
+    function handleLookahead(step) {
+      // Branch-exploration intermediate pano — draw path on map only.
+      // Does NOT update score chart, scores panel, badge, or step counter.
+      if (!step.lat || !step.lng) return;
+      const latlng = [step.lat, step.lng];
+      if (prevNavLatLng) {
+        const scores = step.scores || {};
+        const vals = Object.values(scores);
+        const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 5;
+        const seg = L.polyline([prevNavLatLng, latlng], {
+          color: scoreToColor(avg),
+          weight: 4,
+          opacity: 0.85,
+        }).addTo(map);
+        walkSegments.push(seg);
+      }
+      prevNavLatLng = latlng;
+      if (navMarker) map.removeLayer(navMarker);
+      navMarker = L.marker(latlng, { icon: agentIcon(true), zIndexOffset: 1000 }).addTo(map);
+      map.panTo(latlng, { animate: true, duration: 0.3 });
+    }
+
     function handleWalkStep(step) {
       walkStepCount++;
       const latlng = [step.lat, step.lng];
@@ -2168,7 +2317,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
       } else {
         setPanorama(step.pano_id, step.heading);
       }
-      setBadge(`Step ${step.step}`);
+      setBadge(`Step ${step.waypoint_id !== undefined ? step.waypoint_id : step.step}`);
 
       // Agent view thumbnail (image the agent actually analyzed)
       if (step.image_base64) {
@@ -2213,13 +2362,13 @@ Respond ONLY with valid JSON (no markdown, no explanation):
       }
 
       // Progress
-      setStatus(`Step ${step.step} · ${Math.round(step.dist_to_dest_m)}m remaining`);
+      setStatus(`Step ${step.waypoint_id !== undefined ? step.waypoint_id : step.step} · ${Math.round(step.dist_to_dest_m)}m remaining`);
       // walk-status under scores
       const wsEl = document.getElementById('walk-status');
       wsEl.style.display = '';
-      document.getElementById('ws-step').textContent = step.step;
+      document.getElementById('ws-step').textContent = step.waypoint_id !== undefined ? step.waypoint_id : step.step;
       document.getElementById('ws-dist').textContent = Math.round(step.dist_to_dest_m) + 'm';
-      log(`Step ${step.step}: ${step.lat.toFixed(5)},${step.lng.toFixed(5)} dist=${step.dist_to_dest_m}m${step.is_intersection?' [intersec]':''}`, 'info');
+      log(`Step ${step.waypoint_id !== undefined ? step.waypoint_id : step.step} (loop ${step.step}): ${step.lat.toFixed(5)},${step.lng.toFixed(5)} dist=${step.dist_to_dest_m}m${step.is_intersection?' [intersec]':''}`, 'info');
 
       // Branch visualization — resolve after exploration SSEs have populated the overlay
       if (step.branch_triggered && step.branch_candidates && step.branch_candidates.length) {
@@ -2268,7 +2417,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
       item.innerHTML = `
         <div>
           <span class="s2-tag ${tagClass}">${escHtml(tagLabel)}</span>
-          <span style="font-size:10px;color:var(--text-3)">Step ${step.step} · ${Math.round(step.dist_to_dest_m)}m</span>
+          <span style="font-size:10px;color:var(--text-3)">Step ${step.waypoint_id !== undefined ? step.waypoint_id : step.step} · ${Math.round(step.dist_to_dest_m)}m</span>
         </div>
         <div class="s2-reason">${escHtml(step.recommendation)}</div>
         ${candidateSummary}
@@ -2282,6 +2431,27 @@ Respond ONLY with valid JSON (no markdown, no explanation):
     function handleWalkComplete(result) {
       showAnalysisBadge(false);
       if (result.route_report) handleRouteReport(result.route_report);
+
+      // Key moment markers — drawn on top of existing waypoint dots
+      const KM_COLOR = { highlight: '#22c55e', barrier: '#ef4444', transition: '#f59e0b', routine: '#9ca3af' };
+      const kms = result.route_report?.key_moments || [];
+      for (const km of kms) {
+        if (!km.gps || km.gps[0] == null) continue;
+        const color = KM_COLOR[km.type] || '#9ca3af';
+        const marker = L.circleMarker([km.gps[0], km.gps[1]], {
+          radius: 12, color: '#fff', weight: 2,
+          fillColor: color, fillOpacity: 0.85,
+        }).addTo(map);
+        if (km.persona_reaction) {
+          marker.bindPopup(
+            `<div style="font-size:12px;max-width:160px;">` +
+            `<b>${km.type || 'moment'}</b> · WP ${km.waypoint_id ?? '—'}<br>` +
+            `<em>"${km.persona_reaction}"</em></div>`,
+            { maxWidth: 180 }
+          );
+        }
+        keyMomentPins.push(marker);
+      }
       const arrived = result.arrived ? '✓ Arrived' : '— Did not arrive';
       const steps = result.steps ?? walkStepCount;
       const dist = result.final_distance_m != null ? `${Math.round(result.final_distance_m)}m from dest` : '';
@@ -2308,18 +2478,98 @@ Respond ONLY with valid JSON (no markdown, no explanation):
     // ROUTE REPORT
     // ═══════════════════════════════════════════════════════
 
+    // Holds the last rendered route_report for download buttons
+    let _lastRouteReport = null;
+
     function handleRouteReport(data) {
       log('Route report received: ' + (data.recommendation || '?'), 'ok');
       renderRouteReport(data);
     }
 
-    function renderRouteReport(r) {
-      const overlay  = document.getElementById('route-report-overlay');
-      const persona  = document.getElementById('rr-persona');
-      const badgeArea = document.getElementById('rr-badge-area');
-      const body     = document.getElementById('rr-body');
+    // ── helpers ──────────────────────────────────────────────────────────────
+    function rrFmtDuration(secs) {
+      const s = Math.round(secs || 0);
+      const m = Math.floor(s / 60);
+      return `${m}:${String(s % 60).padStart(2, '0')}`;
+    }
+    function rrFmtDist(m) {
+      if (m == null) return '—';
+      return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`;
+    }
+    function rrTimestamp() {
+      const d = new Date();
+      return d.getFullYear().toString()
+        + String(d.getMonth()+1).padStart(2,'0')
+        + String(d.getDate()).padStart(2,'0') + '_'
+        + String(d.getHours()).padStart(2,'0')
+        + String(d.getMinutes()).padStart(2,'0')
+        + String(d.getSeconds()).padStart(2,'0');
+    }
+    function rrTriggerDownload(content, filename, mime) {
+      const blob = new Blob([content], { type: mime });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+    function rrDownloadJson() {
+      if (!_lastRouteReport) return;
+      const ts = rrTimestamp();
+      rrTriggerDownload(
+        JSON.stringify(_lastRouteReport, null, 2),
+        `route_report_${currentPersona}_${ts}.json`,
+        'application/json'
+      );
+    }
+    function rrDownloadMd() {
+      if (!_lastRouteReport) return;
+      const r = _lastRouteReport;
+      const ef = r.efficiency || {};
+      let md = `# Route Report — ${currentPersona}\n\n`;
+      md += `**Recommendation:** ${r.recommendation || '—'} (${r.recommendation_reason || ''})\n\n`;
+      md += `## Summary\n${r.executive_summary || ''}\n\n`;
+      md += `## Experience\n${r.score_narrative || ''}\n\n`;
+      md += `## Efficiency\n- Steps: ${ef.steps_analyzed ?? '—'} analyzed / ${ef.steps_total ?? '—'} total\n`;
+      md += `- Reroutes: ${ef.reroute_count ?? '—'}\n`;
+      md += `- Distance: ${ef.distance_m != null ? ef.distance_m + ' m' : '—'}\n`;
+      md += `- Duration: ${ef.duration_seconds != null ? ef.duration_seconds + ' s' : '—'}\n\n`;
+      if (r.dimension_verdicts && Object.keys(r.dimension_verdicts).length) {
+        md += `## Dimensions\n`;
+        for (const [dim, verdict] of Object.entries(r.dimension_verdicts)) {
+          md += `### ${dim}\n${verdict}\n\n`;
+        }
+      }
+      if (r.key_moments && r.key_moments.length) {
+        md += `## Key Moments\n`;
+        for (const km of r.key_moments) {
+          md += `### WP ${km.waypoint_id} · ${km.type || 'routine'}\n`;
+          if (km.persona_reaction) md += `\n> "${km.persona_reaction}"\n\n`;
+          if (km.narrative)        md += `${km.narrative}\n\n`;
+          if (km.description)      md += `${km.description}\n\n`;
+          if (km.scores && Object.keys(km.scores).length) {
+            const sc = km.scores;
+            md += `Scores: ${Object.entries(sc).map(([k,v])=>`${k} ${typeof v==='number'?v.toFixed(1):v}`).join(' · ')}\n\n`;
+          }
+          if (km.image_url) md += `![Image](${km.image_url})\n\n`;
+        }
+      }
+      md += `## Verdict\n${r.recommendation_reason || ''} ${r.persona_suitability || ''}\n\n`;
+      if (r.navigation_note) md += `## Navigation\n${r.navigation_note}\n\n`;
+      md += `---\n*Generated by CityWalkAgent — ${new Date().toISOString()}*\n`;
+      rrTriggerDownload(md, `route_report_${currentPersona}_${rrTimestamp()}.md`, 'text/markdown');
+    }
 
-      persona.textContent = currentPersona;
+    // ── main render ───────────────────────────────────────────────────────────
+    function renderRouteReport(r) {
+      _lastRouteReport = r;
+      const overlay   = document.getElementById('route-report-overlay');
+      const personaEl = document.getElementById('rr-persona');
+      const badgeArea = document.getElementById('rr-badge-area');
+      const body      = document.getElementById('rr-body');
+
+      personaEl.textContent = currentPersona;
 
       const rec = r.recommendation || 'acceptable';
       const recLabel = rec === 'recommended' ? '✓ Recommended' : rec === 'avoid' ? '✗ Avoid' : '— Acceptable';
@@ -2327,6 +2577,37 @@ Respond ONLY with valid JSON (no markdown, no explanation):
 
       let html = '';
 
+      // ── 1. Efficiency cards ───────────────────────────────────────────────
+      const ef = r.efficiency || {};
+      if (Object.keys(ef).length) {
+        const stepsVal = (ef.steps_analyzed != null && ef.steps_total != null && ef.steps_analyzed !== ef.steps_total)
+          ? `${ef.steps_analyzed}<span style="font-size:13px;color:var(--text-3)"> / ${ef.steps_total}</span>`
+          : String(ef.steps_analyzed ?? ef.steps_total ?? '—');
+        const stepsSub = (ef.steps_analyzed != null && ef.steps_total != null && ef.steps_analyzed !== ef.steps_total)
+          ? '<div class="rr-eff-sub">analyzed / total</div>' : '';
+        html += `<div class="rr-section">
+          <div class="rr-eff-row">
+            <div class="rr-eff-card">
+              <div class="rr-eff-value">${stepsVal}</div>
+              <div class="rr-eff-label">Steps</div>${stepsSub}
+            </div>
+            <div class="rr-eff-card">
+              <div class="rr-eff-value">${ef.reroute_count ?? '—'}</div>
+              <div class="rr-eff-label">Reroutes</div>
+            </div>
+            <div class="rr-eff-card">
+              <div class="rr-eff-value">${rrFmtDist(ef.distance_m)}</div>
+              <div class="rr-eff-label">Distance</div>
+            </div>
+            <div class="rr-eff-card">
+              <div class="rr-eff-value">${rrFmtDuration(ef.duration_seconds)}</div>
+              <div class="rr-eff-label">Duration</div>
+            </div>
+          </div>
+        </div>`;
+      }
+
+      // ── 2. Summary ────────────────────────────────────────────────────────
       if (r.executive_summary) {
         html += `<div class="rr-section">
           <div class="rr-section-title">Summary</div>
@@ -2334,13 +2615,63 @@ Respond ONLY with valid JSON (no markdown, no explanation):
         </div>`;
       }
 
-      if (r.score_narrative) {
-        html += `<div class="rr-section">
-          <div class="rr-section-title">Experience</div>
-          <div class="rr-text">${escHtml(r.score_narrative)}</div>
+      // ── 3. Score Trend (placeholder — chart injected after innerHTML set) ─
+      if (scoreChart && scoreChart.data.labels.length) {
+        html += `<div class="rr-section" id="rr-trend-section">
+          <div class="rr-section-title">Score Trend</div>
+          <div id="rr-snap-row-wrap"></div>
+          <div class="rr-chart-wrap"><canvas id="rr-score-canvas"></canvas></div>
         </div>`;
       }
 
+      // ── 4. Key Moments ────────────────────────────────────────────────────
+      const kms = r.key_moments || [];
+      if (kms.length) {
+        const TYPE_ICON = { highlight: '⭐', barrier: '⚠', transition: '↔', routine: '·' };
+        const SCORE_ICON = { safety: '🛡', lively: '⚡', beautiful: '🌸', wealthy: '💰' };
+        let kmHtml = '<div class="rr-km-scroll">';
+        for (const km of kms) {
+          const type    = km.type || 'routine';
+          const typeIcon = TYPE_ICON[type] || '·';
+          const thumb   = km.image_url
+            ? `<img class="rr-km-thumb" src="${escHtml(km.image_url)}" alt="WP ${km.waypoint_id}" loading="lazy">`
+            : `<div class="rr-km-thumb-placeholder">📷</div>`;
+          const reaction = km.persona_reaction
+            ? `<div class="rr-km-reaction">"${escHtml(km.persona_reaction)}"</div>` : '';
+          const narrative = km.narrative
+            ? `<div class="rr-km-narrative">${escHtml(km.narrative)}</div>` : '';
+          let scoresHtml = '';
+          if (km.scores && Object.keys(km.scores).length) {
+            scoresHtml = '<div class="rr-km-scores">';
+            for (const [k, v] of Object.entries(km.scores)) {
+              const icon = SCORE_ICON[k.toLowerCase()] || '·';
+              scoresHtml += `<div class="rr-km-score-item">${icon} ${typeof v === 'number' ? v.toFixed(1) : v}</div>`;
+            }
+            scoresHtml += '</div>';
+          }
+          const gpsAttr = (km.gps && km.gps[0] != null)
+            ? `data-lat="${km.gps[0]}" data-lng="${km.gps[1]}"` : '';
+          kmHtml += `<div class="rr-km-card" ${gpsAttr} onclick="rrCardClick(this)">
+            ${thumb}
+            <div class="rr-km-body">
+              <div class="rr-km-meta">
+                <span class="rr-km-type ${type}">${typeIcon} ${type}</span>
+                <span class="rr-km-wp">WP ${km.waypoint_id ?? '—'}</span>
+              </div>
+              ${reaction}
+              ${narrative}
+              ${scoresHtml}
+            </div>
+          </div>`;
+        }
+        kmHtml += '</div>';
+        html += `<div class="rr-section">
+          <div class="rr-section-title">Key Moments</div>
+          ${kmHtml}
+        </div>`;
+      }
+
+      // ── 5. Dimensions ─────────────────────────────────────────────────────
       if (r.dimension_verdicts && Object.keys(r.dimension_verdicts).length) {
         let dimHtml = '<div class="rr-dim-grid">';
         for (const [dim, verdict] of Object.entries(r.dimension_verdicts)) {
@@ -2356,22 +2687,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
         </div>`;
       }
 
-      if (r.segment_highlights && r.segment_highlights.length) {
-        let hlHtml = '<ul class="rr-highlights">';
-        for (const hl of r.segment_highlights) {
-          const tag = hl.type || 'routine';
-          hlHtml += `<li>
-            <span class="rr-hl-tag ${tag}">${tag}</span>
-            WP${hl.waypoint_id}: ${escHtml(hl.description || '')}
-          </li>`;
-        }
-        hlHtml += '</ul>';
-        html += `<div class="rr-section">
-          <div class="rr-section-title">Key Moments</div>
-          ${hlHtml}
-        </div>`;
-      }
-
+      // ── 6. Verdict ────────────────────────────────────────────────────────
       if (r.recommendation_reason || r.persona_suitability) {
         html += `<div class="rr-section">
           <div class="rr-section-title">Verdict</div>
@@ -2388,6 +2704,77 @@ Respond ONLY with valid JSON (no markdown, no explanation):
 
       body.innerHTML = html;
       overlay.classList.add('active');
+
+      // ── Post-render: build score trend chart copy ─────────────────────────
+      const rrCanvas = document.getElementById('rr-score-canvas');
+      if (rrCanvas && scoreChart && scoreChart.data.labels.length) {
+        // Copy datasets (deep clone data arrays to avoid shared references)
+        const clonedDatasets = scoreChart.data.datasets.map(ds => ({
+          label:           ds.label,
+          data:            [...ds.data],
+          borderColor:     ds.borderColor,
+          backgroundColor: ds.backgroundColor,
+          pointRadius:     ds.pointRadius,
+          pointHoverRadius:ds.pointHoverRadius,
+          borderWidth:     ds.borderWidth,
+          borderDash:      ds.borderDash,
+          tension:         ds.tension,
+          fill:            ds.fill,
+        }));
+        new Chart(rrCanvas, {
+          type: 'line',
+          data: { labels: [...scoreChart.data.labels], datasets: clonedDatasets },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            animation: { duration: 0 },
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+              legend: { display: true, position: 'top',
+                labels: { font: { size: 9 }, boxWidth: 10, padding: 6, color: '#6e6e73' } },
+              tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}` } },
+            },
+            scales: {
+              x: { ticks: { font: { size: 9 }, color: '#aeaeb2', maxTicksLimit: 12 },
+                   grid: { color: 'rgba(0,0,0,0.04)' } },
+              y: { min: 0, max: 10,
+                   ticks: { font: { size: 9 }, color: '#aeaeb2', stepSize: 2 },
+                   grid: { color: 'rgba(0,0,0,0.06)' } }
+            }
+          }
+        });
+
+        // Snapshot trend row
+        const snaps = r.snapshots || [];
+        if (snaps.length) {
+          const allLabels = scoreChart.data.labels;
+          const maxWp = allLabels.length > 0 ? parseInt(allLabels[allLabels.length - 1]) || (allLabels.length - 1) : 1;
+          const TREND_ICON  = { improving: '↗', declining: '↘', stable: '→', volatile: '↕' };
+          const TREND_COLOR = { improving: '#22c55e', declining: '#ef4444', stable: '#9ca3af', volatile: '#f97316' };
+          const snapWrap = document.getElementById('rr-snap-row-wrap');
+          let snapHtml = '<div class="rr-snap-row">';
+          for (const s of snaps) {
+            const left  = Math.round((s.span_start / Math.max(maxWp, 1)) * 100);
+            const width = Math.max(4, Math.round(((s.span_end - s.span_start) / Math.max(maxWp, 1)) * 100));
+            const icon  = TREND_ICON[s.trend]  || '→';
+            const color = TREND_COLOR[s.trend] || '#9ca3af';
+            const tip   = `WP ${s.span_start}–${s.span_end}: ${s.trend} (Δ ${s.trajectory >= 0 ? '+' : ''}${s.trajectory})`;
+            snapHtml += `<div class="rr-snap-icon" title="${escHtml(tip)}"
+              style="left:${left}%;width:${width}%;color:${color}">${icon}</div>`;
+          }
+          snapHtml += '</div>';
+          snapWrap.innerHTML = snapHtml;
+        }
+      }
+    }
+
+    function rrCardClick(el) {
+      const lat = parseFloat(el.dataset.lat);
+      const lng = parseFloat(el.dataset.lng);
+      if (!isNaN(lat) && !isNaN(lng)) {
+        map.setView([lat, lng], 18, { animate: true });
+        el.classList.add('rr-card-active');
+        setTimeout(() => el.classList.remove('rr-card-active'), 2000);
+      }
     }
 
     function closeRouteReport() {
@@ -2594,10 +2981,18 @@ Respond ONLY with valid JSON (no markdown, no explanation):
   <!-- Route Report overlay -->
   <div id="route-report-overlay">
     <div id="route-report-panel">
-      <button class="rr-close" onclick="closeRouteReport()">&times;</button>
-      <div class="rr-title">Route Report</div>
-      <div class="rr-persona" id="rr-persona"></div>
-      <div id="rr-badge-area"></div>
+      <div class="rr-header">
+        <div class="rr-header-left">
+          <div class="rr-title">Route Report</div>
+          <div class="rr-persona" id="rr-persona"></div>
+          <div id="rr-badge-area"></div>
+        </div>
+        <div class="rr-header-actions">
+          <button class="rr-dl-btn" onclick="rrDownloadMd()">📥 Markdown</button>
+          <button class="rr-dl-btn" onclick="rrDownloadJson()">📥 JSON</button>
+          <button class="rr-close" onclick="closeRouteReport()">&times;</button>
+        </div>
+      </div>
       <div id="rr-body"></div>
     </div>
   </div>

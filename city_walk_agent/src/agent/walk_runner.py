@@ -469,6 +469,7 @@ class AutonomousWalkRunner:
         step_callback=None,
         save_images: bool = False,
         lookahead_depth: int = 1,
+        walk_id: Optional[str] = None,
         urgency_mode: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Walk autonomously from start to destination.
@@ -480,6 +481,8 @@ class AutonomousWalkRunner:
         4. Filter candidate headings toward destination
         5. branch_decision() if 2+ candidates, else take single heading
         6. Move to next pano
+
+        max_steps: maximum number of ANALYZED waypoints (skipped panos do not count).
         """
         import asyncio
         import tempfile
@@ -519,7 +522,14 @@ class AutonomousWalkRunner:
         prev_image_hash = None  # imagehash.ImageHash | None
 
         images_dir: Optional[Path] = None
-        if save_images and output_dir:
+        if walk_id:
+            walk_output_dir = Path(tempfile.gettempdir()) / "citywalk_walks" / walk_id
+            walk_output_dir.mkdir(parents=True, exist_ok=True)
+            images_dir = walk_output_dir / "images"
+            images_dir.mkdir(exist_ok=True)
+            save_images = True  # force-enable when walk_id provided
+            self.logger.image_saving_enabled(images_dir)
+        elif save_images and output_dir:
             images_dir = Path(output_dir) / "images"
             images_dir.mkdir(parents=True, exist_ok=True)
             self.logger.image_saving_enabled(images_dir)
@@ -554,6 +564,7 @@ class AutonomousWalkRunner:
         last_analyzed_heading: Optional[float] = None
         analyzed_step_count: int = 0
         skipped_step_count: int = 0
+        analyzed_waypoint_id: int = 0
         gating_signal_counts: Dict[str, int] = {
             "heading": 0,
             "distance": 0,
@@ -566,7 +577,10 @@ class AutonomousWalkRunner:
             "converge": 0,
         }
 
-        for step in range(max_steps):
+        step = 0
+        max_analyzed = max_steps
+        hard_step_limit = max_steps * 4  # safety cap for skip-heavy runs
+        while analyzed_waypoint_id < max_analyzed and step < hard_step_limit:
             # Hard stop: same pano visited 5+ times
             if visit_counts.get(pano_id, 0) >= 5:
                 self.logger.step_stuck(step=step, pano_id=pano_id)
@@ -1009,6 +1023,7 @@ class AutonomousWalkRunner:
             # 10. Record step
             step_result = {
                 "step": step,
+                "waypoint_id": analyzed_waypoint_id,
                 "pano_id": pano_id,
                 "lat": current_lat,
                 "lng": current_lng,
@@ -1059,6 +1074,7 @@ class AutonomousWalkRunner:
             if urgency_tier in urgency_tier_counts:
                 urgency_tier_counts[urgency_tier] += 1
             route_taken.append(step_result)
+            analyzed_waypoint_id += 1
             visit_counts[pano_id] = visit_counts.get(pano_id, 0) + 1
             distance_from_last_trigger += 20.0
 
@@ -1074,55 +1090,44 @@ class AutonomousWalkRunner:
             if step_callback:
                 await step_callback(step_result)
 
-            # If branch decision jumped through lookahead, emit intermediate waypoints
-            # so they appear in the route and on the map without delay.
+            # Emit lookahead intermediate waypoints as a separate SSE event type.
+            # These are branch-exploration panos — NOT part of the actual walked path.
+            # They must not enter route_taken, waypoints_index, or increment analyzed_waypoint_id.
             if branch_last_pano and branch_last_pano != pano_id and chosen_candidate:
                 chain_wps = chosen_candidate.get("chain_waypoints", [])
                 for wp in chain_wps:
-                    lookahead_step_result = {
-                        "step": step,
-                        "pano_id": wp["pano_id"],
-                        "lat": wp.get("lat"),
-                        "lng": wp.get("lng"),
-                        "heading": round(wp["heading"], 1),
-                        "dist_to_dest_m": None,
-                        "dest_bearing": round(dest_bearing, 1),
-                        "dest_cardinal": cardinal,
-                        "scores": wp.get("scores", {}),
-                        "reasoning": wp.get("reasoning", {}),
-                        "image_base64": wp.get("image_base64"),
-                        "recommendation": None,
-                        "is_intersection": False,
-                        "branch_triggered": False,
-                        "s2_triggered": False,
-                        "analyzed": bool(wp.get("scores")),
-                        "gating_signals": {},
-                        "intended_heading": round(wp["heading"], 1),
-                        "candidate_count": 1,
-                        "visit_count": 0,
-                        "trigger_reason": None,
-                        "phash_distance": None,
-                        "visual_change": True,
-                        "image_path": None,
-                        "confidence": step_confidence,
-                        "wp_bearing": None,
-                        "urgency_tier": None,
-                        "route_deviation_m": None,
-                        "branch_candidates": [],
-                        "lookahead_intermediate": True,
-                        "lookahead_depth_index": wp["depth"],
-                    }
-                    route_taken.append(lookahead_step_result)
                     if step_callback:
-                        await step_callback(lookahead_step_result)
+                        await step_callback({
+                            "__event__": "lookahead",
+                            "step": step,
+                            "pano_id": wp["pano_id"],
+                            "lat": wp.get("lat"),
+                            "lng": wp.get("lng"),
+                            "heading": round(wp["heading"], 1),
+                            "scores": wp.get("scores", {}),
+                            "lookahead_intermediate": True,
+                            "lookahead_depth_index": wp["depth"],
+                        })
 
             pano_id = next_pano_id
+            step += 1
 
         final_dist = geodesic(
             (current_lat, current_lng), (dest_lat, dest_lng)
         ).meters
 
         planner_summary = self.planner.get_summary()
+        # Compute total walked distance from GPS-tagged waypoints
+        distance_m = 0.0
+        prev_gps = None
+        for s in route_taken:
+            lat, lng = s.get("lat"), s.get("lng")
+            gps = (lat, lng) if lat is not None and lng is not None else None
+            if gps and prev_gps:
+                distance_m += geodesic(prev_gps, gps).meters
+            if gps:
+                prev_gps = gps
+
         # Generate route-level report
         route_report = None
         try:
@@ -1133,6 +1138,16 @@ class AutonomousWalkRunner:
                     vals = [s[dim] for s in all_scores if dim in s]
                     dim_avgs[dim] = round(sum(vals) / len(vals), 2) if vals else 0.0
 
+            waypoints_index = {
+                s["waypoint_id"]: {
+                    "gps": (s["lat"], s["lng"]) if s.get("lat") is not None and s.get("lng") is not None else None,
+                    "scores": s.get("scores", {}),
+                    "image_path": s.get("image_path"),
+                    "image_filename": Path(s["image_path"]).name if s.get("image_path") else None,
+                }
+                for s in route_taken if s.get("waypoint_id") is not None
+            }
+
             route_report = self.reporter.report_route(
                 snapshots=memory_manager._route_snapshots,
                 episodes=memory_manager._route_reasoning_log,
@@ -1140,9 +1155,10 @@ class AutonomousWalkRunner:
                     "steps": len(route_taken),
                     "analyzed_steps": analyzed_step_count,
                     "skipped_steps": skipped_step_count,
-                    "skip_rate": round(1 - analyzed_step_count / max(step + 1, 1), 2),
+                    "skip_rate": round(1 - analyzed_step_count / max(step, 1), 2),
                     "arrived": arrived,
                     "final_distance_m": round(final_dist, 1),
+                    "distance_m": round(distance_m, 1),
                     "duration_seconds": round(time.time() - walk_start_ts, 1),
                     "dimension_avgs": dim_avgs,
                     "gating_signal_counts": gating_signal_counts,
@@ -1150,6 +1166,8 @@ class AutonomousWalkRunner:
                 },
                 planner_summary=planner_summary,
                 personality=self.personality,
+                waypoints_index=waypoints_index,
+                walk_id=walk_id,
             )
             self.logger.route_report_generated(
                 recommendation=route_report.get("recommendation", "?")

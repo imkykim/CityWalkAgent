@@ -692,9 +692,39 @@ async def nav_session_reset(body: dict):
 
 # ── autonomous walk SSE endpoints ────────────────────────────────────────────
 
+def _cleanup_old_walks():
+    import shutil
+    import tempfile
+    base = Path(tempfile.gettempdir()) / "citywalk_walks"
+    if not base.is_dir():
+        return
+    cutoff = time.time() - 24 * 3600
+    for walk_dir in base.iterdir():
+        try:
+            if walk_dir.stat().st_mtime < cutoff:
+                shutil.rmtree(walk_dir, ignore_errors=True)
+        except Exception:
+            pass
+
+
+@app.get("/api/walk/{walk_id}/image/{filename}")
+async def walk_image(walk_id: str, filename: str):
+    import re
+    import tempfile
+    if not re.match(r"^[a-zA-Z0-9_-]+$", walk_id):
+        raise HTTPException(status_code=400, detail="Invalid walk_id")
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    file_path = Path(tempfile.gettempdir()) / "citywalk_walks" / walk_id / "images" / filename
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(file_path, media_type="image/jpeg")
+
+
 @app.post("/api/walk/start")
 async def walk_start(body: WalkStartBody):
     """Start an autonomous walk and return a walk_id for SSE streaming."""
+    _cleanup_old_walks()
     walk_id = str(uuid.uuid4())[:8]
     logger.info(
         "walk_start requested | id=%s persona=%s start=(%.6f,%.6f) dest=(%.6f,%.6f) max_steps=%s lookahead=%s",
@@ -734,6 +764,7 @@ async def walk_start(body: WalkStartBody):
                 max_steps=body.max_steps,
                 step_callback=step_callback,
                 lookahead_depth=body.lookahead_depth,
+                walk_id=walk_id,
                 urgency_mode=body.urgency_mode,
             )
             mem = result.get("memory_debug") or {}
