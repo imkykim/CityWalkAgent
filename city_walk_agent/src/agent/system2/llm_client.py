@@ -1,6 +1,7 @@
 """Shared LLM client for System 2 components."""
 
 import json
+import os
 from typing import Any, Dict, Optional
 
 import httpx
@@ -30,12 +31,28 @@ def call_llm(
     Returns:
         파싱된 JSON dict, 실패 시 None
     """
-    url = api_url or getattr(settings, "vlm_api_url", None)
-    key = api_key or getattr(settings, "vlm_api_key", None)
-    mdl = model or getattr(settings, "vlm_model", None)
+    # Resolution order:
+    # 1) explicit function args
+    # 2) LLM_API_* env vars (S2 text reasoning default)
+    # 3) legacy settings.vlm_* fallback for backward compatibility
+    url = (
+        api_url
+        or os.getenv("LLM_API_URL")
+        or getattr(settings, "vlm_api_url", None)
+    )
+    key = (
+        api_key
+        or os.getenv("LLM_API_KEY")
+        or getattr(settings, "vlm_api_key", None)
+    )
+    mdl = (
+        model
+        or os.getenv("LLM_MODEL")
+        or getattr(settings, "vlm_model", None)
+    )
 
     if not url or not key:
-        logger.warning("LLM credentials not found in settings")
+        logger.warning("LLM credentials not found (checked args, LLM_API_*, then VLM_* fallback)")
         return None
 
     # /v1/chat/completions 엔드포인트로 변환

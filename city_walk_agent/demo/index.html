@@ -830,9 +830,23 @@
         margin-bottom: 8px;
       }
       .rr-km-scores {
-        display: grid; grid-template-columns: 1fr 1fr; gap: 2px 6px;
+        display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px;
       }
-      .rr-km-score-item { font-size: 11px; color: var(--text-2); }
+      .rr-km-score { display: flex; flex-direction: column; }
+      .rr-km-score-label { font-size: 10px; color: #888; text-transform: capitalize; line-height: 1.2; }
+      .rr-km-score-val   { font-size: 13px; color: var(--text-1); line-height: 1.2; }
+      /* Tile style select — matches persona-select */
+      #tile-style-select {
+        padding: 4px 22px 4px 10px;
+        border: none; border-radius: 0;
+        font-size: 11px; font-weight: 500;
+        background: transparent; color: var(--text-2);
+        cursor: pointer; appearance: none; -webkit-appearance: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23aeaeb2'/%3E%3C/svg%3E");
+        background-repeat: no-repeat; background-position: right 7px center;
+        outline: none;
+      }
+      #tile-style-select:hover { color: var(--text-1); }
       /* Dimensions */
       #route-report-panel .rr-dim-grid {
         display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
@@ -876,6 +890,13 @@
       <div id="topbar-config">
         <select id="persona-select" onchange="onPersonaChange()">
           <option value="objective">Objective</option>
+        </select>
+        <div id="topbar-config-sep"></div>
+        <select id="tile-style-select" onchange="onTileStyleChange()">
+          <option value="voyager">Voyager</option>
+          <option value="positron">Positron (muted)</option>
+          <option value="osm">OSM Standard</option>
+          <option value="dark">Dark</option>
         </select>
         <div id="topbar-config-sep"></div>
         <button id="settings-toggle" onclick="toggleSettings()" title="Settings">
@@ -1105,6 +1126,34 @@
     let keyMomentPins = [];
     let lastSummaryAbort = null;
 
+    const TILE_STYLES = {
+      voyager: {
+        label: 'Voyager',
+        url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+        attribution: '© OpenStreetMap contributors © CARTO',
+        subdomains: 'abcd', maxZoom: 20,
+      },
+      positron: {
+        label: 'Positron (muted)',
+        url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+        attribution: '© OpenStreetMap contributors © CARTO',
+        subdomains: 'abcd', maxZoom: 20,
+      },
+      osm: {
+        label: 'OSM Standard',
+        url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        attribution: '© OpenStreetMap contributors',
+        subdomains: 'abc', maxZoom: 19,
+      },
+      dark: {
+        label: 'Dark',
+        url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+        attribution: '© OpenStreetMap contributors © CARTO',
+        subdomains: 'abcd', maxZoom: 20,
+      },
+    };
+    let currentTileLayer = null;
+
     // Route state
     let map, waypoints = [], markers = [], polyline = null, trailLine = null, agentMarker = null;
     let agentIndex = -1;
@@ -1119,6 +1168,7 @@
     let navHistory = [];
     let walkSegments = [];
     let prevNavLatLng = null;
+    let walkedPoints = [];   // {lat, lng, scores, waypoint_id} — for report dimension lines
     // Auto walk state
     let currentWalkId = null;
     let walkEventSource = null;
@@ -1344,9 +1394,10 @@
       });
 
       map = L.map('map').setView([1.2835, 103.858], 14);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap', maxZoom: 19
-      }).addTo(map);
+      const savedTile = (() => { try { return localStorage.getItem('cw_tile_style'); } catch(e) { return null; } })();
+      const initialTile = (savedTile && TILE_STYLES[savedTile]) ? savedTile : 'voyager';
+      setTileStyle(initialTile);
+      document.getElementById('tile-style-select').value = initialTile;
 
       // Score color legend
       const scoreLegend = L.control({ position: 'bottomright' });
@@ -1884,6 +1935,7 @@
       }
     }
 
+    // scoreToColor: used for UI score bars / badges (softer palette)
     function scoreToColor(score) {
       if (score == null || Object.is(score, NaN)) return '#888888';
       const t = Math.max(0, Math.min(1, (score - 1) / 9));
@@ -1898,6 +1950,25 @@
         b = 191 + ( 65 - 191) * ((t - 0.5) * 2);
       }
       return `rgb(${r|0},${g|0},${b|0})`;
+    }
+
+    // scoreToMapColor: saturated RdYlGn for map polylines
+    function scoreToMapColor(score) {
+      if (score == null || (typeof score === 'number' && isNaN(score))) return '#888888';
+      const t = Math.max(0, Math.min(1, (score - 1) / 9));
+      let r, g, b;
+      if (t < 0.5) {
+        const k = t * 2;
+        r = Math.round(215 + (250 - 215) * k);
+        g = Math.round( 25 + (200 -  25) * k);
+        b = Math.round( 28 + ( 50 -  28) * k);
+      } else {
+        const k = (t - 0.5) * 2;
+        r = Math.round(250 + ( 30 - 250) * k);
+        g = Math.round(200 + (160 - 200) * k);
+        b = Math.round( 50 + ( 60 -  50) * k);
+      }
+      return `rgb(${r},${g},${b})`;
     }
 
     // ── Branch visualization ─────────────────────────────────────────────
@@ -2261,8 +2332,8 @@ Respond ONLY with valid JSON (no markdown, no explanation):
         const vals = Object.values(scores);
         const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 5;
         const seg = L.polyline([prevNavLatLng, latlng], {
-          color: scoreToColor(avg),
-          weight: 4,
+          color: scoreToMapColor(avg),
+          weight: 7,
           opacity: 0.85,
         }).addTo(map);
         walkSegments.push(seg);
@@ -2283,13 +2354,14 @@ Respond ONLY with valid JSON (no markdown, no explanation):
 
       // Map polyline — colored segment per step
       const currLatLng = [step.lat, step.lng];
+      walkedPoints.push({ lat: step.lat, lng: step.lng, scores: step.scores || {}, waypoint_id: step.waypoint_id });
       if (prevNavLatLng) {
         const scores = step.scores || {};
         const vals = Object.values(scores);
         const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 5;
         const seg = L.polyline([prevNavLatLng, currLatLng], {
-          color: scoreToColor(avg),
-          weight: 4,
+          color: scoreToMapColor(avg),
+          weight: 7,
           opacity: 0.85,
         }).addTo(map);
         walkSegments.push(seg);
@@ -2628,24 +2700,41 @@ Respond ONLY with valid JSON (no markdown, no explanation):
       const kms = r.key_moments || [];
       if (kms.length) {
         const TYPE_ICON = { highlight: '⭐', barrier: '⚠', transition: '↔', routine: '·' };
-        const SCORE_ICON = { safety: '🛡', lively: '⚡', beautiful: '🌸', wealthy: '💰' };
         let kmHtml = '<div class="rr-km-scroll">';
         for (const km of kms) {
-          const type    = km.type || 'routine';
+          const type     = km.type || 'routine';
           const typeIcon = TYPE_ICON[type] || '·';
-          const thumb   = km.image_url
+          const thumb    = km.image_url
             ? `<img class="rr-km-thumb" src="${escHtml(km.image_url)}" alt="WP ${km.waypoint_id}" loading="lazy">`
             : `<div class="rr-km-thumb-placeholder">📷</div>`;
-          const reaction = km.persona_reaction
-            ? `<div class="rr-km-reaction">"${escHtml(km.persona_reaction)}"</div>` : '';
-          const narrative = km.narrative
-            ? `<div class="rr-km-narrative">${escHtml(km.narrative)}</div>` : '';
+
+          // Fallback logic: prefer persona_reaction for quote, narrative for body
+          const reactionRaw    = (km.persona_reaction || '').trim();
+          const narrativeRaw   = (km.narrative || '').trim();
+          const descriptionRaw = (km.description || '').trim();
+          const mainQuote = reactionRaw || descriptionRaw || '—';
+          const bodyText  = narrativeRaw || (reactionRaw ? descriptionRaw : '') || '';
+
+          const reactionHtml = `<div class="rr-km-reaction">"${escHtml(mainQuote)}"</div>`;
+          const narrativeHtml = bodyText
+            ? `<div class="rr-km-narrative">${escHtml(bodyText)}</div>` : '';
+
+          // Score grid — dimension order: safety, lively, beautiful, wealthy
           let scoresHtml = '';
           if (km.scores && Object.keys(km.scores).length) {
             scoresHtml = '<div class="rr-km-scores">';
-            for (const [k, v] of Object.entries(km.scores)) {
-              const icon = SCORE_ICON[k.toLowerCase()] || '·';
-              scoresHtml += `<div class="rr-km-score-item">${icon} ${typeof v === 'number' ? v.toFixed(1) : v}</div>`;
+            const dimOrder = ['safety', 'lively', 'beautiful', 'wealthy'];
+            const scoreEntries = dimOrder
+              .filter(d => d in km.scores)
+              .map(d => [d, km.scores[d]])
+              .concat(Object.entries(km.scores).filter(([k]) => !dimOrder.includes(k)));
+            for (const [k, v] of scoreEntries) {
+              const label = k.charAt(0).toUpperCase() + k.slice(1);
+              const val   = typeof v === 'number' ? v.toFixed(1) : v;
+              scoresHtml += `<div class="rr-km-score">
+                <span class="rr-km-score-label">${escHtml(label)}</span>
+                <span class="rr-km-score-val">${escHtml(val)}</span>
+              </div>`;
             }
             scoresHtml += '</div>';
           }
@@ -2658,8 +2747,8 @@ Respond ONLY with valid JSON (no markdown, no explanation):
                 <span class="rr-km-type ${type}">${typeIcon} ${type}</span>
                 <span class="rr-km-wp">WP ${km.waypoint_id ?? '—'}</span>
               </div>
-              ${reaction}
-              ${narrative}
+              ${reactionHtml}
+              ${narrativeHtml}
               ${scoresHtml}
             </div>
           </div>`;
@@ -2765,6 +2854,12 @@ Respond ONLY with valid JSON (no markdown, no explanation):
           snapWrap.innerHTML = snapHtml;
         }
       }
+
+      // Draw 4 per-dimension polylines on the map (only when report is open)
+      if (walkedPoints.length > 1) {
+        clearReportDimensionLines();   // clean up any previous
+        drawReportDimensionLines(walkedPoints);
+      }
     }
 
     function rrCardClick(el) {
@@ -2777,7 +2872,79 @@ Respond ONLY with valid JSON (no markdown, no explanation):
       }
     }
 
+    // ── Report dimension polylines ────────────────────────────────────────
+    let reportPolylines = [];
+    let _reportDimLegend = null;
+    const DIM_ORDER = ['safety', 'lively', 'beautiful', 'wealthy'];
+    const DIM_OFFSETS_M = [-6, -2, 2, 6];
+
+    function offsetSegment(lat1, lng1, lat2, lng2, offsetMeters) {
+      const dLat = lat2 - lat1;
+      const dLng = lng2 - lng1;
+      const midLat = (lat1 + lat2) / 2;
+      const cosLat = Math.cos(midLat * Math.PI / 180);
+      const segLenM = Math.sqrt((dLat * 111320) ** 2 + (dLng * 111320 * cosLat) ** 2);
+      if (segLenM < 0.01) return [[lat1, lng1], [lat2, lng2]];
+      const perpLat = -dLng * cosLat / segLenM * offsetMeters / 111320;
+      const perpLng =  dLat           / segLenM * offsetMeters / (111320 * cosLat);
+      return [
+        [lat1 + perpLat, lng1 + perpLng],
+        [lat2 + perpLat, lng2 + perpLng],
+      ];
+    }
+
+    function drawReportDimensionLines(pts) {
+      // pts: [{lat, lng, scores, waypoint_id}]
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1];
+        if (!a.lat || !b.lat) continue;
+        DIM_ORDER.forEach((dim, idx) => {
+          const score = b.scores ? b.scores[dim] : null;
+          if (typeof score !== 'number') return;
+          const [p1, p2] = offsetSegment(a.lat, a.lng, b.lat, b.lng, DIM_OFFSETS_M[idx]);
+          const poly = L.polyline([p1, p2], {
+            color: scoreToMapColor(score), weight: 5, opacity: 0.92,
+          });
+          poly.bindTooltip(`${dim}: ${score.toFixed(1)} · WP${b.waypoint_id ?? ''}`, { sticky: true });
+          poly.addTo(map);
+          reportPolylines.push(poly);
+        });
+      }
+
+      // Dim the live walk segments to a faint backdrop
+      walkSegments.forEach(seg => seg.setStyle({ opacity: 0.18, weight: 4 }));
+
+      // Add legend
+      if (_reportDimLegend) { try { map.removeControl(_reportDimLegend); } catch(e) {} }
+      _reportDimLegend = L.control({ position: 'bottomright' });
+      _reportDimLegend.onAdd = function() {
+        const div = L.DomUtil.create('div');
+        div.style.cssText = 'background:white;padding:8px 10px;border-radius:6px;box-shadow:0 2px 6px rgba(0,0,0,.15);font-size:11px;line-height:1.5;pointer-events:none;';
+        div.innerHTML =
+          '<div style="font-weight:600;margin-bottom:4px;">Per-dimension route</div>' +
+          '<div style="color:#666;font-size:10px;">' +
+            '<div>← outer: Safety</div><div>&nbsp;&nbsp;&nbsp;Lively</div>' +
+            '<div>&nbsp;&nbsp;&nbsp;Beautiful</div><div>← outer: Wealthy</div>' +
+          '</div>' +
+          '<div style="margin-top:6px;padding-top:6px;border-top:1px solid #eee;display:flex;align-items:center;gap:4px;">' +
+            '<div style="width:80px;height:8px;border-radius:2px;background:linear-gradient(to right,rgb(215,25,28),rgb(250,200,50),rgb(30,160,60));"></div>' +
+            '<span style="font-size:10px;color:#666;">1 → 10</span>' +
+          '</div>';
+        return div;
+      };
+      _reportDimLegend.addTo(map);
+    }
+
+    function clearReportDimensionLines() {
+      reportPolylines.forEach(p => { try { map.removeLayer(p); } catch(e) {} });
+      reportPolylines = [];
+      if (_reportDimLegend) { try { map.removeControl(_reportDimLegend); } catch(e) {} _reportDimLegend = null; }
+      // Restore live-walk segments to full opacity
+      walkSegments.forEach(seg => seg.setStyle({ opacity: 0.85, weight: 7 }));
+    }
+
     function closeRouteReport() {
+      clearReportDimensionLines();
       document.getElementById('route-report-overlay').classList.remove('active');
     }
 
@@ -2785,6 +2952,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
       if (!preserveRouteReport) {
         document.getElementById('route-report-overlay').classList.remove('active');
       }
+      clearReportDimensionLines();
       if (walkEventSource) { walkEventSource.close(); walkEventSource = null; }
       currentWalkId = null;
       document.getElementById('topbar-start-btn').disabled = false;
@@ -2813,6 +2981,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
         if (navPolyline) { map.removeLayer(navPolyline); navPolyline = null; }
         walkSegments.forEach(s => map.removeLayer(s)); walkSegments = [];
         prevNavLatLng = null;
+        walkedPoints = [];
         if (destMarker)       { map.removeLayer(destMarker);       destMarker       = null; }
         if (plannedRouteLine) { map.removeLayer(plannedRouteLine); plannedRouteLine = null; }
         walkCircles.forEach(c => map.removeLayer(c)); walkCircles = [];
@@ -2829,6 +2998,22 @@ Respond ONLY with valid JSON (no markdown, no explanation):
     // ═══════════════════════════════════════════════════════
     // PERSONA
     // ═══════════════════════════════════════════════════════
+    function setTileStyle(styleKey) {
+      const cfg = TILE_STYLES[styleKey] || TILE_STYLES.voyager;
+      if (currentTileLayer) map.removeLayer(currentTileLayer);
+      currentTileLayer = L.tileLayer(cfg.url, {
+        attribution: cfg.attribution,
+        subdomains: cfg.subdomains,
+        maxZoom: cfg.maxZoom,
+      }).addTo(map);
+      currentTileLayer.bringToBack();
+      try { localStorage.setItem('cw_tile_style', styleKey); } catch(e) {}
+    }
+
+    function onTileStyleChange() {
+      setTileStyle(document.getElementById('tile-style-select').value);
+    }
+
     function onPersonaChange() {
       const p = document.getElementById('persona-select').value;
       if (p === currentPersona) return;

@@ -46,13 +46,13 @@ class Settings(BaseSettings):
 
     # Required API Keys
     google_maps_api_key: str = Field(env="GOOGLE_MAPS_API_KEY")
-    vlm_api_key: str = Field(env="QWEN_VLM_API_KEY")
+    vlm_api_key: str = Field(env="VLM_API_KEY")
     mapillary_api_key: Optional[str] = Field(default=None, env="MAPILLARY_API_KEY")  # reserved for future use
 
     # VLM Configuration (OpenAI-compatible endpoint)
-    vlm_api_url: str = Field(env="QWEN_VLM_API_URL")
+    vlm_api_url: str = Field(env="VLM_API_URL")
     vlm_model: str = Field(
-        default="Qwen3-VL-30B-A3B-Instruct-FP8", env="QWEN_VLM_MODEL"
+        default="Qwen3-VL-30B-A3B-Instruct-FP8", env="VLM_MODEL"
     )
 
     # Project Paths
