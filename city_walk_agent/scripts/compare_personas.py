@@ -621,52 +621,113 @@ def make_route_png(runs: list[PersonaRun], cmp_report: dict, out_path: Path) -> 
 
 
 # -----------------------------------------------------------------------------
-# Output 3 — route_comparison_map.html  (Leaflet)
+# Output 3 — route_comparison_map.html  (Leaflet) + per-persona maps
 # -----------------------------------------------------------------------------
 
-def make_route_map_html(runs: list[PersonaRun], cmp_report: dict,
-                        branch_div: dict, out_path: Path) -> None:
-    run_id = cmp_report.get("run_id", "")
-    route_name = _route_name(cmp_report)
+_MAP_JS_TEMPLATE = """\
+const map = L.map('map').setView(RAW.center, 16);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap contributors © CARTO',
+  subdomains: 'abcd', maxZoom: 20
+}).addTo(map);
 
-    # Build JS data structures as Python, then dump to JSON
-    persona_layers: list[dict] = []
-    for i, r in enumerate(runs):
-        color = _persona_color(i)
-        coords = r.visited_coords  # [[lat,lng], ...]
-        markers = []
-        for s in r.steps:
-            if not isinstance(s.get("lat"), (int, float)):
-                continue
-            has_score = bool(s.get("scores"))
-            is_s2 = bool(s.get("trigger_reason"))
-            avg = round(_avg_score_for_step(s), 2) if has_score else None
-            scores = s.get("scores", {})
-            excerpt = _reasoning_excerpt(s, 200)
-            markers.append({
-                "lat": s["lat"],
-                "lng": s["lng"],
-                "step": s.get("step"),
-                "pano_id": s.get("pano_id", ""),
-                "has_score": has_score,
-                "is_s2": is_s2,
-                "trigger_reason": s.get("trigger_reason", ""),
-                "avg": avg,
-                "scores": {d: scores.get(d) for d in DIMENSIONS},
-                "excerpt": excerpt,
-            })
-        persona_layers.append({
-            "key": r.persona_key,
-            "display": r.persona_display,
-            "color": color,
-            "coords": [[lat, lng] for lat, lng in r.visited_coords],
-            "markers": markers,
+function scoreColor(avg) {
+  if (avg >= 8) return '#22c55e';
+  if (avg >= 6) return '#84cc16';
+  if (avg >= 5) return '#eab308';
+  if (avg >= 4) return '#f97316';
+  return '#ef4444';
+}
+
+function renderPersonaLayer(p, group) {
+  // Polyline colored by per-step avg score
+  for (let i = 1; i < p.markers.length; i++) {
+    const prev = p.markers[i-1], curr = p.markers[i];
+    if (curr.avg != null) {
+      L.polyline([[prev.lat, prev.lng],[curr.lat, curr.lng]], {
+        color: scoreColor(curr.avg), weight: 4, opacity: 0.85
+      }).addTo(group);
+    } else if (prev.lat != null) {
+      L.polyline([[prev.lat, prev.lng],[curr.lat, curr.lng]], {
+        color: p.color, weight: 2, opacity: 0.3
+      }).addTo(group);
+    }
+  }
+
+  // Step markers
+  p.markers.forEach(function(m) {
+    if (!m.has_score && !m.is_s2) {
+      L.circleMarker([m.lat, m.lng], {
+        radius: 2.5, color: p.color, fillColor: p.color,
+        fillOpacity: 0.2, weight: 0
+      }).addTo(group);
+      return;
+    }
+    const radius = m.avg != null ? 3 + m.avg * 0.7 : 5;
+    const opts = m.is_s2
+      ? { radius, color: '#111', fillColor: p.color, fillOpacity: 0.9, weight: 2, dashArray: '4,2' }
+      : { radius, color: scoreColor(m.avg ?? 5), fillColor: scoreColor(m.avg ?? 5), fillOpacity: 0.75, weight: 1 };
+    const dimRows = Object.entries(m.scores)
+      .filter(([_, v]) => v != null)
+      .map(([d, v]) => `<tr><td>${d}</td><td>${v}</td></tr>`)
+      .join('');
+    const popup = `
+      <b>Step ${m.step}</b> &nbsp; <span style="color:${p.color}">${p.key}</span>
+      ${m.is_s2 ? ' &nbsp; <b>★ S2</b> (' + m.trigger_reason + ')' : ''}
+      <br><small>${m.pano_id}</small>
+      <table class="popup-table" style="margin-top:4px">
+        <tr><td>avg</td><td><b>${m.avg ?? '—'}</b></td></tr>
+        ${dimRows}
+      </table>
+      ${m.excerpt ? '<div style="margin-top:6px;font-size:10px;color:#555;max-width:260px">' + m.excerpt + '</div>' : ''}
+    `;
+    L.circleMarker([m.lat, m.lng], opts)
+      .bindPopup(popup, {maxWidth: 300})
+      .addTo(group);
+  });
+}
+"""
+
+_SCORE_LEGEND_HTML = """\
+<div style="background:#fff;padding:10px 14px;border-radius:6px;
+    box-shadow:0 1px 4px rgba(0,0,0,.12);font-size:11px;line-height:1.8">
+  <b>Score</b><br>
+  <span style="color:#22c55e">●</span> 8–10 Excellent<br>
+  <span style="color:#84cc16">●</span> 6–8 Good<br>
+  <span style="color:#eab308">●</span> 5–6 Average<br>
+  <span style="color:#f97316">●</span> 4–5 Below avg<br>
+  <span style="color:#ef4444">●</span> &lt;4 Poor<br>
+  <span style="font-size:10px;color:#555">– – S2 triggered<br>· · Skipped step<br>⚡ Divergent</span>
+</div>"""
+
+
+def _build_persona_markers(r: "PersonaRun", color: str) -> list[dict]:
+    markers = []
+    for s in r.steps:
+        if not isinstance(s.get("lat"), (int, float)):
+            continue
+        has_score = bool(s.get("scores"))
+        is_s2 = bool(s.get("trigger_reason"))
+        avg = round(_avg_score_for_step(s), 2) if has_score else None
+        scores = s.get("scores", {})
+        markers.append({
+            "lat": s["lat"],
+            "lng": s["lng"],
+            "step": s.get("step"),
+            "pano_id": s.get("pano_id", ""),
+            "has_score": has_score,
+            "is_s2": is_s2,
+            "trigger_reason": s.get("trigger_reason", ""),
+            "avg": avg,
+            "scores": {d: scores.get(d) for d in DIMENSIONS},
+            "excerpt": _reasoning_excerpt(s, 200),
         })
+    return markers
 
-    # Divergent branch points for ⚡ markers
+
+def _build_divergent_markers(branch_div: dict, runs: list["PersonaRun"]) -> list[dict]:
     divergent_markers = []
     for div in branch_div.get("divergent_detail", []):
-        # Find lat/lng from any persona's step with this pano_id
         lat, lng = None, None
         for r in runs:
             for s in r.steps:
@@ -682,22 +743,263 @@ def make_route_map_html(runs: list[PersonaRun], cmp_report: dict,
             for pk, info in div["choices"].items()
         )
         divergent_markers.append({
-            "lat": lat,
-            "lng": lng,
+            "lat": lat, "lng": lng,
             "pano_id": div["pano_id"],
             "choices_text": choices_text,
         })
+    return divergent_markers
 
-    # Center map
+
+def _map_center(runs: list["PersonaRun"]) -> tuple[float, float]:
     all_lats = [s[0] for r in runs for s in r.visited_coords]
     all_lngs = [s[1] for r in runs for s in r.visited_coords]
-    center_lat = float(np.mean(all_lats)) if all_lats else 0.0
-    center_lng = float(np.mean(all_lngs)) if all_lngs else 0.0
+    return (
+        float(np.mean(all_lats)) if all_lats else 0.0,
+        float(np.mean(all_lngs)) if all_lngs else 0.0,
+    )
+
+
+def _score_trend_sparkline_html(r: "PersonaRun", color: str) -> str:
+    """Inline SVG sparkline of avg score over steps."""
+    pts = [(s.get("step", i), round(_avg_score_for_step(s), 2))
+           for i, s in enumerate(r.analyzed_steps)]
+    if len(pts) < 2:
+        return ""
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    W, H = 160, 36
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = 1.0, 10.0
+    def px(x): return (x - x_min) / max(x_max - x_min, 1) * W
+    def py(y): return H - (y - y_min) / (y_max - y_min) * H
+    points = " ".join(f"{px(x):.1f},{py(y):.1f}" for x, y in pts)
+    avg = sum(ys) / len(ys)
+    return (
+        f'<svg width="{W}" height="{H}" viewBox="0 0 {W} {H}" '
+        f'style="display:block;overflow:visible">'
+        f'<polyline points="{points}" fill="none" stroke="{color}" '
+        f'stroke-width="1.5" stroke-linejoin="round"/>'
+        f'<text x="{W}" y="10" text-anchor="end" '
+        f'style="font-size:9px;fill:{color};font-weight:600">avg {avg:.2f}</text>'
+        f'</svg>'
+    )
+
+
+def _make_single_persona_map_html(
+    r: "PersonaRun",
+    color: str,
+    divergent_markers: list[dict],
+    run_id: str,
+    route_name: str,
+    all_persona_links: list[tuple[str, str, str]],  # [(key, color, filename), ...]
+) -> str:
+    """Generate a standalone Leaflet HTML for a single persona."""
+    center_lat, center_lng = _map_center([r])
+    markers = _build_persona_markers(r, color)
+
+    # Timeline data for mini chart
+    timeline_pts = [
+        {"step": m["step"], "avg": m["avg"]}
+        for m in markers if m["avg"] is not None
+    ]
+
+    data_js = json.dumps({
+        "persona": {"key": r.persona_key, "display": r.persona_display, "color": color},
+        "markers": markers,
+        "divergent_markers": [d for d in divergent_markers],
+        "center": [center_lat, center_lng],
+        "timeline": timeline_pts,
+    }, ensure_ascii=False)
+
+    nav_links = "".join(
+        f'<a href="{fname}" style="display:inline-flex;align-items:center;gap:4px;'
+        f'padding:3px 8px;border-radius:4px;font-size:11px;text-decoration:none;'
+        f'{"background:#f3f4f6;color:#374151" if pkey != r.persona_key else "background:" + pcolor + "22;color:" + pcolor + ";font-weight:600"};">'
+        f'<span style="width:8px;height:8px;border-radius:50%;background:{pcolor};display:inline-block"></span>'
+        f'{pkey}</a>'
+        for pkey, pcolor, fname in all_persona_links
+    )
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{r.persona_display} — {route_name}</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #fff; }}
+  #titlebar {{
+    position: fixed; top: 0; left: 0; right: 0; z-index: 1001;
+    background: #fff; border-bottom: 1px solid #e5e7eb;
+    padding: 8px 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }}
+  #titlebar h1 {{ font-size: 14px; font-weight: 600; color: #111; white-space: nowrap; }}
+  .nav-bar {{ display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }}
+  #map {{ position: fixed; top: 45px; bottom: 240px; left: 0; right: 0; }}
+  #chart-panel {{
+    position: fixed; bottom: 0; left: 0; right: 0; height: 232px;
+    background: #fff; border-top: 1px solid #e5e7eb; padding: 10px 16px 8px;
+    display: flex; flex-direction: column; gap: 4px;
+  }}
+  #chart-panel h2 {{ font-size: 11px; color: #6b7280; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; }}
+  #chart-wrap {{ flex: 1; min-height: 0; }}
+  .popup-table {{ border-collapse: collapse; width: 100%; font-size: 11px; }}
+  .popup-table td {{ padding: 2px 4px; }}
+  .popup-table tr:nth-child(even) {{ background: #f9fafb; }}
+  .legend-box {{
+    background: #fff; padding: 8px 12px; border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.12); font-size: 11px; line-height: 1.8;
+  }}
+</style>
+</head>
+<body>
+<div id="titlebar">
+  <h1><span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+      background:{color};margin-right:6px;vertical-align:middle"></span>
+    {r.persona_display}</h1>
+  <span style="font-size:11px;color:#9ca3af">{route_name} · {run_id}</span>
+  <div class="nav-bar">{nav_links}
+    <a href="route_comparison_map.html" style="display:inline-flex;align-items:center;gap:4px;
+        padding:3px 8px;border-radius:4px;font-size:11px;text-decoration:none;
+        background:#f3f4f6;color:#374151">All →</a>
+  </div>
+</div>
+<div id="map"></div>
+<div id="chart-panel">
+  <h2>Score Trend — {r.persona_display}</h2>
+  <div id="chart-wrap"><canvas id="score-chart"></canvas></div>
+</div>
+<script>
+const RAW = {data_js};
+{_MAP_JS_TEMPLATE}
+
+const layerGroup = L.layerGroup();
+const p = {{...RAW.persona, markers: RAW.markers}};
+renderPersonaLayer(p, layerGroup);
+layerGroup.addTo(map);
+
+// Start / end markers
+if (RAW.markers.length > 0) {{
+  const first = RAW.markers[0], last = RAW.markers[RAW.markers.length - 1];
+  L.circleMarker([first.lat, first.lng], {{
+    radius: 8, color: RAW.persona.color, fillColor: '#fff', fillOpacity: 1, weight: 3
+  }}).bindTooltip('Start').addTo(map);
+  L.circleMarker([last.lat, last.lng], {{
+    radius: 8, color: RAW.persona.color, fillColor: RAW.persona.color, fillOpacity: 0.9, weight: 3
+  }}).bindTooltip('End').addTo(map);
+}}
+
+// Divergent branch markers
+RAW.divergent_markers.forEach(function(d) {{
+  const icon = L.divIcon({{
+    html: '<div style="font-size:18px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.4))">⚡</div>',
+    className: '', iconAnchor: [9, 9]
+  }});
+  L.marker([d.lat, d.lng], {{icon}})
+    .bindPopup(`<b>Divergent intersection</b><br><small>${{d.pano_id}}</small><br><br>${{d.choices_text}}`)
+    .addTo(map);
+}});
+
+// Score legend
+const legend = L.control({{position: 'bottomleft'}});
+legend.onAdd = function() {{
+  const div = L.DomUtil.create('div', 'legend-box');
+  div.innerHTML = `{_SCORE_LEGEND_HTML}`;
+  return div;
+}};
+legend.addTo(map);
+
+// Score trend chart
+(function() {{
+  const pts = RAW.timeline;
+  if (!pts.length) return;
+  new Chart(document.getElementById('score-chart'), {{
+    type: 'line',
+    data: {{
+      datasets: [{{
+        label: RAW.persona.display,
+        data: pts.map(p => ({{ x: p.step, y: p.avg }})),
+        borderColor: RAW.persona.color,
+        backgroundColor: RAW.persona.color + '22',
+        borderWidth: 2, pointRadius: 3, tension: 0.3,
+      }}]
+    }},
+    options: {{
+      responsive: true, maintainAspectRatio: false,
+      plugins: {{ legend: {{ display: false }},
+        tooltip: {{ callbacks: {{ label: ctx => 'avg: ' + ctx.parsed.y }} }} }},
+      scales: {{
+        x: {{ type: 'linear', title: {{ display: true, text: 'Step', font: {{ size: 10 }} }}, grid: {{ color: '#f3f4f6' }} }},
+        y: {{ min: 1, max: 10, title: {{ display: true, text: 'Score', font: {{ size: 10 }} }}, grid: {{ color: '#f3f4f6' }} }}
+      }}
+    }}
+  }});
+}})();
+</script>
+</body>
+</html>"""
+
+
+def _build_branch_markers_data(r: "PersonaRun") -> list[dict]:
+    """Per-step branch decision data for map rendering."""
+    out = []
+    for s in r.steps:
+        if not s.get("branch_triggered"):
+            continue
+        if not isinstance(s.get("lat"), (int, float)):
+            continue
+        candidates = []
+        for c in s.get("branch_candidates", []):
+            c_scores = c.get("scores", {})
+            c_vals = [v for v in c_scores.values() if isinstance(v, (int, float))]
+            candidates.append({
+                "direction": c.get("direction", "?"),
+                "heading": c.get("heading", 0),
+                "avg_score": round(sum(c_vals) / len(c_vals), 2) if c_vals else None,
+                "chosen": bool(c.get("chosen")),
+            })
+        out.append({
+            "lat": s["lat"],
+            "lng": s["lng"],
+            "step": s.get("step"),
+            "candidate_count": s.get("candidate_count"),
+            "recommendation": (s.get("recommendation") or "")[:100],
+            "candidates": candidates,
+        })
+    return out
+
+
+def make_route_map_html(runs: list[PersonaRun], cmp_report: dict,
+                        branch_div: dict, out_path: Path) -> None:
+    """Write route_comparison_map.html — grid of one Leaflet map per persona."""
+    run_id = cmp_report.get("run_id", "")
+    route_name = _route_name(cmp_report)
+    center_lat, center_lng = _map_center(runs)
+
+    persona_layers: list[dict] = []
+    for i, r in enumerate(runs):
+        color = _persona_color(i)
+        markers = _build_persona_markers(r, color)
+        dest = r.metadata.get("parameters", {}).get("destination")
+        persona_layers.append({
+            "key": r.persona_key,
+            "display": r.persona_display,
+            "color": color,
+            "markers": markers,
+            "branches": _build_branch_markers_data(r),
+            "destination": dest,  # {lat, lng} or None
+            "nav_route": r.walk_log.get("planner_waypoints", []),  # current nav route
+            "nav_route_history": r.walk_log.get("planner_route_history", []),  # past routes before reroute
+        })
 
     data_js = json.dumps({
         "persona_layers": persona_layers,
-        "divergent_markers": divergent_markers,
         "center": [center_lat, center_lng],
+        "run_id": run_id,
+        "route_name": route_name,
     }, ensure_ascii=False)
 
     html = f"""<!DOCTYPE html>
@@ -709,21 +1011,59 @@ def make_route_map_html(runs: list[PersonaRun], cmp_report: dict,
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #fff; }}
+  html, body {{ height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+               background: #f3f4f6; overflow: hidden; }}
+
+  /* ── Top bar ── */
   #titlebar {{
-    position: fixed; top: 0; left: 0; right: 0; z-index: 1001;
-    background: #fff; border-bottom: 1px solid #e5e7eb;
-    padding: 10px 16px; display: flex; align-items: center; gap: 16px;
+    position: fixed; top: 0; left: 0; right: 0; height: 44px; z-index: 2000;
+    background: white; border-bottom: 1px solid #e5e7eb;
+    display: flex; align-items: center; padding: 0 16px; gap: 14px;
   }}
-  #titlebar h1 {{ font-size: 15px; font-weight: 600; color: #111; }}
-  #titlebar span {{ font-size: 12px; color: #6b7280; }}
-  #map {{ position: fixed; top: 41px; bottom: 0; left: 0; right: 0; }}
-  .legend {{
-    background: #fff; padding: 10px 14px; border-radius: 6px;
-    box-shadow: 0 1px 4px rgba(0,0,0,.12); font-size: 12px; line-height: 1.7;
-    max-width: 180px;
+  #titlebar h1 {{ font-size: 13px; font-weight: 600; color: #111; white-space: nowrap; }}
+  #titlebar .meta {{ font-size: 11px; color: #9ca3af; white-space: nowrap; }}
+  .slider-group {{
+    display: flex; align-items: center; gap: 6px;
+    margin-left: auto; flex-shrink: 0;
   }}
-  .legend-dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }}
+  .slider-group + .slider-group {{ margin-left: 10px; }}
+  .slider-label {{ font-size: 11px; color: #6b7280; white-space: nowrap; }}
+  .slider-val {{ font-size: 11px; font-weight: 600; color: #111; width: 18px; text-align: right; }}
+  input[type=range] {{
+    -webkit-appearance: none; width: 80px; height: 4px;
+    background: #e5e7eb; border-radius: 2px; outline: none; cursor: pointer;
+  }}
+  input[type=range]::-webkit-slider-thumb {{
+    -webkit-appearance: none; width: 14px; height: 14px;
+    border-radius: 50%; background: #6366f1; cursor: pointer;
+  }}
+
+  /* ── Map grid (includes overlay cell as first item) ── */
+  #grid {{
+    position: fixed; top: 44px; bottom: 0; left: 0; right: 0;
+    display: grid; gap: 2px; background: #e5e7eb;
+  }}
+
+  /* ── Individual map cell ── */
+  .map-cell {{
+    position: relative; background: white; overflow: hidden;
+  }}
+  .cell-label {{
+    position: absolute; top: 8px; left: 8px; z-index: 500;
+    background: white; border-radius: 6px;
+    padding: 3px 9px 3px 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.15);
+    display: flex; align-items: center; gap: 5px;
+    font-size: 12px; font-weight: 600; color: #111;
+    pointer-events: none;
+  }}
+  .cell-dot {{ width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }}
+
+  /* ── Shared legend style ── */
+  .map-legend {{
+    background: white; padding: 8px 12px; border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.15); font-size: 11px; line-height: 1.8;
+  }}
   .popup-table {{ border-collapse: collapse; width: 100%; font-size: 11px; }}
   .popup-table td {{ padding: 2px 4px; }}
   .popup-table tr:nth-child(even) {{ background: #f9fafb; }}
@@ -732,102 +1072,483 @@ def make_route_map_html(runs: list[PersonaRun], cmp_report: dict,
 <body>
 <div id="titlebar">
   <h1>{route_name}</h1>
-  <span>Run: {run_id} &nbsp;·&nbsp; {len(runs)} personas</span>
+  <span class="meta">{run_id} · {len(runs)} personas</span>
+  <div class="slider-group">
+    <span class="slider-label">Waypoint</span>
+    <input type="range" id="sl-wp" min="1" max="12" step="0.5" value="3">
+    <span class="slider-val" id="sl-wp-val">3</span>
+  </div>
+  <div class="slider-group">
+    <span class="slider-label">Branch</span>
+    <input type="range" id="sl-br" min="2" max="16" step="0.5" value="8">
+    <span class="slider-val" id="sl-br-val">8</span>
+  </div>
+  <div class="slider-group">
+    <span class="slider-label">Offset</span>
+    <input type="range" id="sl-off" min="0" max="12" step="0.5" value="4">
+    <span class="slider-val" id="sl-off-val">4</span>
+  </div>
 </div>
-<div id="map"></div>
+<div id="grid"></div>
+
 <script>
 const RAW = {data_js};
 
-const map = L.map('map').setView(RAW.center, 16);
-L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
-  attribution: '© OpenStreetMap contributors © CARTO',
-  subdomains: 'abcd', maxZoom: 20
-}}).addTo(map);
+function scoreColor(avg) {{
+  if (avg >= 8) return '#22c55e';
+  if (avg >= 6) return '#84cc16';
+  if (avg >= 5) return '#eab308';
+  if (avg >= 4) return '#f97316';
+  return '#ef4444';
+}}
 
-const layerControl = L.control.layers(null, null, {{collapsed: false}}).addTo(map);
+// ── Slider state ─────────────────────────────────────────────────────────────
+const slWp  = document.getElementById('sl-wp');
+const slBr  = document.getElementById('sl-br');
+const slOff = document.getElementById('sl-off');
+const slWpV = document.getElementById('sl-wp-val');
+const slBrV = document.getElementById('sl-br-val');
+const slOffV = document.getElementById('sl-off-val');
+let wpScale  = parseFloat(slWp.value);
+let brScale  = parseFloat(slBr.value);
+let offScale = parseFloat(slOff.value);  // meters of perpendicular offset per persona slot
 
-RAW.persona_layers.forEach(function(p) {{
-  const group = L.layerGroup();
+// ── Parallel-offset helper ────────────────────────────────────────────────────
+// Shifts a [lat,lng] coordinate by `meters` perpendicular to the segment [A→B].
+// Used to visually separate overlapping routes in the overlay map.
+function offsetCoord(lat, lng, perpMeters) {{
+  // 1 degree lat ≈ 111320 m; 1 degree lng ≈ 111320 * cos(lat) m
+  const mPerDegLat = 111320;
+  const mPerDegLng = 111320 * Math.cos(lat * Math.PI / 180);
+  return [lat + perpMeters / mPerDegLat, lng + perpMeters / mPerDegLng];
+}}
 
-  // Polyline
-  if (p.coords.length >= 2) {{
-    L.polyline(p.coords, {{color: p.color, weight: 3, opacity: 0.75}}).addTo(group);
+// Apply perpendicular offset to a polyline coords array.
+// segDir: [dLat, dLng] direction of the segment (un-normalised).
+// perpMeters: signed distance (positive = left of travel direction).
+function applyOffset(lat, lng, dLat, dLng, perpMeters) {{
+  if (perpMeters === 0 || (dLat === 0 && dLng === 0)) return [lat, lng];
+  // Perpendicular direction (rotate 90° CCW): (-dLng, dLat) in lat/lng space
+  // Normalise accounting for degree-to-metre scaling
+  const mPerLat = 111320;
+  const mPerLng = 111320 * Math.cos(lat * Math.PI / 180);
+  const dy = dLat * mPerLat;   // segment in metres
+  const dx = dLng * mPerLng;
+  const len = Math.sqrt(dy * dy + dx * dx);
+  if (len < 1e-9) return [lat, lng];
+  // Perpendicular unit vector (rotate 90° left): (-dx, dy) / len
+  const px = -dx / len;  // in metres, lng direction
+  const py =  dy / len;  // in metres, lat direction
+  return [lat + (perpMeters * py) / mPerLat,
+          lng + (perpMeters * px) / mPerLng];
+}}
+
+// Compute a single global perpendicular offset vector for a marker array.
+// Uses the overall start→end bearing of the route so all points shift by
+// the same (dLat, dLng) — no kinking at segment joints.
+function globalOffsetCoords(markers, perpMeters) {{
+  const valid = markers.filter(m => m.lat != null && m.lng != null);
+  if (valid.length < 2 || perpMeters === 0) return valid.map(m => [m.lat, m.lng]);
+  const first = valid[0], last = valid[valid.length - 1];
+  const mPerLat = 111320;
+  const mPerLng = 111320 * Math.cos(first.lat * Math.PI / 180);
+  const dy = (last.lat - first.lat) * mPerLat;
+  const dx = (last.lng - first.lng) * mPerLng;
+  const len = Math.sqrt(dy * dy + dx * dx);
+  // If route is nearly a point, fall back to pure north offset
+  const py = len > 1 ? -dx / len : 1;  // perp unit vector (lat direction)
+  const px = len > 1 ?  dy / len : 0;  // perp unit vector (lng direction)
+  const dLat = (perpMeters * py) / mPerLat;
+  const dLng = (perpMeters * px) / mPerLng;
+  return valid.map(m => [m.lat + dLat, m.lng + dLng]);
+}}
+
+// overlayMap is initialised after the overlay cell div is added to the DOM (see below)
+let overlayMap, overlayRouteGroup;
+
+function drawOverlay() {{
+  overlayRouteGroup.clearLayers();
+  const total = RAW.persona_layers.length;
+  const step = offScale;  // metres per slot
+  RAW.persona_layers.forEach(function(p, idx) {{
+    const slot = idx - (total - 1) / 2;  // centred: -2,-1,0,1,2 for 5 personas
+    const perpM = slot * step;
+    const ms = p.markers.filter(m => m.lat != null && m.lng != null);
+    if (ms.length < 2) return;
+
+    // Shift all points by the same global offset vector — no kinking
+    const coords = globalOffsetCoords(ms, perpM);
+
+    // Draw as a single continuous polyline per persona
+    // Use persona colour; thickness reflects whether steps are scored
+    L.polyline(coords, {{
+      color: p.color, weight: 4, opacity: 0.82,
+    }}).addTo(overlayRouteGroup);
+
+    // Start / end markers at offset positions
+    L.circleMarker(coords[0], {{
+      radius: 6, color: p.color, fillColor: '#fff', fillOpacity: 1, weight: 2.5
+    }}).bindTooltip(`${{p.display || p.key}} — Start`).addTo(overlayRouteGroup);
+    L.circleMarker(coords[coords.length - 1], {{
+      radius: 6, color: p.color, fillColor: p.color, fillOpacity: 0.9, weight: 2.5
+    }}).bindTooltip(`${{p.display || p.key}} — End`).addTo(overlayRouteGroup);
+  }});
+
+  // ── Destination (shared — draw once from first persona that has it) ───────
+  const destPersona = RAW.persona_layers.find(p => p.destination && p.destination.lat != null);
+  if (destPersona) {{
+    const d = destPersona.destination;
+    const destIcon = L.divIcon({{
+      className: '',
+      html: `<div style="
+        width:22px;height:22px;border-radius:50% 50% 50% 0;
+        background:#ef4444;border:2px solid white;
+        transform:rotate(-45deg);
+        box-shadow:0 2px 6px rgba(0,0,0,.35)"></div>`,
+      iconSize: [22, 22], iconAnchor: [11, 22],
+    }});
+    L.marker([d.lat, d.lng], {{ icon: destIcon }})
+      .bindTooltip('Destination')
+      .addTo(overlayRouteGroup);
+  }}
+}}
+
+// ── Grid layout (n personas + 1 overlay cell = n+1 total) ────────────────────
+const n = RAW.persona_layers.length;
+const total_cells = n + 1;
+const cols = total_cells <= 2 ? total_cells : total_cells <= 4 ? 2 : 3;
+const rows = Math.ceil(total_cells / cols);
+const grid = document.getElementById('grid');
+grid.style.gridTemplateColumns = `repeat(${{cols}}, 1fr)`;
+grid.style.gridTemplateRows = `repeat(${{rows}}, 1fr)`;
+
+// ── Overlay cell (first in grid) ──────────────────────────────────────────────
+(function() {{
+  const cell = document.createElement('div');
+  cell.className = 'map-cell';
+  const mapDiv = document.createElement('div');
+  mapDiv.id = 'overlay-map';
+  mapDiv.style.cssText = 'position:absolute;inset:0;';
+  cell.appendChild(mapDiv);
+  const lbl = document.createElement('div');
+  lbl.className = 'cell-label';
+  lbl.innerHTML = `<span class="cell-dot" style="background:linear-gradient(135deg,#3b82f6,#a855f7)"></span>All Routes`;
+  cell.appendChild(lbl);
+  grid.appendChild(cell);
+
+  // Initialise Leaflet NOW that the div is in the DOM
+  overlayMap = L.map(mapDiv, {{ zoomControl: false, attributionControl: false }})
+    .setView(RAW.center, 16);
+  L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+    subdomains: 'abcd', maxZoom: 20
+  }}).addTo(overlayMap);
+  L.control.zoom({{ position: 'topright' }}).addTo(overlayMap);
+
+  const legendCtrl = L.control({{ position: 'bottomleft' }});
+  legendCtrl.onAdd = function() {{
+    const div = L.DomUtil.create('div', 'map-legend');
+    div.innerHTML = RAW.persona_layers.map(function(p) {{
+      return `<span style="color:${{p.color}}">&#9644;</span> ${{p.display || p.key}}`;
+    }}).join('<br>');
+    return div;
+  }};
+  legendCtrl.addTo(overlayMap);
+
+  overlayRouteGroup = L.layerGroup().addTo(overlayMap);
+}})();
+
+// ── Per-map state (map instance + marker LayerGroup) ──────────────────────────
+const mapStates = [];  // {{ map, markerGroup, p }}
+
+RAW.persona_layers.forEach(function(p, idx) {{
+  // Cell
+  const cell = document.createElement('div');
+  cell.className = 'map-cell';
+  const mapDiv = document.createElement('div');
+  mapDiv.id = 'map-' + idx;
+  mapDiv.style.cssText = 'position:absolute;inset:0;';
+  cell.appendChild(mapDiv);
+  const lbl = document.createElement('div');
+  lbl.className = 'cell-label';
+  lbl.innerHTML = `<span class="cell-dot" style="background:${{p.color}}"></span>${{p.display || p.key}}`;
+  cell.appendChild(lbl);
+  grid.appendChild(cell);
+
+  // Leaflet map
+  const map = L.map(mapDiv, {{ zoomControl: false, attributionControl: false }})
+    .setView(RAW.center, 16);
+  L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+    subdomains: 'abcd', maxZoom: 20
+  }}).addTo(map);
+  L.control.zoom({{ position: 'topright' }}).addTo(map);
+
+  // ── Static layers: polylines (never change size) ──────────────────────────
+  for (let i = 1; i < p.markers.length; i++) {{
+    const prev = p.markers[i-1], curr = p.markers[i];
+    if (curr.avg != null) {{
+      L.polyline([[prev.lat, prev.lng],[curr.lat, curr.lng]], {{
+        color: scoreColor(curr.avg), weight: 5, opacity: 0.85
+      }}).addTo(map);
+    }} else if (prev.lat != null) {{
+      L.polyline([[prev.lat, prev.lng],[curr.lat, curr.lng]], {{
+        color: '#94a3b8', weight: 2, opacity: 0.4, dashArray: '4,6'
+      }}).addTo(map);
+    }}
   }}
 
-  // Step markers
-  p.markers.forEach(function(m) {{
-    if (!m.has_score && !m.is_s2) {{
-      // Skipped step: tiny faded dot
-      L.circleMarker([m.lat, m.lng], {{
-        radius: 2.5, color: p.color, fillColor: p.color,
-        fillOpacity: 0.2, weight: 0
-      }}).addTo(group);
-      return;
+  // Branch arrows (static — only circle size changes)
+  (p.branches || []).forEach(function(b) {{
+    b.candidates.forEach(function(c) {{
+      const rad = c.heading * Math.PI / 180;
+      const len = 0.0003;
+      const cosLat = Math.cos(b.lat * Math.PI / 180);
+      L.polyline([[b.lat, b.lng],
+        [b.lat + len * Math.cos(rad), b.lng + len * Math.sin(rad) / cosLat]], {{
+        color: c.avg_score != null ? scoreColor(c.avg_score) : '#94a3b8',
+        weight: c.chosen ? 4 : 2, opacity: c.chosen ? 0.9 : 0.4,
+        dashArray: c.chosen ? null : '5,4',
+      }}).addTo(map);
+    }});
+  }});
+
+  // ── Navigation routes (dashed, faint) ────────────────────────────────────
+  function drawNavRoute(coords, map, opacity) {{
+    if (!coords || coords.length < 2) return;
+    L.polyline(coords, {{
+      color: '#6366f1', weight: 2, opacity: opacity,
+      dashArray: '6,5', interactive: false,
+    }}).addTo(map);
+  }}
+  (p.nav_route_history || []).forEach(function(wps) {{
+    drawNavRoute(wps, map, 0.25);
+  }});
+  drawNavRoute(p.nav_route || [], map, 0.45);
+
+  // ── Destination marker ────────────────────────────────────────────────────
+  if (p.destination && p.destination.lat != null) {{
+    const destIcon = L.divIcon({{
+      className: '',
+      html: `<div style="
+        width:22px;height:22px;border-radius:50% 50% 50% 0;
+        background:#ef4444;border:2px solid white;
+        transform:rotate(-45deg);
+        box-shadow:0 2px 6px rgba(0,0,0,.35)"></div>`,
+      iconSize: [22, 22], iconAnchor: [11, 22],
+    }});
+    L.marker([p.destination.lat, p.destination.lng], {{ icon: destIcon }})
+      .bindTooltip('Destination')
+      .addTo(map);
+  }}
+
+  // Score legend (first map only)
+  if (idx === 0) {{
+    const legend = L.control({{position: 'bottomleft'}});
+    legend.onAdd = function() {{
+      const div = L.DomUtil.create('div', 'map-legend');
+      div.innerHTML =
+        '<b style="font-size:11px">Score</b><br>' +
+        '<span style="color:#22c55e">●</span> 8–10 Excellent<br>' +
+        '<span style="color:#84cc16">●</span> 6–8 Good<br>' +
+        '<span style="color:#eab308">●</span> 5–6 Average<br>' +
+        '<span style="color:#f97316">●</span> 4–5 Below avg<br>' +
+        '<span style="color:#ef4444">●</span> &lt;4 Poor<br>' +
+        '<span style="color:#94a3b8">●</span> Unscored<br>' +
+        '<span style="color:#7c3aed">●</span> Branch';
+      return div;
+    }};
+    legend.addTo(map);
+  }}
+
+  // Marker group (replaced on slider change)
+  const markerGroup = L.layerGroup().addTo(map);
+  mapStates.push({{ map, markerGroup, p }});
+}});
+
+// ── Draw markers with current scale values ────────────────────────────────────
+function drawMarkers() {{
+  mapStates.forEach(function({{ map, markerGroup, p }}) {{
+    markerGroup.clearLayers();
+
+    // Waypoint markers
+    p.markers.forEach(function(m) {{
+      if (!m.has_score && !m.is_s2) return;
+      const baseR = m.avg != null ? 1 + m.avg * 0.3 : 3;  // base: ~4–4 at avg5
+      const radius = baseR * (wpScale / 3);               // scale=3 → 1× natural size
+      const opts = m.is_s2
+        ? {{ radius, color: '#111', fillColor: p.color, fillOpacity: 0.9, weight: 1.5, dashArray: '4,2' }}
+        : {{ radius, color: scoreColor(m.avg ?? 5), fillColor: scoreColor(m.avg ?? 5), fillOpacity: 0.75, weight: 1 }};
+      const dimRows = Object.entries(m.scores)
+        .filter(([_, v]) => v != null)
+        .map(([d, v]) => `<tr><td>${{d}}</td><td>${{v}}</td></tr>`).join('');
+      const popup = `<b>Step ${{m.step}}</b><br><small>${{m.pano_id}}</small>
+        <table class="popup-table" style="margin-top:4px">
+          <tr><td>avg</td><td><b>${{m.avg ?? '—'}}</b></td></tr>${{dimRows}}
+        </table>
+        ${{m.excerpt ? `<div style="margin-top:5px;font-size:10px;color:#555;max-width:240px">${{m.excerpt}}</div>` : ''}}`;
+      L.circleMarker([m.lat, m.lng], opts).bindPopup(popup, {{maxWidth:280}}).addTo(markerGroup);
+    }});
+
+    // Start / End markers (scale with waypoint slider)
+    const seR = Math.max(4, wpScale * 1.5);
+    if (p.markers.length > 0) {{
+      const first = p.markers[0];
+      L.circleMarker([first.lat, first.lng], {{
+        radius: seR, color: p.color, fillColor: '#fff', fillOpacity: 1, weight: 2.5
+      }}).bindTooltip('Start').addTo(markerGroup);
+    }}
+    if (p.markers.length > 1) {{
+      const last = p.markers[p.markers.length - 1];
+      L.circleMarker([last.lat, last.lng], {{
+        radius: seR, color: p.color, fillColor: p.color, fillOpacity: 0.9, weight: 2.5
+      }}).bindTooltip('End').addTo(markerGroup);
     }}
 
-    const radius = m.avg != null ? 3 + m.avg : 5;
-    const opts = m.is_s2
-      ? {{ radius: radius, color: '#111', fillColor: p.color, fillOpacity: 0.9, weight: 2, dashArray: '4,2' }}
-      : {{ radius: radius, color: p.color, fillColor: p.color, fillOpacity: 0.75, weight: 1 }};
-
-    const dimRows = Object.entries(m.scores)
-      .filter(([_, v]) => v != null)
-      .map(([d, v]) => `<tr><td>${{d}}</td><td>${{v}}</td></tr>`)
-      .join('');
-
-    const popup = `
-      <b>Step ${{m.step}}</b> &nbsp; <span style="color:${{p.color}}">${{p.key}}</span>
-      ${{m.is_s2 ? ' &nbsp; <b>★ S2</b> (' + m.trigger_reason + ')' : ''}}
-      <br><small>${{m.pano_id}}</small>
-      <table class="popup-table" style="margin-top:4px">
-        <tr><td>avg</td><td><b>${{m.avg ?? '—'}}</b></td></tr>
-        ${{dimRows}}
-      </table>
-      ${{m.excerpt ? '<div style="margin-top:6px;font-size:10px;color:#555;max-width:260px">' + m.excerpt + '</div>' : ''}}
-    `;
-
-    L.circleMarker([m.lat, m.lng], opts)
-      .bindPopup(popup, {{maxWidth: 300}})
-      .addTo(group);
+    // Branch circles (separate slider)
+    (p.branches || []).forEach(function(b) {{
+      const popup = `<b>Step ${{b.step}}</b> — Branch<br>` +
+        `Candidates: ${{b.candidate_count ?? b.candidates.length}}<br>` +
+        (b.recommendation ? `<div style="font-size:10px;color:#555;margin-top:3px">${{b.recommendation}}</div>` : '');
+      L.circleMarker([b.lat, b.lng], {{
+        radius: brScale, color: '#7c3aed', fillColor: '#7c3aed', fillOpacity: 0.7, weight: 2
+      }}).bindPopup(popup, {{maxWidth:260}}).addTo(markerGroup);
+    }});
   }});
+}}
 
-  group.addTo(map);
-  layerControl.addOverlay(group, `<span class="legend-dot" style="background:${{p.color}}"></span>${{p.key}}`);
+// ── Slider events ─────────────────────────────────────────────────────────────
+slWp.addEventListener('input', function() {{
+  wpScale = parseFloat(this.value);
+  slWpV.textContent = this.value;
+  drawMarkers();
+}});
+slBr.addEventListener('input', function() {{
+  brScale = parseFloat(this.value);
+  slBrV.textContent = this.value;
+  drawMarkers();
+}});
+slOff.addEventListener('input', function() {{
+  offScale = parseFloat(this.value);
+  slOffV.textContent = this.value;
+  drawOverlay();
 }});
 
-// Divergent branch markers
-RAW.divergent_markers.forEach(function(d) {{
-  const icon = L.divIcon({{
-    html: '<div style="font-size:20px;line-height:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,.4))">⚡</div>',
-    className: '', iconAnchor: [10, 10]
-  }});
-  L.marker([d.lat, d.lng], {{icon}})
-    .bindPopup(`<b>Divergent intersection</b><br><small>${{d.pano_id}}</small><br><br>${{d.choices_text}}`)
-    .addTo(map);
-}});
+drawMarkers();
+drawOverlay();
 
-// Legend
-const legend = L.control({{position: 'bottomleft'}});
-legend.onAdd = function() {{
-  const div = L.DomUtil.create('div', 'legend');
-  div.innerHTML = '<b style="font-size:12px">Personas</b><br>' +
-    RAW.persona_layers.map(p =>
-      `<span class="legend-dot" style="background:${{p.color}}"></span>${{p.key}}<br>`
-    ).join('') +
-    '<br><span style="font-size:11px;color:#555">◉ Circle = analyzed step<br>– – S2 triggered<br>· · Skipped step<br>⚡ Divergent branch</span>';
-  return div;
-}};
-legend.addTo(map);
+// Force Leaflet to recalculate sizes after layout paint
+requestAnimationFrame(function() {{
+  overlayMap.invalidateSize();
+  mapStates.forEach(function(s) {{ s.map.invalidateSize(); }});
+}});
 </script>
 </body>
 </html>"""
 
     out_path.write_text(html, encoding="utf-8")
+    print(f"  [map] grid map ({len(runs)} personas) → {out_path}")
 
 
 # -----------------------------------------------------------------------------
 # Output 4 — comparison_dashboard.html
 # -----------------------------------------------------------------------------
+
+def _find_pano_image_b64(pano_id: str, runs: list[PersonaRun]) -> str | None:
+    """Find a saved image for a pano_id across all persona folders.
+    Matches full pano_id or a prefix (filenames may truncate long IDs).
+    Returns base64 data-URI string or None."""
+    import base64
+    # Truncated safe filename prefix used by image_collector (first 8 chars typically)
+    prefix = pano_id[:8]
+    for r in runs:
+        img_dir = r.folder / "images"
+        if not img_dir.exists():
+            continue
+        for img_file in sorted(img_dir.iterdir()):
+            fname = img_file.name
+            if img_file.suffix.lower() not in (".jpg", ".jpeg", ".png"):
+                continue
+            if pano_id in fname or prefix in fname:
+                try:
+                    b64 = base64.b64encode(img_file.read_bytes()).decode()
+                    mime = "image/jpeg" if img_file.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+                    return f"data:{mime};base64,{b64}"
+                except Exception:
+                    pass
+    return None
+
+
+def _build_branch_decisions_by_pano(runs: list[PersonaRun]) -> dict[str, dict]:
+    """For each pano_id with a branch decision, collect candidate info from the
+    first persona that has it, plus per-persona chosen direction."""
+    result: dict[str, dict] = {}
+    # Collect candidates (same per pano regardless of persona)
+    for r in runs:
+        for bd in r.branch_decisions:
+            pano = bd.get("pano_id")
+            if not pano or pano in result:
+                continue
+            result[pano] = {
+                "lat": bd.get("lat"),
+                "lng": bd.get("lng"),
+                "candidates": [
+                    {
+                        "direction": c.get("direction"),
+                        "heading": c.get("heading"),
+                        "avg_score": c.get("avg_score"),
+                        "chosen": bool(c.get("chosen")),
+                        "next_pano_id": None,
+                    }
+                    for c in bd.get("candidates", [])
+                ],
+                "persona_choices": {},
+            }
+
+    # Build (branch_pano, direction) → next_pano_id by examining each persona's walk_log
+    # When a persona takes a branch step, steps[i+1].pano_id is the chosen direction's first pano
+    direction_to_next: dict[tuple[str, str], str] = {}
+    for r in runs:
+        steps = r.steps
+        for i, s in enumerate(steps):
+            if not s.get("branch_triggered"):
+                continue
+            pano = s.get("pano_id")
+            if not pano or pano not in result:
+                continue
+            for bd in r.branch_decisions:
+                if bd.get("pano_id") != pano:
+                    continue
+                chosen_c = next((c for c in bd.get("candidates", []) if c.get("chosen")), None)
+                if chosen_c is None:
+                    break
+                direction = chosen_c.get("direction")
+                if direction and i + 1 < len(steps):
+                    next_pano = steps[i + 1].get("pano_id")
+                    if next_pano:
+                        direction_to_next[(pano, direction)] = next_pano
+                break
+
+    # Back-fill next_pano_id into candidates
+    for pano, info in result.items():
+        for c in info["candidates"]:
+            key = (pano, c["direction"])
+            if key in direction_to_next:
+                c["next_pano_id"] = direction_to_next[key]
+
+    # Fill per-persona choices
+    for r in runs:
+        for bd in r.branch_decisions:
+            pano = bd.get("pano_id")
+            if not pano or pano not in result:
+                continue
+            chosen = next((c for c in bd.get("candidates", []) if c.get("chosen")), None)
+            direction = chosen.get("direction") if chosen else None
+            result[pano]["persona_choices"][r.persona_key] = {
+                "direction": direction,
+                "heading": bd.get("chosen_heading"),
+                "next_pano_id": direction_to_next.get((pano, direction)) if direction else None,
+            }
+    return result
+
 
 def make_dashboard_html(data_dump: dict, runs: list[PersonaRun],
                         cmp_report: dict, out_path: Path) -> None:
@@ -877,6 +1598,18 @@ def make_dashboard_html(data_dump: dict, runs: list[PersonaRun],
             "events": events,
         })
 
+    # Embed divergent intersection images (base64) if --save-image was used
+    branch_div = data_dump.get("quantitative", {}).get("branch_divergence", {})
+    divergent_images: dict[str, str] = {}
+    for div in branch_div.get("divergent_detail", []):
+        pano = div.get("pano_id", "")
+        if pano and pano not in divergent_images:
+            img = _find_pano_image_b64(pano, runs)
+            if img:
+                divergent_images[pano] = img
+
+    branch_decisions_by_pano = _build_branch_decisions_by_pano(runs)
+
     # Inline all data as a single JS const
     js_data = json.dumps({
         "run_id": run_id,
@@ -890,6 +1623,10 @@ def make_dashboard_html(data_dump: dict, runs: list[PersonaRun],
         "trajectory": trajectory_data,
         "s2_timeline": s2_data,
         "persona_colors": {r.persona_key: _persona_color(i) for i, r in enumerate(runs)},
+        "divergent_images": divergent_images,
+        "divergent_detail": branch_div.get("divergent_detail", []),
+        "branch_decisions_by_pano": branch_decisions_by_pano,
+        "gmaps_key": os.environ.get("GOOGLE_MAPS_API_KEY", ""),
     }, ensure_ascii=False)
 
     html = f"""<!DOCTYPE html>
@@ -979,6 +1716,12 @@ def make_dashboard_html(data_dump: dict, runs: list[PersonaRun],
   <div id="branch-section" class="section hidden">
     <p class="text-xs font-medium tracking-widest text-gray-400 uppercase mb-4">Branch Decision Divergence</p>
     <div id="branch-cards" class="space-y-4"></div>
+  </div>
+
+  <!-- Divergent intersection street views -->
+  <div id="divimg-section" class="section hidden">
+    <p class="text-xs font-medium tracking-widest text-gray-400 uppercase mb-4">Divergent Intersections — Street View</p>
+    <div id="divimg-cards" class="space-y-8"></div>
   </div>
 
   <!-- Dimension splits -->
@@ -1174,6 +1917,134 @@ DIMS.forEach(d => {{
           ? `<p class="text-xs text-gray-500 mb-2">Shared signal: ${{bc.shared_environment_signal}}</p>`
           : ''}}
         <ul class="text-xs text-gray-600 space-y-0.5 list-none pl-0">${{rationales}}</ul>
+      </div>`;
+  }});
+}})();
+
+// ── Divergent intersection Street Views ───────────────────────────────────────
+(function() {{
+  const GMAPS_KEY = DATA.gmaps_key || '';
+  const detail = DATA.divergent_detail || [];
+  const bdByPano = DATA.branch_decisions_by_pano || {{}};
+
+  // Collect all panos that have branch decision data with lat/lng
+  const panoSet = detail.filter(d => {{
+    const bd = bdByPano[d.pano_id];
+    return bd && bd.lat != null && bd.candidates && bd.candidates.length > 0;
+  }}).map(d => d.pano_id);
+
+  if (panoSet.length === 0) return;
+  document.getElementById('divimg-section').classList.remove('hidden');
+  const container = document.getElementById('divimg-cards');
+
+  panoSet.forEach(pano => {{
+    const divInfo = detail.find(d => d.pano_id === pano);
+    const bd = bdByPano[pano];
+    const candidates = bd.candidates || [];
+    const personaChoices = bd.persona_choices || {{}};
+
+    // Which personas chose each direction?
+    const dirPersonas = {{}};
+    Object.entries(personaChoices).forEach(([persona, info]) => {{
+      const dir = info.direction;
+      if (!dir) return;
+      (dirPersonas[dir] = dirPersonas[dir] || []).push(persona);
+    }});
+
+    // ── One Street View iframe per candidate direction ────────────────────
+    const svPanels = candidates.map(c => {{
+      const dir = c.direction;
+      const heading = c.heading;
+      const chosen = c.chosen;
+      const choosers = dirPersonas[dir] || [];
+      const scoreStr = c.avg_score != null ? c.avg_score.toFixed(1) : '—';
+
+      // Persona dots HTML
+      const dotHtml = choosers.map(p => {{
+        const col = DATA.persona_colors[p] || '#6b7280';
+        return `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+          background:${{col}};border:1.5px solid white;margin-right:2px;
+          box-shadow:0 1px 3px rgba(0,0,0,.25)"></span>`;
+      }}).join('');
+
+      // Direction label style — chosen gets accent border
+      const borderStyle = chosen
+        ? 'border: 2px solid #2563eb;'
+        : 'border: 2px solid #e5e7eb;';
+
+      // Street View embed URL — prefer next_pano_id (first pano after entering this road)
+      // so the view shows looking forward from inside the chosen road, not just the intersection
+      const nextPano = c.next_pano_id;
+      const svUrl = GMAPS_KEY
+        ? nextPano
+          ? `https://www.google.com/maps/embed/v1/streetview?key=${{GMAPS_KEY}}&pano=${{encodeURIComponent(nextPano)}}&heading=${{heading}}&pitch=0&fov=90`
+          : `https://www.google.com/maps/embed/v1/streetview?key=${{GMAPS_KEY}}&pano=${{encodeURIComponent(pano)}}&heading=${{heading}}&pitch=0&fov=90`
+        : '';
+
+      const label = `
+        <div style="position:absolute;top:10px;left:10px;z-index:10;
+          background:${{chosen ? '#2563eb' : 'rgba(0,0,0,0.65)'}};
+          color:white;border-radius:6px;padding:4px 9px;
+          font-size:13px;font-weight:700;pointer-events:none;
+          box-shadow:0 2px 6px rgba(0,0,0,.3)">
+          ${{dir}}
+        </div>`;
+
+      const scoreTag = `
+        <div style="position:absolute;top:10px;right:10px;z-index:10;
+          background:rgba(255,255,255,0.92);border-radius:6px;
+          padding:3px 8px;font-size:11px;font-weight:600;color:#111;
+          pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,.15)">
+          ${{scoreStr}}
+        </div>`;
+
+      const personaBar = choosers.length > 0 ? `
+        <div style="position:absolute;bottom:10px;left:10px;z-index:10;
+          background:rgba(255,255,255,0.92);border-radius:20px;
+          padding:3px 8px;display:flex;align-items:center;gap:4px;
+          font-size:10px;color:#374151;pointer-events:none;
+          box-shadow:0 1px 4px rgba(0,0,0,.15)">
+          ${{dotHtml}}
+          <span>${{choosers.map(p=>p.replace('_',' ')).join(', ')}}</span>
+        </div>` : '';
+
+      const iframeOrMsg = svUrl
+        ? `<iframe src="${{svUrl}}" width="100%" height="300"
+            style="display:block;border:none;" loading="lazy"
+            allowfullscreen referrerpolicy="no-referrer-when-downgrade"></iframe>`
+        : `<div style="height:300px;display:flex;align-items:center;justify-content:center;
+            background:#f3f4f6;color:#9ca3af;font-size:12px">
+            No API key — set GOOGLE_MAPS_API_KEY</div>`;
+
+      return `
+        <div style="flex:1;min-width:0;position:relative;${{borderStyle}}border-radius:10px;overflow:hidden;">
+          ${{iframeOrMsg}}
+          ${{label}}
+          ${{scoreTag}}
+          ${{personaBar}}
+        </div>`;
+    }}).join('');
+
+    // ── Caption row ──────────────────────────────────────────────────────
+    const captionBadges = divInfo
+      ? Object.entries(divInfo.choices || {{}}).map(([persona, info]) => {{
+          const col = DATA.persona_colors[persona] || '#6b7280';
+          return `<span style="display:inline-flex;align-items:center;gap:3px;
+            margin:2px 4px 2px 0;font-size:11px;padding:2px 8px;
+            border-radius:9999px;background:${{col}}18;color:${{col}};font-weight:500">
+            ${{persona.replace('_',' ')}}&nbsp;→&nbsp;<b>${{info.chosen_direction || '?'}}</b>
+          </span>`;
+        }}).join('') : '';
+
+    container.innerHTML += `
+      <div>
+        <p class="text-xs font-mono text-gray-400 mb-3">${{pano}}</p>
+        <div style="display:flex;gap:8px;align-items:stretch;">
+          ${{svPanels}}
+        </div>
+        <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:2px;">
+          ${{captionBadges}}
+        </div>
       </div>`;
   }});
 }})();
