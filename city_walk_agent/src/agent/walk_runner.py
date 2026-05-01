@@ -1188,6 +1188,10 @@ class AutonomousWalkRunner:
             "planner_waypoints": [
                 [lat, lng] for lat, lng in self.planner.route_waypoints
             ],
+            "planner_route_history": [
+                [[lat, lng] for lat, lng in route]
+                for route in self.planner.route_history
+            ],
             "analyzed_steps": analyzed_step_count,
             "skipped_steps": skipped_step_count,
             "total_steps": step + 1,

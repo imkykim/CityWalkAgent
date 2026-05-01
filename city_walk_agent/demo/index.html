@@ -1124,7 +1124,60 @@
     // Speech bubble / key moment state
     let currentBubbleMarker = null;
     let keyMomentPins = [];
+    let keyMomentLegend = null;
     let lastSummaryAbort = null;
+
+    const typeConfig = {
+      barrier:    { color: '#ef4444', icon: '⚠',  label: 'Barrier'    },
+      highlight:  { color: '#22c55e', icon: '⭐', label: 'Highlight'   },
+      transition: { color: '#eab308', icon: '🔄', label: 'Transition' },
+      routine:    { color: '#9ca3af', icon: '·',  label: 'Routine'    },
+    };
+
+    function createKeyMomentMarker(km) {
+      const cfg = typeConfig[km.type] || typeConfig.routine;
+      const icon = L.divIcon({
+        className: 'key-moment-marker',
+        html: `<div style="
+          width: 28px; height: 28px; border-radius: 50%;
+          background: ${cfg.color};
+          border: 3px solid white;
+          box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+          display: flex; align-items: center; justify-content: center;
+          color: white; font-size: 14px; font-weight: 700;
+          line-height: 1;
+        ">${cfg.icon}</div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+      });
+
+      const marker = L.marker([km.gps[0], km.gps[1]], { icon });
+
+      const reaction    = (km.persona_reaction || '').trim();
+      const narrative   = (km.narrative || '').trim();
+      const description = (km.description || '').trim();
+
+      const popupHtml = `
+        <div style="max-width: 240px; font-family: inherit;">
+          <div style="font-size: 10px; color: ${cfg.color};
+                      font-weight: 600; text-transform: uppercase;
+                      letter-spacing: 0.5px; margin-bottom: 4px;">
+            ${cfg.icon} ${cfg.label} · WP ${km.waypoint_id}
+          </div>
+          ${reaction ? `<div style="font-size: 14px; font-style: italic;
+                        margin-bottom: 6px;">"${escHtml(reaction)}"</div>` : ''}
+          ${narrative
+            ? `<div style="font-size: 12px; color: #555; line-height: 1.4;">${escHtml(narrative)}</div>`
+            : (description ? `<div style="font-size: 12px; color: #555;">${escHtml(description)}</div>` : '')}
+        </div>`;
+
+      marker.bindPopup(popupHtml, { maxWidth: 280, closeButton: true });
+      if (reaction) {
+        marker.bindTooltip(reaction, { direction: 'top', offset: [0, -14] });
+      }
+
+      return marker;
+    }
 
     const TILE_STYLES = {
       voyager: {
@@ -1194,7 +1247,14 @@
     // Street View Panorama
     let panorama = null;
 
-    const AGENT_ICON_URL  = '/static/runner.png';
+    const PERSONA_ICONS = {
+      homebuyer:   '/static/homebuyer.png',
+      parent:      '/static/parent.png',
+      photographer:'/static/photographer.png',
+      runner:      '/static/runner.png',
+      tourist:     '/static/tourist.png',
+      objective:   '/static/objective.png',
+    };
     const AGENT_ICON_SIZE = [80, 80];
     const AGENT_ICON_ANCHOR = [40, 40];
     const AGENT_SVG_FALLBACK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 38" width="28" height="38">
@@ -1499,13 +1559,14 @@
 
     function agentIcon(bob) {
       const cls = bob ? 'agent-bob' : '';
-      const inner = AGENT_ICON_URL
-        ? `<img src="${AGENT_ICON_URL}" width="${AGENT_ICON_SIZE[0]}" height="${AGENT_ICON_SIZE[1]}" style="display:block">`
+      const iconUrl = PERSONA_ICONS[currentPersona] || PERSONA_ICONS['objective'];
+      const inner = iconUrl
+        ? `<img src="${iconUrl}" width="${AGENT_ICON_SIZE[0]}" height="${AGENT_ICON_SIZE[1]}" style="display:block">`
         : AGENT_SVG_FALLBACK;
-      const w = AGENT_ICON_URL ? AGENT_ICON_SIZE[0] : 28;
-      const h = AGENT_ICON_URL ? AGENT_ICON_SIZE[1] : 38;
-      const ax = AGENT_ICON_URL ? AGENT_ICON_ANCHOR[0] : 14;
-      const ay = AGENT_ICON_URL ? AGENT_ICON_ANCHOR[1] : 36;
+      const w = iconUrl ? AGENT_ICON_SIZE[0] : 28;
+      const h = iconUrl ? AGENT_ICON_SIZE[1] : 38;
+      const ax = iconUrl ? AGENT_ICON_ANCHOR[0] : 14;
+      const ay = iconUrl ? AGENT_ICON_ANCHOR[1] : 36;
       return L.divIcon({ html: `<div class="${cls}">${inner}</div>`, iconSize:[w,h], iconAnchor:[ax,ay], className:'' });
     }
     function moveAgent(idx, bob) {
@@ -2505,24 +2566,33 @@ Respond ONLY with valid JSON (no markdown, no explanation):
       if (result.route_report) handleRouteReport(result.route_report);
 
       // Key moment markers — drawn on top of existing waypoint dots
-      const KM_COLOR = { highlight: '#22c55e', barrier: '#ef4444', transition: '#f59e0b', routine: '#9ca3af' };
       const kms = result.route_report?.key_moments || [];
       for (const km of kms) {
         if (!km.gps || km.gps[0] == null) continue;
-        const color = KM_COLOR[km.type] || '#9ca3af';
-        const marker = L.circleMarker([km.gps[0], km.gps[1]], {
-          radius: 12, color: '#fff', weight: 2,
-          fillColor: color, fillOpacity: 0.85,
-        }).addTo(map);
-        if (km.persona_reaction) {
-          marker.bindPopup(
-            `<div style="font-size:12px;max-width:160px;">` +
-            `<b>${km.type || 'moment'}</b> · WP ${km.waypoint_id ?? '—'}<br>` +
-            `<em>"${km.persona_reaction}"</em></div>`,
-            { maxWidth: 180 }
-          );
-        }
+        const marker = createKeyMomentMarker(km).addTo(map);
         keyMomentPins.push(marker);
+      }
+      if (kms.length) {
+        if (keyMomentLegend && keyMomentLegend._map) map.removeControl(keyMomentLegend);
+        keyMomentLegend = L.control({ position: 'topright' });
+        keyMomentLegend.onAdd = function() {
+          const div = L.DomUtil.create('div');
+          div.innerHTML = `<div style="background: white; padding: 8px 10px; border-radius: 6px;
+              box-shadow: 0 2px 6px rgba(0,0,0,.15); font-size: 11px; line-height: 1.4;">
+            <div style="font-weight: 600; margin-bottom: 6px; color: #333;">Key Moments</div>
+            ${Object.entries(typeConfig).map(([, cfg]) => `
+              <div style="display: flex; align-items: center; gap: 6px; margin: 3px 0;">
+                <div style="width: 16px; height: 16px; border-radius: 50%;
+                    background: ${cfg.color}; border: 2px solid white;
+                    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+                    display: flex; align-items: center; justify-content: center;
+                    color: white; font-size: 9px; font-weight: 700;">${cfg.icon}</div>
+                <span style="color: #555;">${cfg.label}</span>
+              </div>`).join('')}
+          </div>`;
+          return div;
+        };
+        keyMomentLegend.addTo(map);
       }
       const arrived = result.arrived ? '✓ Arrived' : '— Did not arrive';
       const steps = result.steps ?? walkStepCount;
@@ -2869,6 +2939,11 @@ Respond ONLY with valid JSON (no markdown, no explanation):
         map.setView([lat, lng], 18, { animate: true });
         el.classList.add('rr-card-active');
         setTimeout(() => el.classList.remove('rr-card-active'), 2000);
+        const matchingMarker = keyMomentPins.find(m => {
+          const ll = m.getLatLng();
+          return Math.abs(ll.lat - lat) < 1e-6 && Math.abs(ll.lng - lng) < 1e-6;
+        });
+        if (matchingMarker) matchingMarker.openPopup();
       }
     }
 
@@ -2945,6 +3020,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
 
     function closeRouteReport() {
       clearReportDimensionLines();
+      if (keyMomentLegend && keyMomentLegend._map) map.removeControl(keyMomentLegend);
       document.getElementById('route-report-overlay').classList.remove('active');
     }
 
@@ -2974,6 +3050,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
       // Key moment pins: keep on map after walk ends; only clear on explicit new walk
       if (clearMap) {
         keyMomentPins.forEach(p => map.removeLayer(p)); keyMomentPins = [];
+        if (keyMomentLegend && keyMomentLegend._map) { map.removeControl(keyMomentLegend); keyMomentLegend = null; }
       }
 
       if (clearMap) {

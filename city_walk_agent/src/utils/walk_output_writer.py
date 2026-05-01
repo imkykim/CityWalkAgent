@@ -352,6 +352,17 @@ class WalkOutputWriter:
             if isinstance(pt, (list, tuple)) and len(pt) >= 2 and _valid_point(pt[0], pt[1]):
                 planned_points.append([float(pt[0]), float(pt[1])])
 
+        # Previous routes (before reroutes)
+        route_history_raw = self.result.get("planner_route_history", []) or []
+        route_history: List[List[List[float]]] = []
+        for route in route_history_raw:
+            pts = []
+            for pt in route:
+                if isinstance(pt, (list, tuple)) and len(pt) >= 2 and _valid_point(pt[0], pt[1]):
+                    pts.append([float(pt[0]), float(pt[1])])
+            if len(pts) >= 2:
+                route_history.append(pts)
+
         step_points = [
             [float(s["lat"]), float(s["lng"])]
             for s in steps
@@ -382,7 +393,32 @@ class WalkOutputWriter:
             else:
                 return "#ef4444"  # red
 
-        # Planner route (Directions waypoints): light overlay
+        # Previous routes before reroute — shown as dashed lines with labels
+        for hist_idx, hist_pts in enumerate(route_history):
+            nav_label = f"Navigation {hist_idx + 1}"
+            folium.PolyLine(
+                hist_pts,
+                color="#94a3b8",
+                weight=3,
+                opacity=0.35,
+                dash_array="4,10",
+                tooltip=f"{nav_label} (superseded)",
+            ).add_to(m)
+            # Label at midpoint
+            mid = hist_pts[len(hist_pts) // 2]
+            folium.Marker(
+                mid,
+                icon=folium.DivIcon(
+                    html=f'<div style="font-size:10px;color:#94a3b8;white-space:nowrap;'
+                         f'background:rgba(255,255,255,0.75);padding:1px 4px;border-radius:3px;'
+                         f'border:1px solid #cbd5e1">{nav_label}</div>',
+                    icon_size=(90, 20),
+                    icon_anchor=(45, 10),
+                ),
+            ).add_to(m)
+
+        # Current planner route (Directions waypoints): light overlay
+        nav_current_label = f"Navigation {len(route_history) + 1}" if route_history else "Navigation"
         if len(planned_points) >= 2:
             folium.PolyLine(
                 planned_points,
@@ -390,7 +426,19 @@ class WalkOutputWriter:
                 weight=4,
                 opacity=0.45,
                 dash_array="6,8",
-                tooltip="Planner navigation route",
+                tooltip=f"{nav_current_label} (active)",
+            ).add_to(m)
+            # Label at midpoint
+            mid = planned_points[len(planned_points) // 2]
+            folium.Marker(
+                mid,
+                icon=folium.DivIcon(
+                    html=f'<div style="font-size:10px;color:#64748b;white-space:nowrap;'
+                         f'background:rgba(255,255,255,0.85);padding:1px 4px;border-radius:3px;'
+                         f'border:1px solid #94a3b8;font-weight:600">{nav_current_label}</div>',
+                    icon_size=(100, 20),
+                    icon_anchor=(50, 10),
+                ),
             ).add_to(m)
 
         # Route segments colored by score

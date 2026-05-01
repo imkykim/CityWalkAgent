@@ -36,6 +36,7 @@ class Planner:
     def __init__(self, framework_id: str) -> None:
         self.framework_id = framework_id
         self.route_waypoints: List[Tuple[float, float]] = []
+        self.route_history: List[List[Tuple[float, float]]] = []  # previous routes before reroute
         self.wp_index: int = 0
         self.reroute_threshold_m: float = 80.0
         self.reroute_count: int = 0
@@ -46,6 +47,7 @@ class Planner:
     def reset(self) -> None:
         """Clear state from any previous walk."""
         self.route_waypoints = []
+        self.route_history = []
         self.wp_index = 0
         self.reroute_count = 0
         self.total_route_distance_m = 0.0
@@ -148,11 +150,16 @@ class Planner:
         api_key: str,
     ) -> bool:
         """Check if nearest_wp_dist exceeds threshold; if so, re-fetch route.
-        Returns True if re-routed. Increments self.reroute_count."""
+        Returns True if re-routed. Increments self.reroute_count.
+        Saves previous route to route_history before replacing."""
         try:
-            self.route_waypoints = await self._fetch_walking_route(
+            new_waypoints = await self._fetch_walking_route(
                 (current_lat, current_lng), (dest_lat, dest_lng), api_key,
             )
+            # Archive current route before replacing
+            if self.route_waypoints:
+                self.route_history.append(list(self.route_waypoints))
+            self.route_waypoints = new_waypoints
             self.wp_index = 0
             self.reroute_count += 1
             self.logger.info(
@@ -173,6 +180,7 @@ class Planner:
             "wp_index_reached": self.wp_index,
             "route_coverage_pct": round(self.wp_index / total, 3) if total > 0 else 0.0,
             "has_route": bool(self.route_waypoints),
+            "route_history_count": len(self.route_history),
         }
 
     # ------------------------------------------------------------------ #
